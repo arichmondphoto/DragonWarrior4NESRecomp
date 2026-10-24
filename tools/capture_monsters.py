@@ -2,8 +2,9 @@
 
 Drives the Chapter 1 route to the first random encounter (frame 8718, just
 after the game fills the battle slots), saves a state, then for each monster
-ID rewrites the slots ($6E45-$6E48: one monster, the rest $FF = empty) inside
-a copy of that state and runs into the battle. For each ID it writes:
+ID writes a one-monster fixed battle (slots $6E45-$6E48 = ID,$FF,$FF,$FF;
+counts $6E49-$6E4C = 1,0,0,0; flags $6E44 = $C0, as the game's own fixed-battle
+setup does) into a copy of that state and runs into the battle. For each ID it writes:
 
     OUT/NNN.png   the battle screen (native 256x240)
     OUT/NNN.mem   the --mem-out dump at the battle screen (CHR RAM, nametables,
@@ -43,7 +44,11 @@ def main():
 
     def one(mid):
         st = bytearray(state)
+        # As the game's fixed-battle setup ($A1AD) would: one monster, count 1,
+        # battle flags $C0 (see force_formation.py).
         st[wram_at + SLOTS: wram_at + SLOTS + 4] = bytes([mid, 0xFF, 0xFF, 0xFF])
+        st[wram_at + SLOTS + 4: wram_at + SLOTS + 8] = bytes([1, 0, 0, 0])
+        st[wram_at + SLOTS - 1] = 0xC0
         path = os.path.join(tmp, f'{mid}.cycstate'); open(path, 'wb').write(st)
         stem = os.path.join(a.out, f'{mid:03d}')
         subprocess.run([a.host, ROM, '--load-state', path, '--frames', str(BATTLE_FRAME + 1), '--no-save',
