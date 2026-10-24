@@ -11,3 +11,4 @@ build-window/
 dist/
 !assets/icon_1024.png
 !hd/**/*.png
+__pycache__/
