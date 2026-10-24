@@ -7,3 +7,4 @@ savestates/
 out/
 *.log
 *.png
+build-window/

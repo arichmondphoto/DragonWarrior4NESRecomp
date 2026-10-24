@@ -10,6 +10,18 @@ Dragon Warrior IV (USA), NES 2.0 header, 524,304 bytes.
 
 Place it at `rom/DragonWarriorIV.nes`.
 
+## Play on macOS
+Requires the Xcode command line tools and [Homebrew](https://brew.sh).
+```sh
+git clone --recurse-submodules https://github.com/arichmondphoto/DragonWarrior4NESRecomp.git
+cd DragonWarrior4NESRecomp
+./build_macos.sh "/path/to/Dragon Warrior IV (USA).nes"   # first time: installs cmake/ninja/sdl2/python, builds
+./play_macos.sh
+```
+Keyboard: arrows = D-pad, **Z** = A, **X** = B, **Return** = Start, `\` = Select. Gamepads work out of the box.
+Esc = menu, F7 = save states, F8 = rewind, Tab = fast-forward, F11 = fullscreen (on a Mac keyboard you may need fn+F7 etc.).
+Settings and bindings live in `build/config.ini`; battery saves in `build/saves/`.
+
 ## Build (headless baseline)
 ```sh
 git submodule update --init
