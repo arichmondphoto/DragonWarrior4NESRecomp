@@ -45,17 +45,21 @@ HD packs (Mesen format) are enabled in the build (`MODS HD_PACKS`). Packs are
 presentation-only: the game runs identically with them on or off (frame hashes
 match over the Chapter 1 route).
 
-**HD dialog font (proof of concept)** — `hd/font/`: every text glyph (letters,
-digits, punctuation) redrawn at 4x from DejaVu Sans Mono Bold. It covers dialog,
-menus, window titles, the status window and battle messages. Window borders,
-map and sprites stay original.
+**HD text and windows** — the font, window borders, cursors and arrows,
+smoothly upscaled 4x from the game's own 8x8 tiles (`tools/smooth_pixels.py`),
+so every letter keeps its Dragon Warrior IV shape. Covers dialog, menus, window
+titles, the status window and battle text; maps and sprites stay original.
+The art is generated from **your ROM** at build time and is not stored in the repo.
 
-- macOS: `./build_macos.sh` (or `./package_macos_app.sh`) installs it into the
-  Mods catalog. In the launcher open **Mods**, turn on **HD dialog font**, then start.
-- Regenerate after changing the generator or font: `tools/build_hd_font.sh [HOST] [FONT]`
-  (dumps CHR RAM along the route, re-renders each glyph; needs Pillow), then bump
-  `HD_FONT_VERSION` in `package_macos_app.sh`.
-- Glyphs are matched by their 16 CHR-RAM bytes with `default=Y`, so they apply in every palette.
+- macOS: `./build_macos.sh` (or `./package_macos_app.sh`) generates the pack and
+  installs it in the Mods catalog. In the launcher open **Mods**, turn on
+  **HD text and windows**, then start. `DW4_NO_HD=1` skips it.
+- Elsewhere: `tools/build_hd_text.sh HOST OUTDIR [PYTHON]` (needs Pillow), then
+  `nesrecomp/tools/package_hdpack.py` to make a `.nesmod`.
+- `tools/make_font_hdpack.py --style font --font X.ttf` instead re-renders the
+  letters from any font (window pieces stay smoothed).
+- Tiles are matched by their 16 CHR-RAM bytes with `default=Y` (any palette).
+  Bump `HD_VERSION` in `package_macos_app.sh` when the generator changes.
 
 ## Test routes
 | Route | Frames | Covers |

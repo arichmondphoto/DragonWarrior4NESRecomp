@@ -175,24 +175,35 @@ if [ -d build/saves ]; then
     done
 fi
 
-# --- HD dialog font pack ----------------------------------------------------
-# Installed into the Mods catalog beside config.ini, exactly as the launcher's
-# Mods > Install would lay it out. Like every pack it starts disabled: turn it
-# on in the launcher (Mods > HD dialog font) before starting the game.
-HD_FONT_ID="dragon-warrior-4.hd-font"
-HD_FONT_VERSION="0.1.0"
-if [ -f hd/font/hires.txt ]; then
-    say "Installing the HD dialog font pack (Mods, off by default)"
-    PYHD="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYHD" ] || PYHD=python3
-    NESMOD="dist/dw4-hd-font-$HD_FONT_VERSION.nesmod"
+# --- HD text pack (font, window borders, cursors) ---------------------------
+# Generated from your ROM (smooth 4x upscale of the game's own text and window
+# tiles) and installed into the Mods catalog beside config.ini, exactly as the
+# launcher's Mods > Install lays it out. Like every pack it starts disabled:
+# turn it on in the launcher (Mods > HD text and windows) before starting.
+# Set DW4_NO_HD=1 to skip.
+HD_ID="dragon-warrior-4.hd-text"
+HD_VERSION="0.2.0"
+if [ "${DW4_NO_HD:-0}" != 1 ]; then
+    say "Generating the HD text pack from your ROM"
+    PYB="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYB" ] || PYB=python3
+    VENV=build/.hd-venv
+    if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c 'import PIL' 2>/dev/null; then
+        "$PYB" -m venv "$VENV"
+        "$VENV/bin/pip" install --quiet --upgrade pip pillow
+    fi
+    rm -rf build/hd/text
+    tools/build_hd_text.sh "build/$EXE" build/hd/text "$VENV/bin/python"
+    NESMOD="dist/dw4-hd-text-$HD_VERSION.nesmod"
     rm -f "$NESMOD"
-    "$PYHD" nesrecomp/tools/package_hdpack.py --pack hd/font --rom rom/DragonWarriorIV.nes \
-        --game-id dragon-warrior-4 --id "$HD_FONT_ID" --version "$HD_FONT_VERSION" \
-        --name "HD dialog font" --author "DragonWarrior4NESRecomp" \
-        --license "Glyphs: DejaVu Fonts license" --notice hd/font/NOTICE.txt --out "$NESMOD"
-    DEST_PKG="$DATA_DIR/mods/packages/$HD_FONT_ID/$HD_FONT_VERSION"
+    "$VENV/bin/python" nesrecomp/tools/package_hdpack.py --pack build/hd/text --rom rom/DragonWarriorIV.nes \
+        --game-id dragon-warrior-4 --id "$HD_ID" --version "$HD_VERSION" \
+        --name "HD text and windows" --author "DragonWarrior4NESRecomp" \
+        --license "Personal use; generated from your ROM" --notice build/hd/text/NOTICE.txt --out "$NESMOD"
+    DEST_PKG="$DATA_DIR/mods/packages/$HD_ID/$HD_VERSION"
     rm -rf "$DEST_PKG"; mkdir -p "$DEST_PKG"
-    "$PYHD" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$NESMOD" "$DEST_PKG"
+    "$VENV/bin/python" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$NESMOD" "$DEST_PKG"
+    # Replaced by this pack: the earlier DejaVu-based font proof of concept.
+    rm -rf "$DATA_DIR/mods/packages/dragon-warrior-4.hd-font"
     echo "  $DEST_PKG"
 fi
 

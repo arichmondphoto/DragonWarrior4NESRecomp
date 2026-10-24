@@ -1,15 +1,25 @@
-"""Build an HD pack that replaces Dragon Warrior IV's dialog font.
+"""Build an HD pack for Dragon Warrior IV's text: the font, window borders,
+cursors and arrows.
 
-Tile data (the 16 CHR bytes that identify each glyph) is read from a VRAM dump
-of the running game, so the pack carries no ROM-derived artwork: every HD
-glyph is rendered here from an open-licensed font.
+Tiles are identified by the 16 CHR bytes the game writes to CHR RAM, read
+from a VRAM dump of the running game (tools/vramdump.py).
 
-usage: make_font_hdpack.py DUMP OUTDIR [--font PATH] [--scale 4] [--preview PNG]
+Styles:
+  smooth (default)  each original 8x8 tile is upscaled into smooth outlines
+                    (tools/smooth_pixels.py), keeping the game's own letter
+                    shapes. The pack is generated from the player's ROM at
+                    build time and is not stored in the repository.
+  font              glyphs re-rendered from a TrueType/OpenType font (--font);
+                    window pieces are still smoothed from the original tiles.
+
+usage: make_font_hdpack.py DUMP OUTDIR [--style smooth|font] [--font PATH]
+                           [--roundness 0.9] [--scale 4] [--preview PNG]
 """
 import argparse, os, sys
 from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(__file__))
-from vramdump import load
+from vramdump import load, tile_pixels
+from smooth_pixels import smooth_mask
 
 # CHR-RAM tile ($1xxx pattern table) -> character, verified against the
 # name-entry grid and enlarged tile sheets.
@@ -27,6 +37,18 @@ GLYPHS.update({
     0x170: '*', 0x171: ':', 0x172: '…',
     0x177: ',', 0x178: '.',
 })
+# Window and cursor tiles. 'edge' pieces are lines that continue into the
+# neighbouring tile, so they are smoothed with edge-extended context.
+UI_TILES = {
+    0x180: ('continue arrow', 'zero'), 0x181: ('cursor', 'zero'),
+    0x182: ('arrow', 'zero'),          0x183: ('left border + equipped E', 'edge'),
+    0x184: ('left border', 'edge'),    0x185: ('top border', 'edge'),
+    0x186: ('top-left corner', 'edge'), 0x187: ('bottom-left corner', 'edge'),
+    0x188: ('right border', 'edge'),   0x189: ('top-right corner', 'edge'),
+    0x18A: ('bottom border', 'edge'),  0x18B: ('bottom-right corner', 'edge'),
+    0x18C: ('top border before a title', 'edge'),
+}
+
 # Where each glyph sat inside the original 8x8 cell (single quotes 168/169 and
 # 16A/16B differ only by horizontal placement).
 X_BIAS = {0x168: +0.18, 0x169: -0.12, 0x16A: -0.18, 0x16B: +0.10}
@@ -76,43 +98,67 @@ def width_factor(font, S):
     l, t, r, b = d.textbbox((0, 0), 'M', font=f, anchor='ls')
     return max(1.0, (W * 6.5 / 8) / (r - l))
 
+def smooth_tile(chr_ram, t, S, roundness, mode):
+    bits = [[1 if v == 1 else 0 for v in row] for row in tile_pixels(chr_ram, t)]
+    m = smooth_mask(bits, S, roundness, mode=mode)
+    out = Image.new('RGBA', (S, S), (255, 255, 255, 0)); out.putalpha(m)
+    return out
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('dump'); ap.add_argument('outdir')
+    ap.add_argument('--style', choices=('smooth', 'font'), default='smooth')
     ap.add_argument('--font', default='/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf')
+    ap.add_argument('--roundness', type=float, default=0.9)
     ap.add_argument('--scale', type=int, default=4)
     ap.add_argument('--preview')
     a = ap.parse_args()
     S = 8 * a.scale
     m = load(a.dump); chr_ram, pal = m['chr_ram'], m['palette']
-    font = ImageFont.truetype(a.font, 32)
-    sx = width_factor(font, S)
-    tiles = sorted(GLYPHS)
+    if a.style == 'font':
+        font = ImageFont.truetype(a.font, 32); sx = width_factor(font, S)
+    def art(t):
+        if t in UI_TILES:
+            return smooth_tile(chr_ram, t, S, a.roundness, UI_TILES[t][1])
+        if a.style == 'smooth':
+            return smooth_tile(chr_ram, t, S, a.roundness, 'zero')
+        return render_glyph(font, GLYPHS[t], S, t, sx)
+    tiles = sorted(GLYPHS) + sorted(UI_TILES)
     cols = 16; rows = (len(tiles) + cols - 1) // cols
     sheet = Image.new('RGBA', (cols * S, rows * S), (0, 0, 0, 0))
-    lines = ['<ver>106', f'<scale>{a.scale}', '<img>font.png',
-             '# Dialog font: CHR-RAM glyphs keyed by tile content; default=Y matches any palette.']
+    lines = ['<ver>106', f'<scale>{a.scale}', '<img>text.png',
+             f'# Text, window borders and cursors ({a.style} style). CHR-RAM tiles keyed',
+             '# by content; default=Y matches any palette.']
     bg_pal = '%02X%02X%02X%02X' % (pal[0], pal[1], pal[2], pal[3])
-    seen = set()
-    for i, t in enumerate(tiles):
+    seen = set(); n = 0
+    for t in tiles:
         data = bytes(chr_ram[16 * t:16 * t + 16])
         if data in seen or not any(data): continue
         seen.add(data)
-        x, y = (i % cols) * S, (i // cols) * S
-        sheet.alpha_composite(render_glyph(font, GLYPHS[t], S, t, sx), (x, y))
+        x, y = (n % cols) * S, (n // cols) * S; n += 1
+        sheet.alpha_composite(art(t), (x, y))
         lines.append(f'<tile>0,{data.hex().upper()},{bg_pal},{x},{y},1,Y')
+    sheet = sheet.crop((0, 0, cols * S, ((n + cols - 1) // cols) * S))
     os.makedirs(a.outdir, exist_ok=True)
-    sheet.save(os.path.join(a.outdir, 'font.png'))
+    for old in ('font.png',):
+        if os.path.exists(os.path.join(a.outdir, old)): os.remove(os.path.join(a.outdir, old))
+    sheet.save(os.path.join(a.outdir, 'text.png'))
     open(os.path.join(a.outdir, 'hires.txt'), 'w').write('\n'.join(lines) + '\n')
-    print(f'{len(seen)} glyphs -> {a.outdir}/hires.txt, font.png ({sheet.size[0]}x{sheet.size[1]})')
+    print(f'{n} tiles ({a.style}) -> {a.outdir}/hires.txt, text.png ({sheet.size[0]}x{sheet.size[1]})')
     if a.preview:
-        text = ['This is a story about', 'royal soldiers of a', "small country called", 'Burland.  “The King’s', 'orders!”  HP: 27 ...?']
+        # A dialog window as the game draws it, for a quick look.
         inv = {v: k for k, v in GLYPHS.items()}
-        pv = Image.new('RGBA', (24 * S, len(text) * 2 * S), (0, 0, 0, 255))
+        text = ['\u2018You must have heard', ' the rumor that', ' children have been', ' vanishing recently.\u2019']
+        cw = 24; chh = len(text) + 2
+        pv = Image.new('RGBA', (cw * S, chh * S), (0, 0, 0, 255))
+        def put(t, cx, cy): pv.alpha_composite(art(t), (cx * S, cy * S))
+        put(0x186, 0, 0); put(0x189, cw - 1, 0); put(0x187, 0, chh - 1); put(0x18B, cw - 1, chh - 1)
+        for cx in range(1, cw - 1): put(0x185, cx, 0); put(0x18A, cx, chh - 1)
+        for cy in range(1, chh - 1): put(0x184, 0, cy); put(0x188, cw - 1, cy)
         for r, ln in enumerate(text):
-            for c, ch in enumerate(ln.replace('...', '…')):
-                if ch == ' ' or ch not in inv: continue
-                pv.alpha_composite(render_glyph(font, ch, S, inv[ch], sx), (c * S, r * 2 * S))
+            for c, ch in enumerate(ln):
+                if ch in inv: put(inv[ch], 2 + c, 1 + r)
+        put(0x181, 1, 1); put(0x180, cw // 2, chh - 1)
         pv.save(a.preview)
 
 if __name__ == '__main__':
