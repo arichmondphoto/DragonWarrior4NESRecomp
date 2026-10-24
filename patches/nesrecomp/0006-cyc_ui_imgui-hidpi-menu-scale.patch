@@ -1,0 +1,34 @@
+From: DragonWarrior4NESRecomp
+Subject: [PATCH] cyc_ui_imgui: scale the renderer for HiDPI before drawing the menu
+
+Dear ImGui lays the runtime menu out in window units (points on macOS)
+while the SDL renderer draws in pixels. imgui_impl_sdlrenderer2 expects the
+caller to set SDL_RenderSetScale to the framebuffer ratio, as its SDL example
+does; without it a Retina display (ratio 2) drew the menu at half size in the
+top-left with clip rectangles scaled differently from the geometry, cutting
+off its text. Set the scale around RenderDrawData and reset it before the
+picture's logical size is restored. A ratio of 1 (Windows, Linux) is
+unchanged.
+---
+diff --git a/runner/cyc/cyc_ui_imgui.cpp b/runner/cyc/cyc_ui_imgui.cpp
+index 9d8b923..9e8c8f4 100644
+--- a/runner/cyc/cyc_ui_imgui.cpp
++++ b/runner/cyc/cyc_ui_imgui.cpp
+@@ -104,7 +104,17 @@ extern "C" void cyc_ui_render(void)
+     recomp_runtime_ui_render_imgui(ui);
+     cyc_state_ui_render();
+     ImGui::Render();
++    // ImGui lays out in window units (points on macOS) while the renderer
++    // draws in pixels. As in ImGui's SDL_Renderer example, scale the renderer
++    // by the framebuffer ratio (2 on Retina, 1 elsewhere): the backend then
++    // keeps vertices and clip rectangles in the same units. Without it a
++    // Retina display drew the menu at half size with misplaced clipping.
++    {
++        const ImVec2 fb = ImGui::GetIO().DisplayFramebufferScale;
++        SDL_RenderSetScale(s_ren, fb.x > 0.0f ? fb.x : 1.0f, fb.y > 0.0f ? fb.y : 1.0f);
++    }
+     ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), s_ren);
++    SDL_RenderSetScale(s_ren, 1.0f, 1.0f);
+     SDL_RenderSetLogicalSize(s_ren, lw, lh);
+     SDL_RenderSetViewport(s_ren, &viewport);
+     SDL_SetRenderDrawBlendMode(s_ren, SDL_BLENDMODE_NONE);

@@ -149,7 +149,7 @@ index f74e687..d659f68 100644
      int  vsync;             /* bool: sync presents to the display refresh */
      int  audio_enabled;     /* bool */
 diff --git a/runner/cyc/cyc_ui_menu.c b/runner/cyc/cyc_ui_menu.c
-index 6abc32a..6324dcc 100644
+index 6abc32a..2d7d80a 100644
 --- a/runner/cyc/cyc_ui_menu.c
 +++ b/runner/cyc/cyc_ui_menu.c
 @@ -302,6 +302,7 @@ static int get_value(void *ctx, const RecompRuntimeUiItem *it, int *out)
@@ -173,7 +173,7 @@ index 6abc32a..6324dcc 100644
          for (size_t i = 0; i < x->menu_item_count; ++i)
              if (s_item_count < sizeof(s_items) / sizeof(s_items[0])) s_items[s_item_count++] = x->menu_items[i];
 +    add("cyc.crop_sides", "Display", "Trim side borders",
-+        "Trim 8 pixels from each side: hides the black column many games mask at the left edge and keeps the picture centred.",
++        "Hide the black bar at the left edge of the picture.",
 +        RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL);
      add_mod_rows();
      CycZapperState gun;

@@ -4,6 +4,7 @@
 # as they are verified against the ROM (never copied from other games).
 
 [game]
+name = "Dragon Warrior IV"     # window title, launcher and menu heading
 output_prefix = "dw4"
 cycle_accurate = true
 

@@ -93,6 +93,11 @@ They are framework bugs, kept here until they can go upstream:
 - `0005-cyc-launcher-trim-side-borders.patch` — also offers that setting in the
   launcher's Display settings (needs recomp-ui patch 0002).
 
+- `0006-cyc_ui_imgui-hidpi-menu-scale.patch` — on a Retina display the in-game
+  menu drew at half size in the top-left with its text clipped: Dear ImGui lays
+  out in points but nesrecomp never set the renderer's HiDPI scale (as ImGui's
+  SDL example does). Ratio 1 (Windows/Linux) is unchanged.
+
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 
 - `0001-launcher-configurable-window-scale-max.patch` — the launcher offered
