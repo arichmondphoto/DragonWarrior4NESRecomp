@@ -175,6 +175,27 @@ if [ -d build/saves ]; then
     done
 fi
 
+# --- HD dialog font pack ----------------------------------------------------
+# Installed into the Mods catalog beside config.ini, exactly as the launcher's
+# Mods > Install would lay it out. Like every pack it starts disabled: turn it
+# on in the launcher (Mods > HD dialog font) before starting the game.
+HD_FONT_ID="dragon-warrior-4.hd-font"
+HD_FONT_VERSION="0.1.0"
+if [ -f hd/font/hires.txt ]; then
+    say "Installing the HD dialog font pack (Mods, off by default)"
+    PYHD="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYHD" ] || PYHD=python3
+    NESMOD="dist/dw4-hd-font-$HD_FONT_VERSION.nesmod"
+    rm -f "$NESMOD"
+    "$PYHD" nesrecomp/tools/package_hdpack.py --pack hd/font --rom rom/DragonWarriorIV.nes \
+        --game-id dragon-warrior-4 --id "$HD_FONT_ID" --version "$HD_FONT_VERSION" \
+        --name "HD dialog font" --author "DragonWarrior4NESRecomp" \
+        --license "Glyphs: DejaVu Fonts license" --notice hd/font/NOTICE.txt --out "$NESMOD"
+    DEST_PKG="$DATA_DIR/mods/packages/$HD_FONT_ID/$HD_FONT_VERSION"
+    rm -rf "$DEST_PKG"; mkdir -p "$DEST_PKG"
+    "$PYHD" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$NESMOD" "$DEST_PKG"
+    echo "  $DEST_PKG"
+fi
+
 # --- install --------------------------------------------------------------
 if [ "$INSTALL" = 1 ]; then
     if [ -z "$DEST" ]; then

@@ -40,6 +40,23 @@ cmake --build build-headless
 ```
 Windowed build: `cmake -S . -B build` (needs SDL2 dev package).
 
+## HD texture packs
+HD packs (Mesen format) are enabled in the build (`MODS HD_PACKS`). Packs are
+presentation-only: the game runs identically with them on or off (frame hashes
+match over the Chapter 1 route).
+
+**HD dialog font (proof of concept)** — `hd/font/`: every text glyph (letters,
+digits, punctuation) redrawn at 4x from DejaVu Sans Mono Bold. It covers dialog,
+menus, window titles, the status window and battle messages. Window borders,
+map and sprites stay original.
+
+- macOS: `./build_macos.sh` (or `./package_macos_app.sh`) installs it into the
+  Mods catalog. In the launcher open **Mods**, turn on **HD dialog font**, then start.
+- Regenerate after changing the generator or font: `tools/build_hd_font.sh [HOST] [FONT]`
+  (dumps CHR RAM along the route, re-renders each glyph; needs Pillow), then bump
+  `HD_FONT_VERSION` in `package_macos_app.sh`.
+- Glyphs are matched by their 16 CHR-RAM bytes with `default=Y`, so they apply in every palette.
+
 ## Test routes
 | Route | Frames | Covers |
 |---|---|---|

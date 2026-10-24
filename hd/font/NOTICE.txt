@@ -1,0 +1,9 @@
+Dragon Warrior IV HD dialog font (proof of concept)
+
+Every HD glyph in font.png was rendered by tools/make_font_hdpack.py from
+DejaVu Sans Mono Bold. DejaVu fonts are free to use and redistribute under the
+Bitstream Vera / DejaVu license (https://dejavu-fonts.github.io/License.html).
+
+No artwork from the original game is included. hires.txt identifies each
+glyph by the 16 bytes the game writes to CHR RAM (Mesen HD pack format), so
+the replacement follows the font wherever the game draws it.
