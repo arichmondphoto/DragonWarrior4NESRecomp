@@ -37,6 +37,8 @@ PY="$(brew --prefix python@3.12)/bin/python3.12"
 # 2. Sources ---------------------------------------------------------------
 say "Fetching nesrecomp (with its netplay libraries) and recomp-ui at their pinned commits"
 git submodule update --init --recursive nesrecomp recomp-ui
+say "Applying framework fixes (patches/)"
+tools/apply_patches.sh
 
 # 3. ROM -------------------------------------------------------------------
 mkdir -p rom

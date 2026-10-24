@@ -61,6 +61,17 @@ The art is generated from **your ROM** at build time and is not stored in the re
 - Tiles are matched by their 16 CHR-RAM bytes with `default=Y` (any palette).
   Bump `HD_VERSION` in `package_macos_app.sh` when the generator changes.
 
+## Framework patches
+`patches/nesrecomp/*.patch` are fixes to the pinned nesrecomp checkout, applied
+by `tools/apply_patches.sh` (run automatically by `build_macos.sh`; idempotent).
+They are framework bugs, kept here until they can go upstream:
+
+- `0001-cyc_sdl-hd-window-native-size.patch` — with an HD pack the window was
+  sized from the 4x HD picture (3072x2880 at Window Scale 3, clamped by macOS) and
+  integer scaling stepped in HD-picture units, so the game drew small inside an
+  oddly sized window. Window, logical size and integer steps now use native
+  256x240 pixels; HD textures are sampled linearly.
+
 ## Test routes
 | Route | Frames | Covers |
 |---|---|---|

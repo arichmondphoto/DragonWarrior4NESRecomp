@@ -1,0 +1,121 @@
+From: DragonWarrior4NESRecomp
+Subject: [PATCH] cyc_sdl: size the window and integer scaling in native pixels with HD packs
+
+An HD pack presents a picture that is a whole multiple of the native 256x240
+frame (1024x960 at 4x). The window was sized as picture size x Window Scale
+(3072x2880 at scale 3), which macOS clamps to the screen, and integer scaling
+stepped in whole multiples of the HD picture, so on a Retina display it was
+drawn at 1x: small, in the middle of an oddly sized window.
+
+Keep the window size, the renderer's logical size and the integer-scaling
+steps in native pixels and let the HD texture fill that area; sample HD
+textures linearly since they are usually drawn at a fractional ratio. Without
+an HD pack the divisor is 1 and behaviour is unchanged.
+---
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index a403c7d..e7a04c5 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -439,7 +439,19 @@ static bool load_state_slot(void)
+     return ok;
+ }
+ 
+-static int logical_h(void) { return s_tex_h + (s_bar ? BAR_ROWS : 0); }
++/* An HD pack presents the picture at a whole multiple of the native 240-line
++ * frame. The window size, logical size and integer-scaling steps stay in
++ * native pixels, so Window Scale and integer scaling mean the same with and
++ * without a pack; the HD texture fills that native-sized area. */
++static int picture_divisor(int w, int h)
++{
++    int k = h >= 480 && h % 240 == 0 ? h / 240 : 1;
++    return k > 1 && w % k == 0 ? k : 1;
++}
++static int s_tex_div = 1;
++static int base_w(void) { return s_tex_w / s_tex_div; }
++static int base_h(void) { return s_tex_h / s_tex_div; }
++static int logical_h(void) { return base_h() + (s_bar ? BAR_ROWS : 0); }
+ 
+ static void apply_picture_scale(void)
+ {
+@@ -449,22 +461,29 @@ static void apply_picture_scale(void)
+      * accelerated renderer can produce a black frame with that negative
+      * viewport. Fit fractionally until the window is large enough, keeping
+      * the player's integer-scaling preference for subsequent enlargement. */
+-    SDL_bool integer = s_set.integer_scale && ow >= s_tex_w && oh >= logical_h()
++    SDL_bool integer = s_set.integer_scale && ow >= base_w() && oh >= logical_h()
+                      ? SDL_TRUE : SDL_FALSE;
+     if (SDL_RenderGetIntegerScale(s_ren) != integer)
+         SDL_RenderSetIntegerScale(s_ren, integer);
+ }
+ 
++/* HD art is already anti-aliased and is usually drawn at a fractional ratio
++ * of its own size; linear sampling avoids uneven nearest-neighbour pixels. */
++static SDL_ScaleMode texture_scale_mode(void)
++{
++    return s_set.linear_filter || s_tex_div > 1 ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
++}
++
+ static void apply_settings(void)
+ {
+     if (!s_win) return;
+     Uint32 fs = s_set.fullscreen == 1 ? SDL_WINDOW_FULLSCREEN_DESKTOP : s_set.fullscreen == 2 ? SDL_WINDOW_FULLSCREEN : 0;
+     if ((SDL_GetWindowFlags(s_win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != fs)
+         SDL_SetWindowFullscreen(s_win, fs);
+-    if (!fs) SDL_SetWindowSize(s_win, s_tex_w * s_set.window_scale, logical_h() * s_set.window_scale);
+-    SDL_RenderSetLogicalSize(s_ren, s_tex_w, logical_h());
++    if (!fs) SDL_SetWindowSize(s_win, base_w() * s_set.window_scale, logical_h() * s_set.window_scale);
++    SDL_RenderSetLogicalSize(s_ren, base_w(), logical_h());
+     apply_picture_scale();
+-    if (s_tex) SDL_SetTextureScaleMode(s_tex, s_set.linear_filter ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
++    if (s_tex) SDL_SetTextureScaleMode(s_tex, texture_scale_mode());
+ }
+ 
+ static bool ensure_texture(int w, int h)
+@@ -474,8 +493,9 @@ static bool ensure_texture(int w, int h)
+     s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+     s_tex_w = w;
+     s_tex_h = h;
+-    if (s_tex) SDL_SetTextureScaleMode(s_tex, s_set.linear_filter ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
+-    SDL_RenderSetLogicalSize(s_ren, s_tex_w, logical_h());
++    s_tex_div = picture_divisor(w, h);
++    if (s_tex) SDL_SetTextureScaleMode(s_tex, texture_scale_mode());
++    SDL_RenderSetLogicalSize(s_ren, base_w(), logical_h());
+     apply_picture_scale();
+     return s_tex != NULL;
+ }
+@@ -960,6 +980,7 @@ static void zapper_window_point(int wx, int wy, int *x, int *y, int *px, int *py
+     SDL_RenderWindowToLogical(s_ren, wx, wy, &lx, &ly);
+     int w, h;
+     picture(&w, &h);
++    int k = picture_divisor(w, h); w /= k; h /= k;
+     bool inside = lx >= 0 && lx < (float)w && ly >= 0 && ly < (float)h;
+     if (px) *px = inside ? (int)lx : -1;
+     if (py) *py = inside ? (int)ly : -1;
+@@ -1203,14 +1224,14 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
+     SDL_UpdateTexture(s_tex, NULL, pic, w * 4);
+     SDL_SetRenderDrawColor(s_ren, 0, 0, 0, 255);
+     SDL_RenderClear(s_ren);
+-    SDL_Rect dst = { 0, 0, w, h };
++    SDL_Rect dst = { 0, 0, w / s_tex_div, h / s_tex_div };
+     SDL_RenderCopy(s_ren, s_tex, NULL, &dst);
+     CycZapperState gun;
+     cyc_zapper_state(&gun);
+     int aim_x = -1, aim_y = -1;
+     if (gun.port && !s_zapper_override) aim_x = s_aim_x, aim_y = s_aim_y;
+-    else if (gun.port && gun.x >= 0) aim_x = gun.x + picture_native_origin(w), aim_y = gun.y;
+-    if (gun.port && s_set.zapper_crosshair && aim_x >= 0 && aim_x < w && !menu_open()) {
++    else if (gun.port && gun.x >= 0) aim_x = gun.x + picture_native_origin(w / s_tex_div), aim_y = gun.y;
++    if (gun.port && s_set.zapper_crosshair && aim_x >= 0 && aim_x < w / s_tex_div && !menu_open()) {
+         int x = aim_x, y = aim_y;
+         SDL_SetRenderDrawColor(s_ren, 0, 0, 0, 255);
+         SDL_Rect back = {x - 5, y - 1, 11, 3}; SDL_RenderFillRect(s_ren, &back);
+@@ -1340,7 +1361,8 @@ int cyc_sdl_main(const char *title_in, int scale)
+     picture(&w, &h);
+     s_tex_w = w;
+     s_tex_h = h;
+-    s_win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w * s_set.window_scale,
++    s_tex_div = picture_divisor(w, h);
++    s_win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, base_w() * s_set.window_scale,
+                              logical_h() * s_set.window_scale,
+                              SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (s_hidden ? SDL_WINDOW_HIDDEN : 0));
+     s_ren = NULL;
