@@ -1,0 +1,48 @@
+From: DragonWarrior4NESRecomp
+Subject: [PATCH] launcher: let hosts raise LNG_WINDOW_SCALE_MAX
+
+The launcher offered Window scale 1x..6x only. Make the limit a compile-time
+override (default unchanged at 6, up to 16) and keep 16 labelled choices, of
+which the first LNG_WINDOW_SCALE_MAX are offered. DragonWarrior4NESRecomp sets
+it to 10 to match HD packs presented at up to 10x.
+---
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index e1fe692..7ed178a 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -1943,10 +1943,12 @@ int settings_combo_row(const char* label, const LauncherTheme& th,
+     return picked;
+ }
+ 
+-/* Window scale reads as "1x".."6x". Spelled out rather than formatted per
+- * frame so the list is plain data, like every other choice list here. */
+-static const SettingsChoice kScaleChoices[LNG_WINDOW_SCALE_MAX] = {
+-    {1, "1x"}, {2, "2x"}, {3, "3x"}, {4, "4x"}, {5, "5x"}, {6, "6x"}
++/* Window scale reads as "1x".."<max>x". Spelled out rather than formatted per
++ * frame so the list is plain data, like every other choice list here; the
++ * first LNG_WINDOW_SCALE_MAX entries are offered. */
++static const SettingsChoice kScaleChoices[16] = {
++    {1, "1x"}, {2, "2x"}, {3, "3x"}, {4, "4x"}, {5, "5x"}, {6, "6x"}, {7, "7x"}, {8, "8x"},
++    {9, "9x"}, {10, "10x"}, {11, "11x"}, {12, "12x"}, {13, "13x"}, {14, "14x"}, {15, "15x"}, {16, "16x"}
+ };
+ static const SettingsChoice kFullscreenChoices[] = {
+     {0, "Off"}, {1, "Borderless"}, {2, "Exclusive"}
+diff --git a/src/common/launcher_model.h b/src/common/launcher_model.h
+index 1e065a4..445d3c8 100644
+--- a/src/common/launcher_model.h
++++ b/src/common/launcher_model.h
+@@ -851,7 +851,14 @@ void launcher_model_cancel_restore_defaults(LauncherModel* m);
+ // Window scale, in whole native-size steps. LNG_WINDOW_SCALE_MAX bounds both
+ // the cycle's wrap and the dropdown's list, so the two can never offer
+ // different sets.
++/* Hosts may raise this (up to 16) with a compile definition, e.g. a renderer
++ * that presents HD texture packs up to 10x. */
++#ifndef LNG_WINDOW_SCALE_MAX
+ #define LNG_WINDOW_SCALE_MAX 6
++#endif
++#if LNG_WINDOW_SCALE_MAX < 1 || LNG_WINDOW_SCALE_MAX > 16
++#error "LNG_WINDOW_SCALE_MAX must be between 1 and 16"
++#endif
+ void launcher_model_cycle_scale(LauncherModel* m);   // 1..LNG_WINDOW_SCALE_MAX wrap
+ void launcher_model_set_scale(LauncherModel* m, int scale);  // clamped
+ void launcher_model_toggle_filter(LauncherModel* m);

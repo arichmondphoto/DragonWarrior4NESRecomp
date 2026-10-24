@@ -1,0 +1,74 @@
+From: DragonWarrior4NESRecomp
+Subject: [PATCH] cyc: allow Window Scale up to 10x (CYC_WINDOW_SCALE_MAX)
+
+config.ini, the launcher bridge and the in-game menu clamped Window Scale to
+8. Use one CYC_WINDOW_SCALE_MAX (default 10, the HD presenter's 2560x2400
+ceiling) everywhere and pass it to the runtime menu as window_scale_max.
+---
+diff --git a/runner/cyc/cyc_settings.c b/runner/cyc/cyc_settings.c
+index 7cd1347..dd3cdfd 100644
+--- a/runner/cyc/cyc_settings.c
++++ b/runner/cyc/cyc_settings.c
+@@ -124,7 +124,7 @@ bool cyc_settings_load(CycSettings *s, const char *path, FILE *log, const CycSet
+         bool bad = false;
+         switch (sec) {
+         case SEC_DISPLAY:
+-            if (eq_ci(key, "WindowScale")) bad = !parse_int(val, &v) || (s->window_scale = clampi(v, 1, 8), 0);
++            if (eq_ci(key, "WindowScale")) bad = !parse_int(val, &v) || (s->window_scale = clampi(v, 1, CYC_WINDOW_SCALE_MAX), 0);
+             else if (eq_ci(key, "Fullscreen")) bad = !parse_int(val, &v) || (s->fullscreen = clampi(v, 0, 2), 0);
+             else if (eq_ci(key, "IntegerScale")) bad = !parse_int(val, &v) || (s->integer_scale = v != 0, 0);
+             else if (eq_ci(key, "LinearFilter")) bad = !parse_int(val, &v) || (s->linear_filter = v != 0, 0);
+diff --git a/runner/cyc/cyc_settings.h b/runner/cyc/cyc_settings.h
+index 16ca0af..f74e687 100644
+--- a/runner/cyc/cyc_settings.h
++++ b/runner/cyc/cyc_settings.h
+@@ -30,8 +30,14 @@
+ extern "C" {
+ #endif
+ 
++/* Largest Window Scale offered anywhere (launcher, menu, config.ini). Ten
++ * matches the HD presenter's ceiling (2560x2400, a 10x HD pack). */
++#ifndef CYC_WINDOW_SCALE_MAX
++#define CYC_WINDOW_SCALE_MAX 10
++#endif
++
+ typedef struct CycSettings {
+-    int  window_scale;      /* 1..8 */
++    int  window_scale;      /* 1..CYC_WINDOW_SCALE_MAX */
+     int  fullscreen;        /* 0 off, 1 borderless, 2 exclusive */
+     int  integer_scale;     /* bool */
+     int  linear_filter;     /* bool */
+diff --git a/runner/cyc/cyc_ui_launcher.c b/runner/cyc/cyc_ui_launcher.c
+index 92f1cc5..f16c7d0 100644
+--- a/runner/cyc/cyc_ui_launcher.c
++++ b/runner/cyc/cyc_ui_launcher.c
+@@ -93,7 +93,7 @@ static void to_launcher(const CycSettings *s, RecompLauncherCSettings *io, const
+ 
+ static void from_launcher(const RecompLauncherCSettings *io, CycSettings *s, const int *shortcuts, int count)
+ {
+-    s->window_scale = io->window_scale < 1 ? 1 : io->window_scale > 8 ? 8 : io->window_scale;
++    s->window_scale = io->window_scale < 1 ? 1 : io->window_scale > CYC_WINDOW_SCALE_MAX ? CYC_WINDOW_SCALE_MAX : io->window_scale;
+     s->fullscreen = io->fullscreen < 0 ? 0 : io->fullscreen > 2 ? 2 : io->fullscreen;
+     s->integer_scale = io->integer_scale != 0;
+     s->linear_filter = io->linear_filter != 0;
+diff --git a/runner/cyc/cyc_ui_menu.c b/runner/cyc/cyc_ui_menu.c
+index e66ecba..6abc32a 100644
+--- a/runner/cyc/cyc_ui_menu.c
++++ b/runner/cyc/cyc_ui_menu.c
+@@ -329,7 +329,7 @@ static int set_value(void *ctx, const RecompRuntimeUiItem *it, int v)
+     CycSettings *s = s_host.settings;
+     const CycHostExtras *x = s_host.extras;
+     if (is_key(it, RECOMP_RUNTIME_UI_KEY_FULLSCREEN)) s->fullscreen = v < 0 ? 0 : v > 2 ? 2 : v;
+-    else if (is_key(it, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE)) s->window_scale = v < 1 ? 1 : v > 8 ? 8 : v;
++    else if (is_key(it, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE)) s->window_scale = v < 1 ? 1 : v > CYC_WINDOW_SCALE_MAX ? CYC_WINDOW_SCALE_MAX : v;
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_INTEGER_SCALE)) s->integer_scale = v != 0;
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER)) s->linear_filter = v != 0;
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_AUDIO)) s->audio_enabled = v != 0;
+@@ -532,6 +532,7 @@ RecompRuntimeUi *cyc_ui_menu_create(const CycUiHost *host)
+         std.features |= RECOMP_RUNTIME_UI_STANDARD_VIEW_MODE;
+         std.view_modes = x->view_modes;
+     }
++    std.window_scale_max = CYC_WINDOW_SCALE_MAX;
+     std.extra_items = s_items;
+     std.extra_item_count = s_item_count;
+     s_ui = recomp_runtime_ui_create_standard(&std);

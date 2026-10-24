@@ -45,8 +45,12 @@ HD packs (Mesen format) are enabled in the build (`MODS HD_PACKS`). Packs are
 presentation-only: the game runs identically with them on or off (frame hashes
 match over the Chapter 1 route).
 
+**Project standard: every HD pack is authored at 10x** (`<scale>10`, 80x80
+pixels per tile, a 2560x2400 picture — the presenter's ceiling), so it stays
+sharp at every Window Scale from 1x to 10x.
+
 **HD text and windows** — the font, window borders, cursors and arrows,
-smoothly upscaled 4x from the game's own 8x8 tiles (`tools/smooth_pixels.py`),
+smoothly upscaled 10x from the game's own 8x8 tiles (`tools/smooth_pixels.py`),
 so every letter keeps its Dragon Warrior IV shape. Covers dialog, menus, window
 titles, the status window and battle text; maps and sprites stay original.
 The art is generated from **your ROM** at build time and is not stored in the repo.
@@ -71,6 +75,15 @@ They are framework bugs, kept here until they can go upstream:
   integer scaling stepped in HD-picture units, so the game drew small inside an
   oddly sized window. Window, logical size and integer steps now use native
   256x240 pixels; HD textures are sampled linearly.
+- `0002-cyc-window-scale-max-10.patch` — Window Scale was clamped to 8 in
+  config.ini, the launcher bridge and the in-game menu; one `CYC_WINDOW_SCALE_MAX`
+  (10) now applies everywhere.
+
+`patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
+
+- `0001-launcher-configurable-window-scale-max.patch` — the launcher offered
+  1x-6x only; `LNG_WINDOW_SCALE_MAX` is now a compile-time override (default 6),
+  which this project's `CMakeLists.txt` sets to 10.
 
 ## Test routes
 | Route | Frames | Covers |

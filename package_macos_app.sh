@@ -182,7 +182,7 @@ fi
 # turn it on in the launcher (Mods > HD text and windows) before starting.
 # Set DW4_NO_HD=1 to skip.
 HD_ID="dragon-warrior-4.hd-text"
-HD_VERSION="0.2.0"
+HD_VERSION="0.3.0"
 if [ "${DW4_NO_HD:-0}" != 1 ]; then
     say "Generating the HD text pack from your ROM"
     PYB="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYB" ] || PYB=python3
@@ -200,7 +200,9 @@ if [ "${DW4_NO_HD:-0}" != 1 ]; then
         --name "HD text and windows" --author "DragonWarrior4NESRecomp" \
         --license "Personal use; generated from your ROM" --notice build/hd/text/NOTICE.txt --out "$NESMOD"
     DEST_PKG="$DATA_DIR/mods/packages/$HD_ID/$HD_VERSION"
-    rm -rf "$DEST_PKG"; mkdir -p "$DEST_PKG"
+    # Replace every earlier version: the saved selection (and its on/off
+    # state) carries over to the version that remains installed.
+    rm -rf "$DATA_DIR/mods/packages/$HD_ID"; mkdir -p "$DEST_PKG"
     "$VENV/bin/python" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$NESMOD" "$DEST_PKG"
     # Replaced by this pack: the earlier DejaVu-based font proof of concept.
     rm -rf "$DATA_DIR/mods/packages/dragon-warrior-4.hd-font"

@@ -13,7 +13,7 @@ Styles:
                     window pieces are still smoothed from the original tiles.
 
 usage: make_font_hdpack.py DUMP OUTDIR [--style smooth|font] [--font PATH]
-                           [--roundness 0.9] [--scale 4] [--preview PNG]
+                           [--roundness 0.9] [--scale 10] [--preview PNG]
 """
 import argparse, os, sys
 from PIL import Image, ImageDraw, ImageFont
@@ -110,7 +110,7 @@ def main():
     ap.add_argument('--style', choices=('smooth', 'font'), default='smooth')
     ap.add_argument('--font', default='/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf')
     ap.add_argument('--roundness', type=float, default=0.9)
-    ap.add_argument('--scale', type=int, default=4)
+    ap.add_argument('--scale', type=int, default=10)  # project standard: 10x
     ap.add_argument('--preview')
     a = ap.parse_args()
     S = 8 * a.scale

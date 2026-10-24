@@ -37,7 +37,10 @@ def smooth_mask(bits, S=32, roundness=0.9, weight=0.0, mode='zero'):
     """bits: 8x8 list of 0/1. Returns an L image S x S (alpha mask).
     weight > 0 thickens strokes slightly, < 0 thins them."""
     g = scale2x(scale2x(pad(bits, mode)))            # 4x, with context
-    n = len(g); up = 8                               # supersample factor
+    n = len(g)
+    # Supersample so the final downsample has >= 3 source pixels per output
+    # pixel at any scale (32 px of Scale2x output per tile -> S px).
+    up = max(8, -(-S * 3 // 32))
     im = Image.new('L', (n, n))
     im.putdata([255 if v else 0 for row in g for v in row])
     big = im.resize((n * up, n * up), Image.NEAREST)
