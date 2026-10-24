@@ -15,12 +15,20 @@ Requires the Xcode command line tools and [Homebrew](https://brew.sh).
 ```sh
 git clone https://github.com/arichmondphoto/DragonWarrior4NESRecomp.git   # private repo: sign in when prompted
 cd DragonWarrior4NESRecomp
-./build_macos.sh "/path/to/Dragon Warrior IV (USA).nes"   # first time: installs cmake/ninja/sdl2/python, builds
-./play_macos.sh
+./build_macos.sh "/path/to/Dragon Warrior IV (USA).nes"
 ```
+The first run installs cmake/ninja/sdl2/python, builds the game, packages it as
+**Dragon Warrior IV.app** and installs it in `/Applications` (or `~/Applications`).
+Open it from Launchpad, Spotlight or the Applications folder. After pulling updates,
+run `./build_macos.sh` again to rebuild and reinstall.
+
+- Settings, battery saves and save states: `~/Library/Application Support/DragonWarrior4Recomp`
+  (kept across rebuilds; anything in the old `build/saves` is copied over once).
+- The app bundles SDL2, the launcher assets and **your ROM** — don't share the app.
+- `DW4_NO_INSTALL=1 ./build_macos.sh` leaves the app in `dist/`; `./play_macos.sh` still runs the unpackaged build.
+
 Keyboard: arrows = D-pad, **Z** = A, **X** = B, **Return** = Start, `\` = Select. Gamepads work out of the box.
 Esc = menu, F7 = save states, F8 = rewind, Tab = fast-forward, F11 = fullscreen (on a Mac keyboard you may need fn+F7 etc.).
-Settings and bindings live in `build/config.ini`; battery saves in `build/saves/`.
 
 ## Build (headless baseline)
 ```sh

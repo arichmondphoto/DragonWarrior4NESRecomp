@@ -4,7 +4,8 @@
 # Usage:  ./build_macos.sh [path/to/Dragon Warrior IV (USA).nes]
 #
 # Without an argument the ROM is taken from rom/DragonWarriorIV.nes.
-# The result is build/DragonWarrior4; run it with ./play_macos.sh.
+# The result is build/DragonWarrior4, packaged as "Dragon Warrior IV.app" and
+# installed in /Applications (see package_macos_app.sh).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -59,4 +60,13 @@ say "Compiling"
 cmake --build build --parallel "$(sysctl -n hw.ncpu)"
 
 [ -x build/DragonWarrior4 ] || die "Build finished but build/DragonWarrior4 is missing."
-say "Done. Start the game with:  ./play_macos.sh"
+
+# 5. Package -----------------------------------------------------------------
+# Builds "Dragon Warrior IV.app" and installs it in /Applications.
+# Set DW4_NO_APP=1 to skip, or DW4_NO_INSTALL=1 to leave the app in dist/.
+if [ "${DW4_NO_APP:-0}" != 1 ]; then
+    if [ "${DW4_NO_INSTALL:-0}" = 1 ]; then ./package_macos_app.sh --no-install; else ./package_macos_app.sh; fi
+    say "Done. Open \"Dragon Warrior IV\" from Applications or Launchpad."
+else
+    say "Done. Start the game with:  ./play_macos.sh"
+fi
