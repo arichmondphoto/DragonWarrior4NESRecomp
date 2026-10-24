@@ -85,6 +85,11 @@ They are framework bugs, kept here until they can go upstream:
   kept for bigger screens). On a Retina display Window Scale 5 already shows a
   10x pack at full detail (2 pixels per point).
 
+- `0004-cyc-trim-side-borders.patch` — Dragon Warrior IV (like many NES games)
+  masks the leftmost 8 pixels, leaving a black bar. New setting **Trim side
+  borders** (in-game menu > Display; `CropSides` in config.ini; on by default)
+  trims 8 pixels from both sides so the picture stays centred (240x240).
+
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 
 - `0001-launcher-configurable-window-scale-max.patch` — the launcher offered
