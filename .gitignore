@@ -9,3 +9,4 @@ out/
 *.png
 build-window/
 dist/
+!assets/icon_1024.png
