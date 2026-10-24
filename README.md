@@ -49,21 +49,39 @@ match over the Chapter 1 route).
 pixels per tile, a 2560x2400 picture — the presenter's ceiling), so it stays
 sharp at every Window Scale from 1x to 10x.
 
-**HD text and windows** — the font, window borders, cursors and arrows,
-smoothly upscaled 10x from the game's own 8x8 tiles (`tools/smooth_pixels.py`),
-so every letter keeps its Dragon Warrior IV shape. Covers dialog, menus, window
-titles, the status window and battle text; maps and sprites stay original.
-The art is generated from **your ROM** at build time and is not stored in the repo.
+**HD text, windows and monsters** (one pack — the Mods system allows one HD pack at a time):
+
+- *Text and windows* — the font, window borders, cursors and arrows, smoothly
+  upscaled 10x from the game's own 8x8 tiles (`tools/smooth_pixels.py`), so every
+  letter keeps its Dragon Warrior IV shape. Generated from **your ROM** at build time.
+- *Battle monsters* — the owner's artwork (`hd/monsters/source/DW4Sprites.jpg`)
+  replacing the 8-bit monsters. `hd/monsters/mapping.json` maps each sheet sprite
+  to a game monster ID; `boxes.json` holds each sprite's box on the sheet.
+
+How the monsters are built (`tools/build_hd_pack.sh`):
+
+1. `tools/capture_monsters.py` forces one battle per monster ID by rewriting the
+   battle slots (`$6E45-$6E48`, `$FF` = empty) in a save state taken just after the
+   route's first encounter, and dumps each battle (tiles, palettes, sprites, name).
+2. `tools/make_monster_hdpack.py` cuts each sprite from the sheet (transparency
+   rebuilt from the black background), fits it to the original monster's pixels at
+   10x and slices it along the original's pieces: background cells (keyed by CHR
+   bytes + exact palette) and 8x8 sprites (pattern table `$0000`, stored
+   un-flipped). Repeated tiles inside a monster are told apart by a neighbouring
+   tile (`tileNearby`) or by `hmirror`/`vmirror`.
+3. `tools/render_monsters_hd.py` + `tools/score_hd_sweep.py` render every monster
+   with `NESRECOMP_HDPACK_DEBUG=1` and report any original pixels still showing.
+
+To change a pairing, edit `hd/monsters/mapping.json` (sheet index → monster ID) and
+rebuild; `tools/review_sheet.py` draws side-by-side review pages. Sprites listed under
+`pending` (late bosses, Chapter 2 tournament fighters) need captures from where the
+game actually stages those battles.
 
 - macOS: `./build_macos.sh` (or `./package_macos_app.sh`) generates the pack and
   installs it in the Mods catalog. In the launcher open **Mods**, turn on
-  **HD text and windows**, then start. `DW4_NO_HD=1` skips it.
-- Elsewhere: `tools/build_hd_text.sh HOST OUTDIR [PYTHON]` (needs Pillow), then
-  `nesrecomp/tools/package_hdpack.py` to make a `.nesmod`.
-- `tools/make_font_hdpack.py --style font --font X.ttf` instead re-renders the
-  letters from any font (window pieces stay smoothed).
-- Tiles are matched by their 16 CHR-RAM bytes with `default=Y` (any palette).
-  Bump `HD_VERSION` in `package_macos_app.sh` when the generator changes.
+  **HD text, windows and monsters**, then start. `DW4_NO_HD=1` skips it.
+- Tiles are matched by their 16 CHR-RAM bytes and exact palettes.
+  Bump `HD_VERSION` in `package_macos_app.sh` when the pack's content changes.
 
 ## Framework patches
 `patches/nesrecomp/*.patch` are fixes to the pinned nesrecomp checkout, applied

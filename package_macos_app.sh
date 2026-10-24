@@ -175,30 +175,31 @@ if [ -d build/saves ]; then
     done
 fi
 
-# --- HD text pack (font, window borders, cursors) ---------------------------
-# Generated from your ROM (smooth 4x upscale of the game's own text and window
-# tiles) and installed into the Mods catalog beside config.ini, exactly as the
+# --- HD pack (text, windows, battle monsters) --------------------------------
+# Generated from your ROM: the game's own text and window tiles smoothly
+# upscaled, plus your monster art (hd/monsters) sliced onto the monsters the
+# game draws (captured by forcing one battle per monster; cached between
+# builds). Installed into the Mods catalog beside config.ini, exactly as the
 # launcher's Mods > Install lays it out. Like every pack it starts disabled:
-# turn it on in the launcher (Mods > HD text and windows) before starting.
+# turn it on in the launcher (Mods > HD text, windows and monsters).
 # Set DW4_NO_HD=1 to skip.
 HD_ID="dragon-warrior-4.hd-text"
-HD_VERSION="0.3.0"
+HD_VERSION="0.4.0"
 if [ "${DW4_NO_HD:-0}" != 1 ]; then
-    say "Generating the HD text pack from your ROM"
+    say "Generating the HD pack from your ROM (text, windows, monsters)"
     PYB="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYB" ] || PYB=python3
     VENV=build/.hd-venv
-    if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c 'import PIL' 2>/dev/null; then
+    if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c 'import PIL, numpy, scipy' 2>/dev/null; then
         "$PYB" -m venv "$VENV"
-        "$VENV/bin/pip" install --quiet --upgrade pip pillow
+        "$VENV/bin/pip" install --quiet --upgrade pip pillow numpy scipy
     fi
-    rm -rf build/hd/text
-    tools/build_hd_text.sh "build/$EXE" build/hd/text "$VENV/bin/python"
-    NESMOD="dist/dw4-hd-text-$HD_VERSION.nesmod"
+    tools/build_hd_pack.sh "build/$EXE" build/hd/pack "$VENV/bin/python" "$(sysctl -n hw.ncpu)"
+    NESMOD="dist/dw4-hd-$HD_VERSION.nesmod"
     rm -f "$NESMOD"
-    "$VENV/bin/python" nesrecomp/tools/package_hdpack.py --pack build/hd/text --rom rom/DragonWarriorIV.nes \
+    "$VENV/bin/python" nesrecomp/tools/package_hdpack.py --pack build/hd/pack --rom rom/DragonWarriorIV.nes \
         --game-id dragon-warrior-4 --id "$HD_ID" --version "$HD_VERSION" \
-        --name "HD text and windows" --author "DragonWarrior4NESRecomp" \
-        --license "Personal use; generated from your ROM" --notice build/hd/text/NOTICE.txt --out "$NESMOD"
+        --name "HD text, windows and monsters" --author "DragonWarrior4NESRecomp" \
+        --license "Personal use; generated from your ROM and your artwork" --notice build/hd/pack/NOTICE.txt --out "$NESMOD"
     DEST_PKG="$DATA_DIR/mods/packages/$HD_ID/$HD_VERSION"
     # Replace every earlier version: the saved selection (and its on/off
     # state) carries over to the version that remains installed.
