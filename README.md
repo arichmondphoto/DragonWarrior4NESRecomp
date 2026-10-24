@@ -60,22 +60,35 @@ sharp at every Window Scale from 1x to 10x.
 
 How the monsters are built (`tools/build_hd_pack.sh`):
 
-1. `tools/capture_monsters.py` forces one battle per monster ID by rewriting the
-   battle slots (`$6E45-$6E48`, `$FF` = empty) in a save state taken just after the
-   route's first encounter, and dumps each battle (tiles, palettes, sprites, name).
-2. `tools/make_monster_hdpack.py` cuts each sprite from the sheet (transparency
+1. `tools/capture_monsters.py` forces one battle per monster ID by writing a
+   fixed battle (slots `$6E45-$6E48`, `$FF` = empty; counts `$6E49-$6E4C`; flags
+   `$6E44`, as the game's own setup at bank 24 `$A1AD` does) into a save state
+   taken just after the route's first encounter, and dumps each battle (tiles,
+   palettes, sprites, name). `tools/force_formation.py` starts any of the game's
+   34 fixed formations the same way.
+2. `tools/capture_necrosaro.py` starts the Necrosaro battle (formation 25) and
+   drives the real transformations: his HP (`$727E`) is set to 1 and Ragnar
+   boosted, A is tapped until the form counter `$6E7E` goes up, and each of the
+   8 forms is dumped.
+3. `tools/make_monster_hdpack.py` cuts each sprite from the sheet (transparency
    rebuilt from the black background), fits it to the original monster's pixels at
    10x and slices it along the original's pieces: background cells (keyed by CHR
    bytes + exact palette) and 8x8 sprites (pattern table `$0000`, stored
    un-flipped). Repeated tiles inside a monster are told apart by a neighbouring
-   tile (`tileNearby`) or by `hmirror`/`vmirror`.
-3. `tools/render_monsters_hd.py` + `tools/score_hd_sweep.py` render every monster
+   tile (`tileNearby`) or by `hmirror`/`vmirror`. Necrosaro's forms share most of
+   their tiles, so each form's tiles are gated on `$6E7E` (`when` in mapping.json).
+   The presenter draws a sprite's HD slice only where the 8-bit sprite pixel is
+   opaque, so for these gated sprites the art is also keyed onto the blank
+   background cells beneath them (gated on the cell's position), which keeps
+   it from being clipped to the 8-bit silhouette.
+4. `tools/render_monsters_hd.py` + `tools/score_hd_sweep.py` render every monster
    with `NESRECOMP_HDPACK_DEBUG=1` and report any original pixels still showing.
 
-To change a pairing, edit `hd/monsters/mapping.json` (sheet index → monster ID) and
-rebuild; `tools/review_sheet.py` draws side-by-side review pages. Sprites listed under
-`pending` (late bosses, Chapter 2 tournament fighters) need captures from where the
-game actually stages those battles.
+To change a pairing, edit `hd/monsters/mapping.json` (sheet index → monster ID;
+`captures` for sprites keyed on a special capture) and rebuild;
+`tools/review_sheet.py` draws side-by-side review pages. `no_art` lists the game
+monsters with no sprite on the sheet (sea monsters and two recolours); they keep
+their 8-bit art.
 
 - macOS: `./build_macos.sh` (or `./package_macos_app.sh`) generates the pack and
   installs it in the Mods catalog. In the launcher open **Mods**, turn on
@@ -115,6 +128,11 @@ They are framework bugs, kept here until they can go upstream:
   menu drew at half size in the top-left with its text clipped: Dear ImGui lays
   out in points but nesrecomp never set the renderer's HiDPI scale (as ImGui's
   SDL example does). Ratio 1 (Windows/Linux) is unchanged.
+- `0007-hdpack-memory-conditions-read-wram.patch` — `memoryCheck` /
+  `memoryCheckConstant` conditions only read the 2KB internal RAM, so a condition
+  on `$6000-$7FFF` was always false. They now read the cartridge work RAM, where
+  Dragon Warrior IV keeps its battle state (the pack gates Necrosaro's forms on
+  `$6E7E`).
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 

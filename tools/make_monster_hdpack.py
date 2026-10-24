@@ -33,7 +33,8 @@ usage: make_monster_hdpack.py CAPTURE OUTDIR [--scale 10] [--report FILE]
 import argparse, json, os, sys
 from PIL import Image, ImageOps
 sys.path.insert(0, os.path.dirname(__file__))
-from monster_tiles import monster
+from monster_tiles import monster, FIRST_MONSTER_TILE
+from vramdump import load
 from sheet_sprites import cut
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -99,7 +100,7 @@ def main():
     # Sprites that share tiles with another sheet sprite (Necrosaro's forms reuse
     # most of the previous form's tiles) are gated on game memory: "when" maps
     # a sheet index to ADDR==VALUE, e.g. the form counter $6E7E.
-    gates = {}
+    gates, pos_conds = {}, set()
     for k, w in mapping.get('when', {}).items():
         if k.startswith('_'): continue
         addr, val = w.split('==')
@@ -114,7 +115,7 @@ def main():
         canvas = fit(cut(sheet, boxes[s]), m['image'], S)
         ox, oy = m['box'][:2]
         bg, spr = m['bg'], m['spr']
-        packer = Sheet(len(bg) + len(spr), T)
+        packer = Sheet(len(bg) + len(spr) * (5 if s in gates else 1), T)   # gated: room for cells under sprites
         total = alpha_sum(canvas); kept = 0; unresolved = 0
         # ---- background cells ----
         occ = {}
@@ -159,12 +160,41 @@ def main():
                     gate = ('' if sp['hflip'] else '!') + 'hmirror&' + ('' if sp['vflip'] else '!') + 'vmirror'
                     tiles.append(f'[{gate}]{entry}')
         if s in gates:
+            # The presenter draws a sprite's HD slice only where the original
+            # sprite pixel is opaque, so art reaching past the 8-bit silhouette
+            # (gaps around eyes, horns) would be clipped in native-pixel steps.
+            # For a memory-gated monster, also key the art onto the plain
+            # background cells under its sprites, gated on that exact cell.
+            mem = load(os.path.join(a.capture, stem + '.mem'))
+            ci, chr_ram, pal = mem['ciram'], mem['chr_ram'], mem['palette']
+            under = set()
+            for sp in spr:
+                for r in range(sp['y'] // 8, min(18, (sp['y'] + 7) // 8 + 1)):
+                    for c in range(sp['x'] // 8, min(32, (sp['x'] + 7) // 8 + 1)):
+                        if (r, c) not in bg: under.add((r, c))
+            for (r, c) in sorted(under):
+                sl = canvas.crop(((c * 8 - ox) * S, (r * 8 - oy) * S, (c * 8 - ox) * S + T, (r * 8 - oy) * S + T))
+                if sl.getchannel('A').getbbox() is None: continue
+                t = ci[r * 32 + c]
+                at = ci[0x3C0 + (r // 4) * 8 + c // 4]
+                sub = (at >> (((r % 4) // 2) * 4 + ((c % 4) // 2) * 2)) & 3
+                key = (bytes(chr_ram[0x1000 + 16 * t: 0x1000 + 16 * t + 16]),
+                       bytes([pal[0], pal[sub * 4 + 1], pal[sub * 4 + 2], pal[sub * 4 + 3]]))
+                cell = []
+                for nm, ax, op, v in ((f'posx_ge_{c * 8}', 'X', '>=', c * 8), (f'posx_lt_{c * 8 + 8}', 'X', '<', c * 8 + 8),
+                                      (f'posy_ge_{r * 8}', 'Y', '>=', r * 8), (f'posy_lt_{r * 8 + 8}', 'Y', '<', r * 8 + 8)):
+                    if nm not in pos_conds:
+                        pos_conds.add(nm); conds.append(f'<condition>{nm},positionCheck{ax},{op},{v}')
+                    cell.append(nm)
+                x, y = packer.add(drawn(sl))
+                tiles.append(f'[{"&".join(cell)}]<tile>{img_index},{key[0].hex().upper()},{key[1].hex().upper()},{x},{y},1,N')
             g = gates[s]
             for i in range(first_tile, len(tiles)):
                 t = tiles[i]
                 tiles[i] = f'[{g}&{t[1:]}' if t.startswith('[') else f'[{g}]{t}'
         rel = f'monsters/{os.path.basename(stem)}.png'
-        packer.img.save(os.path.join(a.outdir, rel), optimize=True)
+        rows = max(1, (packer.k + packer.cols - 1) // packer.cols)
+        packer.img.crop((0, 0, packer.img.width, rows * T)).save(os.path.join(a.outdir, rel), optimize=True)
         lines.append(f'<img>{rel}')
         img_index += 1
         report[mid] = {'sheet': s, 'bg_cells': len(bg), 'sprites': len(spr), 'unresolved_repeats': unresolved,
