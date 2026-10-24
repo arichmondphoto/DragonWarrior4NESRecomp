@@ -13,7 +13,7 @@ Place it at `rom/DragonWarriorIV.nes`.
 ## Play on macOS
 Requires the Xcode command line tools and [Homebrew](https://brew.sh).
 ```sh
-git clone --recurse-submodules https://github.com/arichmondphoto/DragonWarrior4NESRecomp.git
+git clone https://github.com/arichmondphoto/DragonWarrior4NESRecomp.git   # private repo: sign in when prompted
 cd DragonWarrior4NESRecomp
 ./build_macos.sh "/path/to/Dragon Warrior IV (USA).nes"   # first time: installs cmake/ninja/sdl2/python, builds
 ./play_macos.sh
