@@ -67,7 +67,8 @@ The art is generated from **your ROM** at build time and is not stored in the re
 
 ## Framework patches
 `patches/nesrecomp/*.patch` are fixes to the pinned nesrecomp checkout, applied
-by `tools/apply_patches.sh` (run automatically by `build_macos.sh`; idempotent).
+by `tools/apply_patches.sh` (run automatically by `build_macos.sh`). It restores the files the
+patches touch to the pinned commit, then applies every patch in order, so any earlier state is fine.
 They are framework bugs, kept here until they can go upstream:
 
 - `0001-cyc_sdl-hd-window-native-size.patch` — with an HD pack the window was
