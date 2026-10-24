@@ -1,0 +1,42 @@
+From: DragonWarrior4NESRecomp
+Subject: [PATCH] cyc launcher: offer Trim side borders
+
+With recomp-ui that defines RECOMP_LAUNCHER_HAS_CROP_SIDES, set
+has_crop_sides and carry CropSides to and from the launcher, so the setting
+from patch 0004 appears in the launcher's Display settings as well as the
+in-game menu. Restore defaults returns it to on.
+---
+diff --git a/runner/cyc/cyc_ui_launcher.c b/runner/cyc/cyc_ui_launcher.c
+index f16c7d0..50124d0 100644
+--- a/runner/cyc/cyc_ui_launcher.c
++++ b/runner/cyc/cyc_ui_launcher.c
+@@ -56,6 +56,9 @@ static void to_launcher(const CycSettings *s, RecompLauncherCSettings *io, const
+     io->window_scale = s->window_scale;
+     io->fullscreen = s->fullscreen;
+     io->integer_scale = s->integer_scale;
++#ifdef RECOMP_LAUNCHER_HAS_CROP_SIDES
++    io->crop_sides = s->crop_sides;
++#endif
+     io->linear_filter = s->linear_filter;
+     /* The host's 1/0 predates the setting: always transfer an opinion, so the
+      * row shows ours rather than the model's ON seed. */
+@@ -96,6 +99,9 @@ static void from_launcher(const RecompLauncherCSettings *io, CycSettings *s, con
+     s->window_scale = io->window_scale < 1 ? 1 : io->window_scale > CYC_WINDOW_SCALE_MAX ? CYC_WINDOW_SCALE_MAX : io->window_scale;
+     s->fullscreen = io->fullscreen < 0 ? 0 : io->fullscreen > 2 ? 2 : io->fullscreen;
+     s->integer_scale = io->integer_scale != 0;
++#ifdef RECOMP_LAUNCHER_HAS_CROP_SIDES
++    s->crop_sides = io->crop_sides != 0;
++#endif
+     s->linear_filter = io->linear_filter != 0;
+     /* SDL2 cannot do adaptive (no swap-interval API on the 2D renderer), so
+      * Adaptive and On both mean synced presents. */
+@@ -227,6 +233,9 @@ int cyc_ui_launcher(CycSettings *settings, const char *settings_path, const CycH
+     gi.hdpack_supported = 0;
+ #endif
+     gi.has_integer_scale = 1;
++#ifdef RECOMP_LAUNCHER_HAS_CROP_SIDES
++    gi.has_crop_sides = 1;            /* Trim side borders (CropSides) */
++#endif
+     gi.has_rewind_depth = 1;
+     /* Driver vsync at present time: the launcher draws its Graphics row for
+      * it (psx is the only console that sets this today). The host builds its

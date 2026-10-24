@@ -1,0 +1,117 @@
+From: DragonWarrior4NESRecomp
+Subject: [PATCH] launcher: optional "Trim side borders" Display checkbox
+
+Append Settings.crop_sides and GameInfo.has_crop_sides (ABI-additive) and
+define RECOMP_LAUNCHER_HAS_CROP_SIDES. Hosts that set has_crop_sides get a
+"Trim side borders" checkbox under Integer scaling on both Display surfaces;
+others are unchanged.
+---
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index 7ed178a..1ab6a5f 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -3790,7 +3790,7 @@ bool video_card_grows(const LauncherModel* m) {
+     if (m->num_display_layouts > 0) return true;
+     // NES legacy-surface additions (Integer scaling row, HD texture pack block)
+     // add extra rows the fixed no_scroll band wasn't sized for.
+-    if (m->has_integer_scale || m->hdpack_supported) return true;
++    if (m->has_integer_scale || m->has_crop_sides || m->hdpack_supported) return true;
+     return false;
+ }
+ 
+@@ -3981,6 +3981,11 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+             bool is = m->s.integer_scale != 0;
+             if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
+         }
++        if (m->has_crop_sides) {      // NES: hide the masked left column
++            row_label_right("Trim side borders", th, cb);
++            bool cs = m->s.crop_sides != 0;
++            if (ImGui::Checkbox("##cropsides", &cs)) launcher_model_toggle_crop_sides(m);
++        }
+         if (m->has_sharp_filter) {
+             row_label_right("Scaling filter", th, px(180));
+             if (ImGui::Button(ui_text(launcher_model_scaling_filter_label(m)),
+@@ -4080,6 +4085,11 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+         bool is = m->s.integer_scale != 0;
+         if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
+     }
++    if (m->has_crop_sides) {
++        row_label_right("Trim side borders", th, cb);
++        bool cs = m->s.crop_sides != 0;
++        if (ImGui::Checkbox("##cropsides", &cs)) launcher_model_toggle_crop_sides(m);
++    }
+ 
+     /* renderer_offered, not has_renderer: a host that declares its renderers
+      * may declare NONE, and an empty dropdown is worse than no row. */
+diff --git a/src/common/launcher_model.c b/src/common/launcher_model.c
+index eacae9a..76a72d0 100644
+--- a/src/common/launcher_model.c
++++ b/src/common/launcher_model.c
+@@ -385,6 +385,7 @@ void launcher_model_init(LauncherModel* m,
+     m->in_session           = game->in_session != 0;
+     m->has_open_launcher_hotkey = game->has_open_launcher_hotkey != 0;
+         m->has_integer_scale    = game->has_integer_scale != 0;
++        m->has_crop_sides       = game->has_crop_sides != 0;
+         m->hdpack_supported     = game->hdpack_supported != 0;
+         m->password_save_path   = game->password_save_path;
+         m->password_save_label  = game->password_save_label;
+@@ -4176,6 +4177,11 @@ void launcher_model_toggle_integer_scale(LauncherModel* m) {
+     m->s.integer_scale = !m->s.integer_scale;
+ }
+ 
++void launcher_model_toggle_crop_sides(LauncherModel* m) {
++    if (!m->has_crop_sides) return;      // gated: no-op when unsupported
++    m->s.crop_sides = !m->s.crop_sides;
++}
++
+ void launcher_model_toggle_hdpack(LauncherModel* m) {
+     if (!m->hdpack_supported) return;    // gated: no-op when unsupported
+     m->s.hdpack_enabled = !m->s.hdpack_enabled;
+diff --git a/src/common/launcher_model.h b/src/common/launcher_model.h
+index 445d3c8..0c7ae6d 100644
+--- a/src/common/launcher_model.h
++++ b/src/common/launcher_model.h
+@@ -195,6 +195,7 @@ typedef struct {
+     bool        in_session;          // opened from a running game (RESUME, not PLAY)
+     bool        has_open_launcher_hotkey; // [KeyMap] OpenLauncher row in Hotkeys
+     bool        has_integer_scale;   // Integer-scale checkbox in Display settings
++    bool        has_crop_sides;      // Trim-side-borders checkbox in Display settings
+     bool        hdpack_supported;    // HD-texture-pack toggle + folder picker
+     // Password/mantra save (e.g. Faxanadu): non-NULL path swaps the SAVES row
+     // for a password-text UI (read + edit-with-confirm of a 1-line file).
+@@ -1129,6 +1130,7 @@ void launcher_model_set_msu1_dir(LauncherModel* m, const char* dir);
+ 
+ // ---- NES-style settings (capability-gated like the PSX deep set) ----
+ void launcher_model_toggle_integer_scale(LauncherModel* m);   // gated has_integer_scale
++void launcher_model_toggle_crop_sides(LauncherModel* m);      // gated has_crop_sides
+ 
+ // ---- cartridge light sensor (all gated on has_solar_sensor) ----------------
+ // The postal code is stored verbatim apart from trimming: validating which
+diff --git a/src/recomp_launcher.h b/src/recomp_launcher.h
+index b0bfa74..72aff24 100644
+--- a/src/recomp_launcher.h
++++ b/src/recomp_launcher.h
+@@ -1573,8 +1573,13 @@ struct RecompLauncherCSettings {
+      * additively; a zero-initialized host reads as unset. */
+     int  quality_preset;
+     int  quality_base;
++    /* Trim side borders (GameInfo.has_crop_sides): 0/1, host-owned. Hides
++     * the left column many NES games mask by trimming both sides equally.
++     * Appended additively; a zero-initialized host reads as off. */
++    int  crop_sides;
+ };
+ #define RECOMP_LAUNCHER_HAS_ZAPPER_SETTINGS 1
++#define RECOMP_LAUNCHER_HAS_CROP_SIDES 1
+ 
+ /* Largest run-ahead depth the launcher will offer for
+  * RecompLauncherCSettings.run_ahead. Deeper than this and the cost (one full
+@@ -2414,6 +2419,9 @@ typedef struct RecompLauncherCGameInfo {
+     int (*rom_describe)(void* ctx, const uint8_t* image, size_t len,
+                         char* out, size_t out_size);
+     void*              rom_describe_ctx;
++    /* 1 shows a "Trim side borders" checkbox in Display settings, driving
++     * Settings.crop_sides. Appended for ABI stability; 0 hides it. */
++    int                has_crop_sides;
+ } RecompLauncherCGameInfo;
+ 
+ /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */

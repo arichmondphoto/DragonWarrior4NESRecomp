@@ -90,12 +90,17 @@ They are framework bugs, kept here until they can go upstream:
   masks the leftmost 8 pixels, leaving a black bar. New setting **Trim side
   borders** (in-game menu > Display; `CropSides` in config.ini; on by default)
   trims 8 pixels from both sides so the picture stays centred (240x240).
+- `0005-cyc-launcher-trim-side-borders.patch` — also offers that setting in the
+  launcher's Display settings (needs recomp-ui patch 0002).
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 
 - `0001-launcher-configurable-window-scale-max.patch` — the launcher offered
   1x-6x only; `LNG_WINDOW_SCALE_MAX` is now a compile-time override (default 6),
   which this project's `CMakeLists.txt` sets to 10.
+- `0002-launcher-trim-side-borders-setting.patch` — an optional "Trim side
+  borders" checkbox in Display settings (`Settings.crop_sides`,
+  `GameInfo.has_crop_sides`, appended ABI-additively).
 
 ## Test routes
 | Route | Frames | Covers |
