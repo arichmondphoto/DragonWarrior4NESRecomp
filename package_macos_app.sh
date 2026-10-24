@@ -92,6 +92,22 @@ fix_deps() {   # $1 = Mach-O file inside the bundle
     done
 }
 fix_deps "$C/MacOS/$EXE"
+
+# Homebrew's "sdl2" is sdl2-compat: libSDL2 is a shim that dlopen()s SDL3 at
+# runtime, so SDL3 never shows up in otool -L. sdl2-compat looks first for
+# @loader_path/libSDL3.dylib, i.e. beside itself in Contents/Frameworks.
+if [ -f "$C/Frameworks/libSDL2-2.0.0.dylib" ] && grep -aq 'libSDL3' "$C/Frameworks/libSDL2-2.0.0.dylib"; then
+    SDL3_SRC=""
+    for cand in "$(brew --prefix sdl3 2>/dev/null)/lib/libSDL3.0.dylib" "$(brew --prefix)/lib/libSDL3.0.dylib" "$(brew --prefix)/lib/libSDL3.dylib"; do
+        [ -f "$cand" ] && { SDL3_SRC="$cand"; break; }
+    done
+    [ -n "$SDL3_SRC" ] || die "SDL2 here is sdl2-compat, which needs SDL3, but libSDL3 wasn't found (try: brew install sdl3)"
+    cp -L "$SDL3_SRC" "$C/Frameworks/libSDL3.dylib"; chmod u+w "$C/Frameworks/libSDL3.dylib"
+    install_name_tool -id "@loader_path/libSDL3.dylib" "$C/Frameworks/libSDL3.dylib"
+    fix_deps "$C/Frameworks/libSDL3.dylib"
+    echo "  libSDL3.dylib (loaded at runtime by sdl2-compat)"
+fi
+
 # Remove any LC_RPATH entries pointing back into Homebrew.
 otool -l "$C/MacOS/$EXE" | awk '/LC_RPATH/{r=1} r&&/path /{print $2; r=0}' | while read -r rp; do
     is_external "$rp" && install_name_tool -delete_rpath "$rp" "$C/MacOS/$EXE" || true
