@@ -79,6 +79,12 @@ They are framework bugs, kept here until they can go upstream:
   config.ini, the launcher bridge and the in-game menu; one `CYC_WINDOW_SCALE_MAX`
   (10) now applies everywhere.
 
+- `0003-cyc_sdl-fit-window-to-display.patch` — Window Scale is in points on
+  macOS, so large scales (e.g. 10x = 2560x2400 points) ran off the screen. The
+  window now uses the largest whole scale that fits the display (the setting is
+  kept for bigger screens). On a Retina display Window Scale 5 already shows a
+  10x pack at full detail (2 pixels per point).
+
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 
 - `0001-launcher-configurable-window-scale-max.patch` — the launcher offered

@@ -1,0 +1,76 @@
+From: DragonWarrior4NESRecomp
+Subject: [PATCH] cyc_sdl: fit the game window to the display
+
+Window Scale is in window units (points on macOS). Large scales (up to 10x)
+exceed the screen; macOS clamps only the height, so the window hung off both
+sides of the display. Use the largest whole scale that fits the display's
+usable area (less the title bar) and centre it there. The saved setting is
+unchanged, so a larger display still gets the full size.
+---
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index e7a04c5..68653d9 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -474,13 +474,49 @@ static SDL_ScaleMode texture_scale_mode(void)
+     return s_set.linear_filter || s_tex_div > 1 ? SDL_ScaleModeLinear : SDL_ScaleModeNearest;
+ }
+ 
++/* Window Scale is in window units: points on macOS, where a Retina display
++ * shows two pixels per point. A large scale (up to 10x) can exceed the
++ * screen, and macOS then clamps only the height, leaving a too-wide window
++ * hanging off both sides. Use the largest whole scale whose window fits the
++ * display's usable area (minus room for the title bar); the saved setting is
++ * unchanged, so a larger display gets the full size. Returns true if the
++ * size was reduced. */
++static bool fit_window_to_display(int display, int *w, int *h)
++{
++    SDL_Rect r;
++    if (display < 0) display = 0;
++    if (SDL_GetDisplayUsableBounds(display, &r) != 0 || r.w <= 0 || r.h <= 0) return false;
++    int top = 0, left = 0, bottom = 0, right = 0;
++    if (!s_win || SDL_GetWindowBordersSize(s_win, &top, &left, &bottom, &right) != 0) top = 32;
++    int max_w = r.w - left - right, max_h = r.h - top - bottom;
++    if (*w <= max_w && *h <= max_h) return false;
++    int bw = base_w(), bh = logical_h();
++    int k = bw > 0 && bh > 0 ? (max_w / bw < max_h / bh ? max_w / bw : max_h / bh) : 1;
++    if (k < 1) k = 1;
++    *w = bw * k;
++    *h = bh * k;
++    return true;
++}
++
+ static void apply_settings(void)
+ {
+     if (!s_win) return;
+     Uint32 fs = s_set.fullscreen == 1 ? SDL_WINDOW_FULLSCREEN_DESKTOP : s_set.fullscreen == 2 ? SDL_WINDOW_FULLSCREEN : 0;
+     if ((SDL_GetWindowFlags(s_win) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != fs)
+         SDL_SetWindowFullscreen(s_win, fs);
+-    if (!fs) SDL_SetWindowSize(s_win, base_w() * s_set.window_scale, logical_h() * s_set.window_scale);
++    if (!fs) {
++        int ww = base_w() * s_set.window_scale, wh = logical_h() * s_set.window_scale;
++        int display = SDL_GetWindowDisplayIndex(s_win);
++        bool fitted = fit_window_to_display(display, &ww, &wh);
++        int cw = 0, ch = 0;
++        SDL_GetWindowSize(s_win, &cw, &ch);
++        if (cw != ww || ch != wh) {
++            SDL_SetWindowSize(s_win, ww, wh);
++            if (fitted)
++                SDL_SetWindowPosition(s_win, SDL_WINDOWPOS_CENTERED_DISPLAY(display < 0 ? 0 : display),
++                                      SDL_WINDOWPOS_CENTERED_DISPLAY(display < 0 ? 0 : display));
++        }
++    }
+     SDL_RenderSetLogicalSize(s_ren, base_w(), logical_h());
+     apply_picture_scale();
+     if (s_tex) SDL_SetTextureScaleMode(s_tex, texture_scale_mode());
+@@ -1362,8 +1398,9 @@ int cyc_sdl_main(const char *title_in, int scale)
+     s_tex_w = w;
+     s_tex_h = h;
+     s_tex_div = picture_divisor(w, h);
+-    s_win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, base_w() * s_set.window_scale,
+-                             logical_h() * s_set.window_scale,
++    int win_w = base_w() * s_set.window_scale, win_h = logical_h() * s_set.window_scale;
++    fit_window_to_display(0, &win_w, &win_h);
++    s_win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, win_w, win_h,
+                              SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | (s_hidden ? SDL_WINDOW_HIDDEN : 0));
+     s_ren = NULL;
+     if (!create_renderer() || !ensure_texture(w, h)) {
