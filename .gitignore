@@ -1,0 +1,9 @@
+build*/
+rom/
+*.nes
+saves/
+savestates/
+*.cycstate
+out/
+*.log
+*.png

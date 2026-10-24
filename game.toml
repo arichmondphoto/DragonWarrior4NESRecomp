@@ -1,0 +1,11 @@
+# Dragon Warrior IV (USA) - NESRecomp configuration
+# Board: MMC1 SUROM (mapper 1), 512 KiB PRG, 8 KiB CHR-RAM, 8 KiB battery WRAM.
+# Bank-switch routines, dispatch tables and extra_func entries get added here
+# as they are verified against the ROM (never copied from other games).
+
+[game]
+output_prefix = "dw4"
+cycle_accurate = true
+
+# Native-coverage seeds gathered from headless routes (--miss-log).
+cycle_seed_file = "seeds.txt"
