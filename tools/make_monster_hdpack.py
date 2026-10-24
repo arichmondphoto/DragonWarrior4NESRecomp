@@ -1,7 +1,9 @@
 """Add HD battle monsters to an HD pack directory (Mesen hires.txt format).
 
 Inputs:
-  CAPTURE   tools/capture_monsters.py output (NNN.mem / NNN.png per monster ID)
+  CAPTURE   tools/capture_monsters.py output (NNN.mem / NNN.png per monster ID),
+            plus the special captures named in mapping.json "captures"
+            (CAPTURE/necro/necro_F from tools/capture_necrosaro.py)
   hd/monsters/mapping.json + boxes.json + the source sheet (the owner's art)
 
 For each mapped monster the sprite is cut from the sheet (transparency rebuilt
@@ -92,8 +94,22 @@ def main():
     img_index = sum(1 for l in lines if l.startswith('<img>'))
     os.makedirs(os.path.join(a.outdir, 'monsters'), exist_ok=True)
     conds, tiles, report = [], [], {}
-    for s, mid in sorted(((int(k), v) for k, v in mapping['map'].items()), key=lambda kv: kv[1]):
-        m = monster(os.path.join(a.capture, f'{mid:03d}.mem'), os.path.join(a.capture, f'{mid:03d}.png'))
+    jobs = [(int(k), v, f'{v:03d}') for k, v in sorted(mapping['map'].items(), key=lambda kv: kv[1])]
+    jobs += [(int(k), os.path.basename(v), v) for k, v in mapping.get('captures', {}).items() if not k.startswith('_')]
+    # Sprites that share tiles with another sheet sprite (Necrosaro's forms reuse
+    # most of the previous form's tiles) are gated on game memory: "when" maps
+    # a sheet index to ADDR==VALUE, e.g. the form counter $6E7E.
+    gates = {}
+    for k, w in mapping.get('when', {}).items():
+        if k.startswith('_'): continue
+        addr, val = w.split('==')
+        name = f'mem{addr}_{int(val, 0)}'
+        if name not in gates.values():
+            conds.append(f'<condition>{name},memoryCheckConstant,{addr},==,{int(val, 0):X}')
+        gates[int(k)] = name
+    for s, mid, stem in jobs:
+        first_tile = len(tiles)
+        m = monster(os.path.join(a.capture, stem + '.mem'), os.path.join(a.capture, stem + '.png'))
         if not m: report[mid] = 'no monster pieces in capture'; continue
         canvas = fit(cut(sheet, boxes[s]), m['image'], S)
         ox, oy = m['box'][:2]
@@ -142,7 +158,12 @@ def main():
                 else:
                     gate = ('' if sp['hflip'] else '!') + 'hmirror&' + ('' if sp['vflip'] else '!') + 'vmirror'
                     tiles.append(f'[{gate}]{entry}')
-        rel = f'monsters/{mid:03d}.png'
+        if s in gates:
+            g = gates[s]
+            for i in range(first_tile, len(tiles)):
+                t = tiles[i]
+                tiles[i] = f'[{g}&{t[1:]}' if t.startswith('[') else f'[{g}]{t}'
+        rel = f'monsters/{os.path.basename(stem)}.png'
         packer.img.save(os.path.join(a.outdir, rel), optimize=True)
         lines.append(f'<img>{rel}')
         img_index += 1
@@ -154,7 +175,7 @@ def main():
     out = head + imgs + rest + [f'# HD battle monsters ({len(report)}): owner art keyed by CHR bytes + exact palette'] + conds + tiles
     open(hires, 'w').write('\n'.join(out) + '\n')
     print(f'{len(report)} monsters, {len(tiles)} tile entries ({len(conds)} neighbour conditions) -> {hires}')
-    if a.report: json.dump({str(k): v for k, v in sorted(report.items())}, open(a.report, 'w'), indent=1)
+    if a.report: json.dump({str(k): v for k, v in sorted(report.items(), key=lambda kv: str(kv[0]))}, open(a.report, 'w'), indent=1)
 
 if __name__ == '__main__':
     main()

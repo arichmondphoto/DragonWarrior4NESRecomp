@@ -1,0 +1,28 @@
+From: DragonWarrior4NESRecomp
+Subject: [PATCH] hdpack: memory conditions read cartridge work RAM
+
+memoryCheck / memoryCheckConstant only read the 2KB internal RAM, so a
+condition on a $6000-$7FFF address was always 0. In the cycle backend, read
+the cartridge work RAM (current bank) as the CPU does. Dragon Warrior IV
+keeps its battle state there; the HD pack gates each Necrosaro form on the
+form counter at $6E7E.
+---
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 2e07702..be4055a 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -962,7 +962,13 @@ static int s_opt_hide_orig = -1;   /* unmatched tiles show backdrop, not the ori
+ static uint8_t read_cpu_mem(uint32_t addr) {
+     addr &= 0xFFFF;
+     if (addr < 0x2000) return g_ram[addr & 0x07FF];
+-    return 0;   /* outside internal RAM (PPU regs / ROM): not tracked */
++#ifdef NESRECOMP_CYCLE_HDPACK
++    /* Cartridge work RAM ($6000-$7FFF, current bank), as the CPU reads it.
++     * Games keep much of their state there (e.g. battle variables). */
++    if (addr >= 0x6000 && addr < 0x8000 && hw_cart.has_wram && hw_cart.wram_len)
++        return hw_cart.wram[(hw_cart.wram_bank + (addr & 0x1FFF)) % hw_cart.wram_len];
++#endif
++    return 0;   /* PPU regs / ROM / no work RAM: not tracked */
+ }
+ static int cond_cmp(int a, HdCondOp op, int b) {
+     switch (op) {

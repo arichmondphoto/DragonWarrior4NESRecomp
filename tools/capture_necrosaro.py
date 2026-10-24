@@ -17,7 +17,10 @@ variables directly does not redraw him, so this drives the real battle:
 Writes OUT/necro_F.mem / .png for each form F (0 = the opening form) and
 OUT/necrosaro.json with the form -> graphics ID list.
 
-usage: capture_necrosaro.py HOST OUT
+With --mods-root, the HD pack there is active and each form's presented
+(HD) frame is also written as OUT/necro_F_hd.png, for checking the art.
+
+usage: capture_necrosaro.py HOST OUT [--mods-root DIR]
 """
 import json, os, shutil, subprocess, sys, tempfile
 sys.path.insert(0, os.path.dirname(__file__))
@@ -30,9 +33,10 @@ ENC = 8718
 NECRO_FORMATION = 25
 
 class Run:
-    def __init__(self, host, tmp):
+    def __init__(self, host, tmp, mods=None):
         self.host, self.tmp, self.n = host, tmp, 0
-    def step(self, state, frame, frames, taps=False, png=None):
+        self.extra = ['--mods-root', mods] if mods else []
+    def step(self, state, frame, frames, taps=False, png=None, present=None):
         """Run `frames` frames from `state` (which continues at frame+1)."""
         self.n += 1
         end = frame + frames
@@ -45,6 +49,8 @@ class Run:
         cmd = [self.host, ROM, '--load-state', state, '--frames', str(end + 1), '--no-save', '--input', inp,
                '--mem-frame', str(end), '--mem-out', mem, '--save-state', f'{end}:{out_state}']
         if png: cmd += ['--screenshot', png]
+        if present: cmd += ['--present-out', present]
+        cmd += self.extra
         subprocess.run(cmd, check=True, capture_output=True)
         return out_state, end, mem
 
@@ -63,14 +69,16 @@ def boost(state, wram_at):
 
 def main():
     host, out = sys.argv[1], sys.argv[2]
+    mods = sys.argv[sys.argv.index('--mods-root') + 1] if '--mods-root' in sys.argv else None
+    extra = ['--mods-root', mods] if mods else []
     os.makedirs(out, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix='dw4necro')
     base, dump = os.path.join(tmp, 'enc.cycstate'), os.path.join(tmp, 'enc.mem')
     subprocess.run([host, ROM, '--frames', str(ENC + 1), '--no-save', '--input', ROUTE, '--mem-frame', str(ENC),
-                    '--mem-out', dump, '--save-state', f'{ENC}:{base}'], check=True, capture_output=True)
+                    '--mem-out', dump, '--save-state', f'{ENC}:{base}'] + extra, check=True, capture_output=True)
     st = open(base, 'rb').read(); wram_at = st.find(load(dump)['wram'])
     start = os.path.join(tmp, 'necro.cycstate'); open(start, 'wb').write(patch(st, wram_at, NECRO_FORMATION))
-    r = Run(host, tmp)
+    r = Run(host, tmp, mods)
     state, frame, mem = r.step(start, ENC, 8960 - ENC)                    # battle drawn, menu up
     forms = []
     form = 0
@@ -78,7 +86,8 @@ def main():
         w = load(mem)['wram']
         gid = w[0x1206]
         mem_out = os.path.join(out, f'necro_{form}.mem'); png_out = os.path.join(out, f'necro_{form}.png')
-        state, frame, mem = r.step(state, frame, 2, png=png_out)
+        state, frame, mem = r.step(state, frame, 2, png=png_out,
+                                   present=os.path.join(out, f'necro_{form}_hd.png') if mods else None)
         shutil.copy(mem, mem_out); forms.append({'form': form, 'graphics_id': gid})
         print(f'form {form}: graphics ${gid:02X}')
         if gid == 0xD2: break

@@ -76,6 +76,7 @@
   "71": 101,
   "72": 80,
   "73": 102,
+  "74": 186,
   "75": 162,
   "76": 22,
   "77": 88,
@@ -120,6 +121,7 @@
   "117": 116,
   "118": 150,
   "119": 180,
+  "120": 112,
   "121": 85,
   "123": 24,
   "124": 97,
@@ -161,10 +163,14 @@
   "160": 187,
   "161": 123,
   "162": 144,
+  "163": 177,
+  "164": 176,
   "165": 175,
+  "166": 194,
   "167": 59,
   "168": 124,
-  "170": 112,
+  "169": 181,
+  "171": 172,
   "172": 128,
   "173": 170,
   "174": 165,
@@ -178,25 +184,46 @@
   "182": 143,
   "183": 167
  },
- "pending": {
-  "74": "game ID 186 (furry, lilac): capture renders black; needs the real battle setup",
-  "120": "horned beast (blue): likely a Chapter 5 boss form; capture incomplete",
-  "122": "horned beast (white): likely a boss form; capture incomplete",
-  "163": "Vivian (Chapter 2 tournament, game ID 177): capture incomplete",
-  "164": "Roric (Chapter 2 tournament, game ID 176): capture incomplete",
-  "169": "game ID 181 (+185): two-slot boss, capture incomplete",
-  "171": "game ID 172: two-slot boss, capture incomplete",
-  "184": "Necrosaro transformation",
-  "185": "Necrosaro transformation",
-  "186": "Necrosaro transformation",
-  "187": "Necrosaro transformation",
-  "188": "Necrosaro final form",
-  "189": "Necrosaro final form",
-  "190": "Necrosaro final form",
-  "191": "Necrosaro final form"
- },
  "unused": {
   "88": "fifth knight: no matching game monster",
-  "166": "second fighter: no matching game monster"
+  "122": "horned beast (white): no matching game monster",
+  "170": "no matching game monster (112 Hambalba is sheet 120)",
+  "184": "duplicate of 180 (Necrosaro form 0)"
+ },
+ "captures": {
+  "_about": "Sheet sprites keyed onto a special capture instead of NNN.mem: Necrosaro forms 1-7 (tools/capture_necrosaro.py, CAPTURE/necro/necro_F). Form 0 is the plain ID 174 capture (sheet 180).",
+  "185": "necro/necro_1",
+  "186": "necro/necro_2",
+  "187": "necro/necro_3",
+  "188": "necro/necro_4",
+  "189": "necro/necro_5",
+  "190": "necro/necro_6",
+  "191": "necro/necro_7"
+ },
+ "no_art": {
+  "_about": "Game monster IDs with no sprite on the sheet; they keep their original 8-bit art.",
+  "ids": [
+   43,
+   68,
+   83,
+   84,
+   87,
+   105,
+   114,
+   127,
+   173,
+   189
+  ]
+ },
+ "when": {
+  "_about": "Sheet sprites drawn only while a game byte has a value (ADDR==VALUE). Necrosaro's forms share most tiles, so each is gated on his form counter $6E7E (reset to 0 at battle start, bank 18 $8092; incremented by bank 17 $9212/$9238).",
+  "180": "6E7E==0",
+  "185": "6E7E==1",
+  "186": "6E7E==2",
+  "187": "6E7E==3",
+  "188": "6E7E==4",
+  "189": "6E7E==5",
+  "190": "6E7E==6",
+  "191": "6E7E==7"
  }
 }
