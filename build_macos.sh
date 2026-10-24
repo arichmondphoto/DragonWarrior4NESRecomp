@@ -34,8 +34,8 @@ PY="$(brew --prefix python@3.12)/bin/python3.12"
 [ -x "$PY" ] || die "python3.12 not found at $PY"
 
 # 2. Sources ---------------------------------------------------------------
-say "Fetching nesrecomp and recomp-ui at their pinned commits"
-git submodule update --init nesrecomp recomp-ui
+say "Fetching nesrecomp (with its netplay libraries) and recomp-ui at their pinned commits"
+git submodule update --init --recursive nesrecomp recomp-ui
 
 # 3. ROM -------------------------------------------------------------------
 mkdir -p rom
