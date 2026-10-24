@@ -9,3 +9,5 @@ cycle_accurate = true
 
 # Native-coverage seeds gathered from headless routes (--miss-log).
 cycle_seed_file = "seeds.txt"
+# RAM-resident code (NMI trampoline at $0502, jump stubs at $0023) gathered with --capture-log.
+cycle_capture_file = "captures.txt"
