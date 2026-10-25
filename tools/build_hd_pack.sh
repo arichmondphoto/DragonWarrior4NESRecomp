@@ -68,6 +68,8 @@ if ls hd/field/source/*.png >/dev/null 2>&1; then
     echo "  map tiles"
     rm -rf "$FCAP/art"
     "$PY" tools/slice_field_atlases.py "$FCAP/art"
+    # sheets generated with the API (tools/export_chatgpt_tiles.py) replace atlas art per tile
+    "$PY" tools/slice_field_sheets.py "$FCAP/field_tiles.json" "$FCAP/art"
     "$PY" tools/make_field_hdpack.py "$FCAP/field_tiles.json" "$FCAP/art" "$OUT" --report "$(dirname "$OUT")/field-report.json"
     cat >> "$OUT/NOTICE.txt" <<'NOTE'
 

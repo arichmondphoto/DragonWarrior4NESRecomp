@@ -117,6 +117,14 @@ How the map tiles are built (`tools/build_hd_pack.sh`):
      each version also gets entries for those three palettes, with the same art
      at the matching brightness, so the HD art fades instead of flashing 8-bit.
 
+Map tiles generated with OpenAI's image API (like the characters):
+`tools/export_chatgpt_tiles.py` packs every tile (pixel-exact, 15x, in the
+palette its art is made for) onto 1536x1024 sheets of 24, by kind of area,
+with prompts and `openai_sprites.py`; the results go in `hd/field/sheets/`
+(with the export's `sheets.json`) and `tools/slice_field_sheets.py` lines each
+sheet up with its input and cuts it into tiles, replacing the atlas art for
+those tiles.
+
 To redo art for some tiles: `tools/export_ai_tiles.py` exports every tile at
 160x160 (pixel and smoothed versions, atlases, README), and
 `tools/scenario_batch.py` runs them through Scenario in batch.
