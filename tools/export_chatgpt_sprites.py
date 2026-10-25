@@ -37,6 +37,30 @@ def cell_origin(frame):
     d, step = frame // 2, frame % 2
     return X0 + d * (CELL + XG), Y0 + step * (CELL + YG)
 
+# One large creature drawn as four 16x16 characters (TL, TR, BL, BR); every
+# direction shows the same two poses (walking steps). Generated as one
+# picture: two 32x32 poses side by side, 672 px each (21x).
+BIG_ID, BIG_PARTS = 'C069-C072', ('C069', 'C070', 'C071', 'C072')
+BIG_CELL, BIG_X, BIG_Y = 32 * SCALE, (64, 800), 176     # 64 + 672 + 64 + 672 + 64 = 1536
+
+def big_origin(step, part):
+    """Top-left of quarter `part` (0-3) of walking step `step` (0-1)."""
+    return BIG_X[step] + (part % 2) * CELL, BIG_Y + (part // 2) * CELL
+
+BIG_PROMPT = """Redraw Image 1 as a high-resolution, hand-painted version in the art style of Image 2.
+
+Subject: a huge horned demon lord crouching, seen from the front (a boss on the map).
+Image 1 shows the same creature twice: left = walking step 1, right = walking step 2.
+
+Hard rules:
+1. Output exactly 1536 x 1024. Keep both poses exactly where they are, at the same size. Do not move, resize, crop or add anything.
+2. Trace each pose: keep the 8-bit sprite's exact silhouette, pose and proportions (horns, arms, legs, claws). Fill the whole silhouette and do not paint outside it.{sil}
+3. Keep Image 1's colour scheme: the same colours in the same places.
+4. The same creature in both poses. Do not redesign it; add painted detail, soft shading and crisp dark outlines only.
+5. Background: transparent. If transparency isn't possible, flat grey #8C8C8C. No shadows, glow, ground, scenery, borders, labels or text.
+"""
+BIG_SIL = " Image 3 shows each pose's exact silhouette in black."
+
 # shadows, sparkles and effects: fine to leave 8-bit; drawn last if at all
 OPTIONAL_TYPES = {0x0E, 0x30, 0x58, 0x59, 0x5A, 0x5F, 0x60, 0x61}
 
@@ -123,8 +147,26 @@ def main():
     n = k = 0
     with open(os.path.join(out, 'characters.csv'), 'w', newline='') as f:
         wr = csv.writer(f); wr.writerow(['id', 'description', 'optional', 'appears_in'])
+        byid = {r['id']: r for r in rows}
+        if all(p in byid for p in BIG_PARTS):
+            sheet = Image.new('RGBA', (W, H), GREY + (255,)); sil = Image.new('RGBA', (W, H), (255, 255, 255, 255))
+            for q, pid in enumerate(BIG_PARTS):
+                r = byid[pid]; cols = [bytes.fromhex(c) for c in r['versions'][0]['colours']]
+                for step in (0, 1):
+                    fr = r['frames'][step]                       # down/up/... all share these two
+                    img = frame_image([(bytes.fromhex(c), a) for c, a in fr], cols[step * 4:step * 4 + 4], SCALE)
+                    sheet.alpha_composite(img, big_origin(step, q))
+                    black = Image.new('RGBA', img.size, (0, 0, 0, 255)); black.putalpha(img.getchannel('A'))
+                    sil.alpha_composite(black, big_origin(step, q))
+            sheet.convert('RGB').save(os.path.join(out, 'inputs', BIG_ID + '.png'))
+            sil.convert('RGB').save(os.path.join(out, 'silhouettes', BIG_ID + '.png'))
+            open(os.path.join(out, 'prompts', BIG_ID + '.txt'), 'w').write(BIG_PROMPT.format(sil=''))
+            open(os.path.join(out, 'prompts', BIG_ID + '_with_silhouette.txt'), 'w').write(BIG_PROMPT.format(sil=BIG_SIL))
+            wr.writerow([BIG_ID, 'large horned demon (four characters C069-C072 drawn as one)', '',
+                         '; '.join(byid[BIG_PARTS[0]]['maps'])])
+            n += 1
         for r in rows:
-            if r.get('art_from'): continue
+            if r.get('art_from') or r['id'] in BIG_PARTS: continue
             types = r.get('types', [])
             who = WHO.get(types[0], '') if types else 'faint sparkles seen on the overworld at night'
             opt = not types or types[0] in OPTIONAL_TYPES

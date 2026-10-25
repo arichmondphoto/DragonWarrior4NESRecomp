@@ -28,7 +28,7 @@ import numpy as np
 from PIL import Image
 sys.path.insert(0, os.path.dirname(__file__))
 from sprite_sheet import frame_image
-from export_chatgpt_sprites import W, H, CELL, SCALE, cell_origin
+from export_chatgpt_sprites import W, H, CELL, SCALE, cell_origin, BIG_ID, BIG_PARTS, big_origin
 
 OK, FIT = 0.85, 0.80          # IoU as drawn / after fitting
 PAD = 48
@@ -108,14 +108,30 @@ def main():
     rows = {r['id']: r for r in json.load(open(cj))}
     for d in ('fitted', 'review'): os.makedirs(os.path.join(out, d), exist_ok=True)
     report = []
+    todo = []
     for fn in sorted(os.listdir(res)):
-        cid = os.path.splitext(fn)[0].split('_')[0].upper()
-        if cid not in rows or not fn.lower().endswith(('.png', '.webp', '.jpg', '.jpeg')): continue
-        r = rows[cid]
+        if not fn.lower().endswith(('.png', '.webp', '.jpg', '.jpeg')): continue
+        stem = os.path.splitext(fn)[0].upper()
         img = Image.open(os.path.join(res, fn)).convert('RGBA')
         note = ''
         if abs(img.width / img.height - 1.5) > 0.02: note = f'not 3:2 ({img.width}x{img.height}); '
         img = img.resize((W, H), Image.LANCZOS)
+        if stem == BIG_ID:
+            # cut the two poses into the four quarter characters' usual sheets
+            for q, pid in enumerate(BIG_PARTS):
+                sheet = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+                for fi in range(8):
+                    x, y = big_origin(fi % 2, q)
+                    sheet.alpha_composite(img.crop((x, y, x + CELL, y + CELL)), cell_origin(fi))
+                todo.append((pid, sheet, note + f'from {BIG_ID}; '))
+            continue
+        cid = stem.split('_')[0]
+        if cid in rows: todo.append((cid, img, note))
+    big_done = {c for c, i, n in todo if 'from ' + BIG_ID in n}
+    todo = [t for t in todo if t[0] not in big_done or 'from ' + BIG_ID in t[2]]   # the combined art wins
+    for cid, img, note in todo:
+        r = rows[cid]
+        big = 'from ' + BIG_ID in note
         cols = [bytes.fromhex(c) for c in r['versions'][0]['colours']]
         # whole-sheet fit first: the model often redraws the canvas slightly
         # bigger/smaller or shifted, moving the outer frames by more than a cell gap
@@ -123,7 +139,7 @@ def main():
         for fi, fr in enumerate(r['frames']):
             o = frame_image([(bytes.fromhex(c), a) for c, a in fr], cols[fi * 4:fi * 4 + 4], SCALE)
             x, y = cell_origin(fi); full[y:y + CELL, x:x + CELL] |= np.asarray(o.getchannel('A')) >= 128
-        img, gs = sheet_fit(img, full)
+        img, gs = sheet_fit(img, full) if not big else (img, '')
         if gs: note += gs + '; '
         mask = shape_mask(img)
         fitted = Image.new('RGBA', (4 * 160 + 5 * 12, 2 * 160 + 3 * 12), (0, 0, 0, 0))
@@ -138,7 +154,7 @@ def main():
             sub = mask[max(0, box[1]):box[3], max(0, box[0]):box[2]]
             am[max(0, -box[1]):max(0, -box[1]) + sub.shape[0], max(0, -box[0]):max(0, -box[0]) + sub.shape[1]] = sub
             drawn = iou(am[PAD:PAD + CELL, PAD:PAD + CELL], sil)
-            best, dx, dy, s = fit(art, am, sil)
+            best, dx, dy, s = fit(art, am, sil) if not big else (drawn, 0, 0, 1.0)
             # place the art: scale about the padded crop, offset so it lands where fitted
             if (dx, dy, s) == (0, 0, 1.0): placed = art.crop((PAD, PAD, PAD + CELL, PAD + CELL))
             else:
@@ -164,7 +180,7 @@ def main():
                 si = sils[j]; d = np.abs(smalls[i] - origs[j])[si].mean() if si.any() else 0
                 err[i, j] = d
         def odiff(k, j): return np.abs(origs[k] - origs[j])[sils[k] | sils[j]].mean() if (sils[k] | sils[j]).any() else 0
-        swapped = [k for k in range(8) if err[k].argmin() != k and err[k, k] > 1.25 * err[k].min() + 4
+        swapped = [k for k in range(8) if err[k].argmin() != k and err[k, k] > 1.5 * err[k].min() + 8
                    and odiff(k, int(err[k].argmin())) > 12]      # frames that really differ
         worst_drawn = min(a for a, b in scores); worst_fit = min(b for a, b in scores)
         name = lambda i: f'{["up","right","down","left"][i // 2]}{i % 2 + 1}'
