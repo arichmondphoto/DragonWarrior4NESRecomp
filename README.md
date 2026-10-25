@@ -90,9 +90,32 @@ To change a pairing, edit `hd/monsters/mapping.json` (sheet index → monster ID
 monsters with no sprite on the sheet (sea monsters and two recolours); they keep
 their 8-bit art.
 
+- *Map tiles* — the owner's artwork for every 16x16 map tile of the overworld,
+  towns, castles and dungeons (`hd/field/source/*.png`, 6x6-cell atlases with a
+  `.json` cell list each; `hd/field/ids.json` ties each tile ID to its tile).
+
+How the map tiles are built (`tools/build_hd_pack.sh`):
+
+1. `tools/capture_field.py` loads every map (279 areas + the overworld) by
+   rewriting the exit table at `$05A0` one step from Burland Castle's exit, and
+   dumps each map's metatiles (`$7600`), sub-palettes (`$76C0`), CHR and palette.
+2. `tools/field_sheet.py` lists every unique map tile and each palette it is
+   drawn with (`field_tiles.json`; without `--json-only` it also draws the
+   numbered artwork sheets).
+3. `tools/slice_field_atlases.py` cuts the atlases into 160x160 tiles (finding
+   each atlas's gutters, which image generators shift slightly).
+4. `tools/make_field_hdpack.py` keys each tile's four 8x8 quarters by CHR bytes +
+   palette for every palette version. A quarter shared by several map tiles is
+   told apart by its neighbouring quarter (`tileNearby`); repeating ground tiles
+   get their edges evened out so they tile without seams.
+
+To redo art for some tiles: `tools/export_ai_tiles.py` exports every tile at
+160x160 (pixel and smoothed versions, atlases, README), and
+`tools/scenario_batch.py` runs them through Scenario in batch.
+
 - macOS: `./build_macos.sh` (or `./package_macos_app.sh`) generates the pack and
   installs it in the Mods catalog. In the launcher open **Mods**, turn on
-  **HD text, windows and monsters**, then start. `DW4_NO_HD=1` skips it.
+  **HD text, windows, monsters and maps**, then start. `DW4_NO_HD=1` skips it.
 - Tiles are matched by their 16 CHR-RAM bytes and exact palettes.
   Bump `HD_VERSION` in `package_macos_app.sh` when the pack's content changes.
 

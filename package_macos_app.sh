@@ -184,9 +184,9 @@ fi
 # turn it on in the launcher (Mods > HD text, windows and monsters).
 # Set DW4_NO_HD=1 to skip.
 HD_ID="dragon-warrior-4.hd-text"
-HD_VERSION="0.5.0"
+HD_VERSION="0.6.0"
 if [ "${DW4_NO_HD:-0}" != 1 ]; then
-    say "Generating the HD pack from your ROM (text, windows, monsters)"
+    say "Generating the HD pack from your ROM (text, windows, monsters, maps)"
     PYB="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYB" ] || PYB=python3
     VENV=build/.hd-venv
     if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c 'import PIL, numpy, scipy' 2>/dev/null; then
@@ -198,7 +198,7 @@ if [ "${DW4_NO_HD:-0}" != 1 ]; then
     rm -f "$NESMOD"
     "$VENV/bin/python" nesrecomp/tools/package_hdpack.py --pack build/hd/pack --rom rom/DragonWarriorIV.nes \
         --game-id dragon-warrior-4 --id "$HD_ID" --version "$HD_VERSION" \
-        --name "HD text, windows and monsters" --author "DragonWarrior4NESRecomp" \
+        --name "HD text, windows, monsters and maps" --author "DragonWarrior4NESRecomp" \
         --license "Personal use; generated from your ROM and your artwork" --notice build/hd/pack/NOTICE.txt --out "$NESMOD"
     DEST_PKG="$DATA_DIR/mods/packages/$HD_ID/$HD_VERSION"
     # Replace every earlier version: the saved selection (and its on/off

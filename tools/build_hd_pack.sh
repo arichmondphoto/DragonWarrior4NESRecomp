@@ -42,3 +42,28 @@ cat >> "$OUT/NOTICE.txt" <<'NOTE'
 Battle monsters: the project owner's artwork (hd/monsters/source), fitted
 and sliced onto the game's own monster tiles by tools/make_monster_hdpack.py.
 NOTE
+
+# ---- map tiles (towns, castles, dungeons, overworld) ---------------------
+if ls hd/field/source/*.png >/dev/null 2>&1; then
+    FCAP="$(dirname "$OUT")/field-capture"
+    FSTAMP="$FCAP/.stamp"
+    fwant="$(shasum "$HOST" rom/DragonWarriorIV.nes routes/ch1_to_first_battles.txt tools/capture_field.py 2>/dev/null | shasum | cut -d' ' -f1)"
+    if [ ! -f "$FSTAMP" ] || [ "$(cat "$FSTAMP")" != "$fwant" ]; then
+        echo "  capturing every map from the game (warping into each of 279 areas; a few minutes)"
+        rm -rf "$FCAP"
+        "$PY" tools/capture_field.py "$HOST" "$FCAP/maps" --jobs "$JOBS"
+        "$PY" tools/field_sheet.py "$FCAP/maps" "$FCAP" --json-only
+        echo "$fwant" > "$FSTAMP"
+    else
+        echo "  maps: using cached capture"
+    fi
+    echo "  map tiles"
+    rm -rf "$FCAP/art"
+    "$PY" tools/slice_field_atlases.py "$FCAP/art"
+    "$PY" tools/make_field_hdpack.py "$FCAP/field_tiles.json" "$FCAP/art" "$OUT" --report "$(dirname "$OUT")/field-report.json"
+    cat >> "$OUT/NOTICE.txt" <<'NOTE'
+
+Map tiles: the project owner's artwork (hd/field/source atlases), cut per
+8x8 tile and keyed onto the game's own map tiles by tools/make_field_hdpack.py.
+NOTE
+fi

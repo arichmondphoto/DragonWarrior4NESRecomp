@@ -134,12 +134,18 @@ def collect(cap):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('capture'); ap.add_argument('out')
-    ap.add_argument('--scale', type=int, default=4); a = ap.parse_args(); S = a.scale
+    ap.add_argument('--scale', type=int, default=4)
+    ap.add_argument('--json-only', action='store_true', help='only write field_tiles.json (for the pack build)')
+    a = ap.parse_args(); S = a.scale
     os.makedirs(a.out, exist_ok=True)
     shapes, order = collect(a.capture)
-    font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 13)
-    bold = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 26)
-    small = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 15)
+    def ttf(name, size):
+        for d in ('/usr/share/fonts/truetype/dejavu', '/Library/Fonts', '/System/Library/Fonts/Supplemental'):
+            for n in (name, 'Arial.ttf'):
+                try: return ImageFont.truetype(os.path.join(d, n), size)
+                except OSError: pass
+        return ImageFont.load_default()
+    font, bold, small = ttf('DejaVuSans.ttf', 13), ttf('DejaVuSans-Bold.ttf', 26), ttf('DejaVuSans.ttf', 15)
     rows, manifest = [], []
     def vname(k): return (chr(97 + k) if k < 26 else chr(97 + k // 26 - 1) + chr(97 + k % 26))
     for prefix, cat, title in SECTIONS:
@@ -151,7 +157,7 @@ def main():
                 manifest.append({'id': iid + (vname(k) if len(vs) > 1 else ''), 'item': iid, 'section': title,
                                  'used_in': sorted(where), 'nes_colors': cols.hex(), 'chr': tiles.hex()})
             items.append((iid, tiles, vs))
-        if not items: continue
+        if not items or a.json_only: continue
         nvar = sum(len(v) for _, _, v in items)
         C, cw, ch_ = 12, 16 * S + 40, 16 * S + 58
         H = 100 + ((len(items) + C - 1) // C) * ch_ + 16
@@ -172,6 +178,9 @@ def main():
                             (x + (k % 6) * 15, y + 16 * S + 4 + (k // 6) * 15))
         path = os.path.join(a.out, f'field_{cat}.png'); sheet.save(path, optimize=True)
         rows.append((title, len(items), nvar, path))
+    json.dump(manifest, open(os.path.join(a.out, 'field_tiles.json'), 'w'), indent=0)
+    if a.json_only:
+        print(f'{len(set(r["item"] for r in manifest))} map tiles -> {a.out}/field_tiles.json'); return
     with open(os.path.join(a.out, 'field_tiles.csv'), 'w', newline='') as f:
         wr = csv.writer(f); wr.writerow(['id', 'item', 'section', 'used_in', 'nes_colors'])
         for r in manifest: wr.writerow([r['id'], r['item'], r['section'], '; '.join(r['used_in']), r['nes_colors']])
