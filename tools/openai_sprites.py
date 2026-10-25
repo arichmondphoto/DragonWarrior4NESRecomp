@@ -44,7 +44,11 @@ import argparse, base64, csv, json, os, random, sys, threading, time, urllib.err
 from concurrent.futures import ThreadPoolExecutor
 
 API = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1').rstrip('/') + '/images/edits'
-SIZE = '1536x1024'
+SIZE = '1536x1024'          # default; each request uses its input image's own size
+
+def png_size(data):
+    """(width, height) from a PNG's IHDR."""
+    return int.from_bytes(data[16:20], 'big'), int.from_bytes(data[20:24], 'big')
 
 # USD per 1M tokens (OpenAI's published rates, October 2026; check
 # platform.openai.com/docs/pricing). Used to report cost from each
@@ -170,7 +174,9 @@ def main():
                  ('image[]', 'style_reference.png', style)]
         if a.silhouette:
             files.append(('image[]', cid + '_silhouette.png', open(os.path.join(folder, sub + 'silhouettes', cid + '.png'), 'rb').read()))
-        fields = [('model', a.model), ('prompt', prompt), ('size', SIZE), ('quality', a.quality),
+        w, h = png_size(files[0][2])
+        size = f'{w}x{h}' if w % 16 == 0 and h % 16 == 0 else SIZE
+        fields = [('model', a.model), ('prompt', prompt), ('size', size), ('quality', a.quality),
                   ('background', a.background), ('output_format', 'png'), ('n', a.variants)]
         body, ctype = multipart(fields, files)
         t0 = time.time()
