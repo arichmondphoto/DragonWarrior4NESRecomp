@@ -18,7 +18,9 @@ nudge; fine), redo (some frame doesn't match the outline even after fitting:
 wrong pose, missing or moved frame).
 
 Writes OUT/report.csv, OUT/fitted/<ID>.png (frames back in the
-export_ai_sprites.py 4x2 layout, 160 px cells) and OUT/review/<ID>.png
+export_ai_sprites.py 4x2 layout, 160 px cells, clipped to the outline),
+OUT/fitted_full/<ID>.png (the same, unclipped, with the art's own alpha:
+what the HD pack uses) and OUT/review/<ID>.png
 (original | AI | as the game will show it).
 
 usage: check_ai_sprites.py RESULTS CHARACTERS_JSON OUT
@@ -32,6 +34,14 @@ from export_chatgpt_sprites import W, H, CELL, SCALE, cell_origin, BIG_ID, BIG_P
 
 OK, FIT = 0.85, 0.80          # IoU as drawn / after fitting
 PAD = 48
+
+def clean_alpha(img):
+    """Art with real transparency keeps its own (soft) alpha minus the faint
+    glow the model adds (alpha < 64); opaque art gets the shape as alpha."""
+    a = np.asarray(img.convert('RGBA')).copy()
+    if (a[..., 3] < 128).mean() > 0.2: a[..., 3] = np.where(a[..., 3] < 64, 0, a[..., 3])
+    else: a[..., 3] = shape_mask(img).astype(np.uint8) * 255
+    return Image.fromarray(a, 'RGBA')
 
 def shape_mask(img):
     a = np.asarray(img.convert('RGBA')).astype(np.int32)
@@ -78,7 +88,7 @@ def sheet_fit(img, full):
     ref = small(full)
     def place(s, dx, dy):
         out = Image.new('RGBA', (W, H), (0, 0, 0, 0))
-        im = img.copy(); im.putalpha(Image.fromarray(m.astype(np.uint8) * 255))
+        im = img.copy()
         im = im.resize((round(W * s), round(H * s)), Image.LANCZOS)
         out.paste(im, (dx, dy), im); return out
     m4 = Image.fromarray(m.astype(np.uint8) * 255).resize((W // 4, H // 4), Image.BILINEAR)
@@ -106,7 +116,7 @@ def sheet_fit(img, full):
 def main():
     res, cj, out = sys.argv[1:4]
     rows = {r['id']: r for r in json.load(open(cj))}
-    for d in ('fitted', 'review'): os.makedirs(os.path.join(out, d), exist_ok=True)
+    for d in ('fitted', 'fitted_full', 'review'): os.makedirs(os.path.join(out, d), exist_ok=True)
     report = []
     todo = []
     for fn in sorted(os.listdir(res)):
@@ -116,6 +126,7 @@ def main():
         note = ''
         if abs(img.width / img.height - 1.5) > 0.02: note = f'not 3:2 ({img.width}x{img.height}); '
         img = img.resize((W, H), Image.LANCZOS)
+        img = clean_alpha(img)
         if stem == BIG_ID:
             # cut the two poses into the four quarter characters' usual sheets
             for q, pid in enumerate(BIG_PARTS):
@@ -142,6 +153,7 @@ def main():
         if gs: note += gs + '; '
         mask = shape_mask(img)
         fitted = Image.new('RGBA', (4 * 160 + 5 * 12, 2 * 160 + 3 * 12), (0, 0, 0, 0))
+        fitted_full = fitted.copy()
         review = Image.new('RGBA', (3 * 4 * 170 + 40, 2 * 170 + 10), (60, 60, 64, 255))
         scores, sils, origs, smalls = [], [], [], []
         for fi, fr in enumerate(r['frames']):
@@ -157,7 +169,7 @@ def main():
             # place the art: scale about the padded crop, offset so it lands where fitted
             if (dx, dy, s) == (0, 0, 1.0): placed = art.crop((PAD, PAD, PAD + CELL, PAD + CELL))
             else:
-                a2 = art.copy(); a2.putalpha(Image.fromarray(am.astype(np.uint8) * 255))
+                a2 = art.copy()
                 a2 = a2.resize((round(a2.width * s), round(a2.height * s)), Image.LANCZOS)
                 placed = Image.new('RGBA', (CELL, CELL), (0, 0, 0, 0)); placed.paste(a2, (dx, dy), a2)
             placed = placed.copy(); pa = np.asarray(placed).copy()
@@ -169,6 +181,7 @@ def main():
             origs.append(sm16(orig)); smalls.append(sm16(game))
             d, step = fi // 2, fi % 2
             fitted.alpha_composite(game.resize((160, 160), Image.LANCZOS), (12 + d * 172, 12 + step * 172))
+            fitted_full.alpha_composite(placed.resize((160, 160), Image.LANCZOS), (12 + d * 172, 12 + step * 172))
             for k, im in enumerate((orig, art.crop((PAD, PAD, PAD + CELL, PAD + CELL)), game)):
                 review.alpha_composite(im.resize((160, 160), Image.LANCZOS), (10 + k * (4 * 170 + 15) + d * 170, 5 + step * 170))
         # a frame drawn facing the wrong way can still fit the outline: compare
@@ -187,7 +200,7 @@ def main():
         bad = [name(i) for i, (a, b) in enumerate(scores) if b < FIT]
         if swapped:
             verdict = 'redo'; bad += [f'{name(k)} looks like {name(int(err[k].argmin()))}' for k in swapped]
-        fitted.save(os.path.join(out, 'fitted', cid + '.png')); review.save(os.path.join(out, 'review', cid + '.png'))
+        fitted.save(os.path.join(out, 'fitted', cid + '.png')); fitted_full.save(os.path.join(out, 'fitted_full', cid + '.png')); review.save(os.path.join(out, 'review', cid + '.png'))
         report.append([cid, verdict, f'{worst_drawn:.2f}', f'{worst_fit:.2f}', ' '.join(bad), note.strip('; ')])
         print(f'{cid}: {verdict}  (worst frame as drawn {worst_drawn:.2f}, fitted {worst_fit:.2f}) {" ".join(bad)} {note}')
     with open(os.path.join(out, 'report.csv'), 'w', newline='') as f:

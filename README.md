@@ -121,9 +121,34 @@ To redo art for some tiles: `tools/export_ai_tiles.py` exports every tile at
 160x160 (pixel and smoothed versions, atlases, README), and
 `tools/scenario_batch.py` runs them through Scenario in batch.
 
+- *Walking characters* — the owner's artwork for every character that walks or
+  stands on the maps (party, townspeople, soldiers, animals, ships, map
+  monsters): `hd/sprites/source/<ID>.png`, one 4x2 sheet per character in the
+  `tools/export_chatgpt_sprites.py` layout, generated with OpenAI's image API
+  (`tools/openai_sprites.py`); `hd/sprites/ids.json` ties each ID to its frames.
+
+How the characters are built (`tools/build_hd_pack.sh`):
+
+1. `tools/capture_types.py` captures all 108 character types from the game's
+   character table (bank 8 `$979B`, loaded by bank 28 `$9A37` → bank 8 `$85D3`):
+   it points a town's people at other table entries (patched ROM, via patch
+   0008) so every type is loaded, including the other chapters' heroes.
+2. `tools/sprite_sheet.py --types` lists every character with its 8 frames
+   (4 directions x 2 steps, WRAM `$7200+slot*64`), merged with what the map
+   captures show (palettes, the party leader's own tiles).
+3. `tools/check_ai_sprites.py` fits each sheet to the 8-bit outlines (whole
+   sheet, then per frame) and reports frames that don't match.
+4. `tools/make_sprite_hdpack.py` cuts each frame into its four 8x8 sprites,
+   keyed by CHR bytes + colours, for every sprite palette set (day, special,
+   night and fade steps). Shared tiles are told apart by `hmirror`/`vmirror` and
+   neighbouring sprites (`spriteNearby`); people lying in bed (tiles the game
+   turns 90/180/270 degrees) get the art turned the same way.
+   The pack sets `<options>spriteCells` (patch 0009) so the art is drawn over
+   the whole 8x8 sprite, not clipped to its 8-bit pixels.
+
 - macOS: `./build_macos.sh` (or `./package_macos_app.sh`) generates the pack and
   installs it in the Mods catalog. In the launcher open **Mods**, turn on
-  **HD text, windows, monsters and maps**, then start. `DW4_NO_HD=1` skips it.
+  **HD text, windows, monsters, maps and characters**, then start. `DW4_NO_HD=1` skips it.
 - Tiles are matched by their 16 CHR-RAM bytes and exact palettes.
   Bump `HD_VERSION` in `package_macos_app.sh` when the pack's content changes.
 
@@ -170,6 +195,13 @@ They are framework bugs, kept here until they can go upstream:
   patches Dragon Warrior IV's character table (bank 8 `$979B`) so a town's
   people load every character type in turn. Without the variable nothing
   changes.
+- `0009-hdpack-sprite-cells.patch` — a new pack option, `<options>spriteCells`:
+  sprite HD art is drawn over the sprite's whole 8x8 cell with the art's own
+  alpha (the PPU side channel now also records the sprite on its transparent
+  pixels; empty OAM slots are excluded), instead of only on the 8-bit sprite's
+  opaque pixels, which clipped smooth art to a stair-stepped silhouette. A
+  transparent pixel of a sprite with no HD art draws nothing. Packs without the
+  option behave as before.
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 

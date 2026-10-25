@@ -12,6 +12,8 @@
 #      real transformations; cached in OUTDIR/../monster-capture/necro)
 #   3. the owner's monster art (hd/monsters/) sliced and keyed onto the
 #      captured tiles (tools/make_monster_hdpack.py)
+#   4. map tiles (hd/field/) and walking characters (hd/sprites/), keyed onto
+#      every map and every character type captured from the game
 set -euo pipefail
 cd "$(dirname "$0")/.."
 HOST="$1"; OUT="$2"; PY="${3:-python3}"; JOBS="${4:-4}"
@@ -48,8 +50,8 @@ for js in hd/field/source/*.json; do
     [ -e "$js" ] || continue
     [ -f "${js%.json}.png" ] || { echo "ERROR: map-tile atlas ${js%.json}.png is missing (git pull?)" >&2; exit 1; }
 done
+FCAP="$(dirname "$OUT")/field-capture"
 if ls hd/field/source/*.png >/dev/null 2>&1; then
-    FCAP="$(dirname "$OUT")/field-capture"
     FSTAMP="$FCAP/.stamp"
     fwant="$(shasum "$HOST" rom/DragonWarriorIV.nes routes/ch1_to_first_battles.txt tools/capture_field.py 2>/dev/null | shasum | cut -d' ' -f1)"
     if [ ! -f "$FSTAMP" ] || [ "$(cat "$FSTAMP")" != "$fwant" ]; then
@@ -71,5 +73,33 @@ if ls hd/field/source/*.png >/dev/null 2>&1; then
 
 Map tiles: the project owner's artwork (hd/field/source atlases), cut per
 8x8 tile and keyed onto the game's own map tiles by tools/make_field_hdpack.py.
+NOTE
+fi
+
+# ---- walking characters (party, townspeople, animals, ships, ...) ---------
+if ls hd/sprites/source/C*.png >/dev/null 2>&1; then
+    [ -f "$FCAP/.stamp" ] || { echo "ERROR: characters need the map capture (hd/field/source art)" >&2; exit 1; }
+    SCAP="$(dirname "$OUT")/sprite-capture"
+    SSTAMP="$SCAP/.stamp"
+    swant="$(shasum "$HOST" rom/DragonWarriorIV.nes routes/ch1_to_first_battles.txt tools/capture_types.py 2>/dev/null | shasum | cut -d' ' -f1)"
+    if [ ! -f "$SSTAMP" ] || [ "$(cat "$SSTAMP")" != "$swant" ]; then
+        echo "  capturing every character type (the game's character table, 11 runs)"
+        rm -rf "$SCAP"
+        "$PY" tools/capture_types.py "$HOST" "$SCAP/types" --jobs "$JOBS"
+        echo "$swant" > "$SSTAMP"
+    else
+        echo "  characters: using cached capture"
+    fi
+    echo "  characters"
+    "$PY" tools/sprite_sheet.py "$FCAP/maps" "$SCAP" --types "$SCAP/types" --json-only
+    rm -rf "$SCAP/fit"
+    "$PY" tools/check_ai_sprites.py hd/sprites/source "$SCAP/characters.json" "$SCAP/fit" > "$SCAP/fit-report.txt"
+    "$PY" tools/make_sprite_hdpack.py "$SCAP/characters.json" "$SCAP/fit/fitted_full" "$FCAP/maps" "$OUT" \
+        --report "$(dirname "$OUT")/sprite-report.json"
+    cat >> "$OUT/NOTICE.txt" <<'NOTE'
+
+Walking characters: the project owner's artwork (hd/sprites/source), fitted
+to the game's own character sprites and keyed per 8x8 sprite by
+tools/make_sprite_hdpack.py.
 NOTE
 fi

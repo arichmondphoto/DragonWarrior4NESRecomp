@@ -19,7 +19,7 @@ and, unless --json-only, OUT/characters.png (numbered sheet, 3x).
 
 usage: sprite_sheet.py CAPTURE OUT [--json-only]
 """
-import argparse, glob, json, os, sys
+import argparse, glob, hashlib, json, os, sys
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(__file__))
@@ -133,7 +133,7 @@ def merge(chars, order, types):
                 for q in (np.rot90(px, k), np.rot90(px, k)[:, ::-1]): turned.setdefault(q.tobytes(), set()).add(id(e))
     for shape in order:
         c = chars[shape]; tiles = {x for f in c['pieces'] for x, a in f if any(x)}
-        home = by_shape.get(shape)
+        home = by_shape.get(shape); lying = False
         if home is None and tiles:
             # A type loaded with the $80 flag (bank 8 $82BE) only gets some
             # frames; the rest show whatever tiles were left in its CHR, so
@@ -150,11 +150,16 @@ def merge(chars, order, types):
             if votes:
                 k = max(votes, key=votes.get)
                 if votes[k] >= 0.75 * len(tiles):
-                    home = next(e for e in ents if id(e) == k); home['turned'] = home.get('turned', 0) + 1
+                    home = next(e for e in ents if id(e) == k); home['turned'] = home.get('turned', 0) + 1; lying = True
         if home is None:
             ents.append({'pieces': c['pieces'], 'types': [], 'versions': dict(c['versions']), 'maps': set(c['maps'])})
             continue
         home['maps'] |= c['maps']
+        if not lying and shape not in by_shape:
+            # the same character loaded another way (e.g. as the party leader,
+            # or with the $80 flag) with some tiles of its own: same art
+            v = [list(f) for f in c['pieces']]
+            if v not in home.setdefault('variants', []): home['variants'].append(v)
         for pal16, wh in c['pals'].items():
             home['versions'].setdefault(piece_cols(home['pieces'], pal16), set()).update(wh)
     for e in ents:
@@ -182,8 +187,26 @@ def main():
     for n, c in enumerate(ents, 1):
         vs = sorted(c['versions'].items(), key=lambda kv: -len(kv[1]))
         rows.append({'id': f'C{n:03d}', 'types': c['types'], 'lying_down_variants': c.get('turned', 0), 'art_from': c.get('art_from'), 'maps': sorted(c['maps']),
+                     'variants': [[[[x.hex(), at] for x, at in f] for f in v] for v in c.get('variants', [])],
                      'frames': [[[chr16.hex(), att] for chr16, att in f] for f in c['pieces']],
                      'versions': [{'colours': [cc.hex() for cc in cols], 'used_in': sorted(wh)} for cols, wh in vs]})
+    # Keep the IDs the owner's art is named by (hd/sprites/ids.json: ID ->
+    # fingerprint of the frames); characters new to this build get new IDs.
+    idp = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'hd', 'sprites', 'ids.json')
+    fp = lambda r: hashlib.sha1(json.dumps(r['frames']).encode()).hexdigest()[:16]
+    if os.path.exists(idp):
+        known = {v: k for k, v in json.load(open(idp)).items()}
+        nxt = max(int(k[1:]) for k in known.values()) + 1; ren = {}
+        for r in rows:
+            new = known.get(fp(r))
+            if new is None: new = f'C{nxt:03d}'; nxt += 1
+            ren[r['id']] = new
+        for r in rows:
+            r['id'] = ren[r['id']]
+            if r.get('art_from'): r['art_from'] = ren[r['art_from']]
+        rows.sort(key=lambda r: r['id'])
+    elif a.types:
+        json.dump({r['id']: fp(r) for r in rows}, open(os.path.join(a.out, 'ids.json'), 'w'), indent=0)
     json.dump(rows, open(os.path.join(a.out, 'characters.json'), 'w'), indent=0)
     print(f'{len(rows)} characters -> {a.out}/characters.json')
     if a.json_only: return
