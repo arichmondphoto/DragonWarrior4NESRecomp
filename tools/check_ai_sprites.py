@@ -125,8 +125,7 @@ def main():
                     sheet.alpha_composite(img.crop((x, y, x + CELL, y + CELL)), cell_origin(fi))
                 todo.append((pid, sheet, note + f'from {BIG_ID}; '))
             continue
-        cid = stem.split('_')[0]
-        if cid in rows: todo.append((cid, img, note))
+        if stem in rows: todo.append((stem, img, note))       # exactly <ID>.png
     big_done = {c for c, i, n in todo if 'from ' + BIG_ID in n}
     todo = [t for t in todo if t[0] not in big_done or 'from ' + BIG_ID in t[2]]   # the combined art wins
     for cid, img, note in todo:
