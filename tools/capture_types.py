@@ -43,10 +43,15 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix='dw4types')
     env = dict(os.environ, NESRECOMP_ALLOW_PRG_MISMATCH='1')
+    # an empty mod catalog: the player's installed packs (the Mac app keeps
+    # one beside its settings) must not take part, and the patched ROMs
+    # don't match an installed pack's target anyway
+    mods = os.path.join(tmp, 'mods'); os.makedirs(mods)
     rom = open(ROM, 'rb').read()
     base, dump = os.path.join(tmp, 'exit.cs'), os.path.join(tmp, 'exit.mem')
-    subprocess.run([a.host, ROM, '--frames', str(EXIT_FRAME + 1), '--no-save', '--input', ROUTE, '--mem-frame',
-                    str(EXIT_FRAME), '--mem-out', dump, '--save-state', f'{EXIT_FRAME}:{base}'], check=True, capture_output=True)
+    subprocess.run([a.host, ROM, '--frames', str(EXIT_FRAME + 1), '--no-save', '--input', ROUTE, '--mods-root', mods,
+                    '--mem-frame', str(EXIT_FRAME), '--mem-out', dump, '--save-state', f'{EXIT_FRAME}:{base}'],
+                   check=True, capture_output=True)
     st = open(base, 'rb').read(); ram = load(dump)['ram']
     ram_at = st.find(bytes(ram[0x500:0x600])) - 0x500
     w, h = size(*TOWN)
@@ -57,9 +62,12 @@ def main():
 
     def town(rom_path, stem):
         end = EXIT_FRAME + 160
-        subprocess.run([a.host, rom_path, '--load-state', warp_state, '--frames', str(end + 1), '--no-save', '--input',
-                        ROUTE, '--mem-frame', str(end), '--mem-out', stem + '.mem', '--screenshot', stem + '.png'],
-                       check=True, capture_output=True, env=env)
+        r = subprocess.run([a.host, rom_path, '--load-state', warp_state, '--frames', str(end + 1), '--no-save', '--input',
+                            ROUTE, '--mods-root', mods, '--mem-frame', str(end), '--mem-out', stem + '.mem',
+                            '--screenshot', stem + '.png'], capture_output=True, text=True, env=env)
+        if r.returncode:
+            sys.exit(f'capture_types: the game exited with {r.returncode} for {os.path.basename(rom_path)}:\n'
+                     f'{(r.stdout + r.stderr).strip()[-800:]}\n(was the host rebuilt with patches/nesrecomp/0008?)')
         return load(stem + '.mem')
 
     # The town's own list: which table entry each person slot (4 + index) uses.

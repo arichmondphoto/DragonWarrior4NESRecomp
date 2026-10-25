@@ -24,3 +24,34 @@ index 4a1cd70..4b8c3a4 100644
          set_err(err, err_len, "save state of another program");
          return -1;
      }
+diff --git a/runner/src/mod_runtime.cpp b/runner/src/mod_runtime.cpp
+index b154990..c4c3ccf 100644
+--- a/runner/src/mod_runtime.cpp
++++ b/runner/src/mod_runtime.cpp
+@@ -2332,7 +2332,7 @@ int provider_commit_netplay(void*, const char* image_path) {
+     if (image_path && image_path[0]) {
+         std::string digest;
+         if (!crc32_file(image_path, digest, &runtime.error) ||
+-            digest != runtime.rom_crc32) {
++            (digest != runtime.rom_crc32 && !std::getenv("NESRECOMP_ALLOW_PRG_MISMATCH"))) {
+             if (runtime.error.empty())
+                 runtime.error =
+                     "The selected ROM does not match this mod catalog target.";
+@@ -2739,7 +2739,7 @@ bool mod_runtime_commit(const fs::path& rom_path, std::string* error) {
+             set_error(error, runtime.error);
+             return false;
+         }
+-        if (digest != runtime.rom_crc32) {
++        if ((digest != runtime.rom_crc32 && !std::getenv("NESRECOMP_ALLOW_PRG_MISMATCH"))) {
+             runtime.error =
+                 "The selected ROM does not match this mod catalog target.";
+             set_error(error, runtime.error);
+@@ -2973,7 +2973,7 @@ extern "C" int nes_mod_runtime_commit_netplay_c(const char* rom_path) {
+     if (rom_path && rom_path[0]) {
+         std::string digest;
+         if (!NESRecomp::crc32_file(rom_path, digest, &runtime.error) ||
+-            digest != runtime.rom_crc32) {
++            (digest != runtime.rom_crc32 && !std::getenv("NESRECOMP_ALLOW_PRG_MISMATCH"))) {
+             if (runtime.error.empty())
+                 runtime.error =
+                     "The selected ROM does not match this mod catalog target.";

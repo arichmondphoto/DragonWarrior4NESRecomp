@@ -191,7 +191,7 @@ They are framework bugs, kept here until they can go upstream:
   `$6E7E`).
 - `0008-allow-prg-mismatch-env-for-tools.patch` — with the environment variable
   `NESRECOMP_ALLOW_PRG_MISMATCH` set, the host accepts a modified ROM (and save
-  states made with the original). Only `tools/capture_types.py` uses it: it
+  states made with the original, and a mod catalog made for the original). Only `tools/capture_types.py` uses it: it
   patches Dragon Warrior IV's character table (bank 8 `$979B`) so a town's
   people load every character type in turn. Without the variable nothing
   changes.
