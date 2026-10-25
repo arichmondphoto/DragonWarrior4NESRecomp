@@ -95,6 +95,7 @@ def collect(cap):
         world = ram[0x28] == 0
         cat = 'world' if world else 'dungeon' if ram[0x63] in DUNGEON else 'town'
         where = ('Underworld' if ram[0x63] == 0x45 else 'Overworld') if world else MAPS[ram[0x63]]
+        if path.endswith('_n.mem'): where += ' (night)'
         defs = [(bytes(w[0x1600 + 4 * i:0x1604 + 4 * i]), w[0x16C0 + i] & 3) for i in range(32)]
         if world: defs += [(bytes(w[0x1680 + 4 * i:0x1684 + 4 * i]), 0) for i in range(16)]
         for t, p in defs:
@@ -116,6 +117,7 @@ def collect(cap):
         if max(pal[:16]) == min(pal[:16]): continue
         world = ram[0x28] == 0
         where = ('Underworld' if ram[0x63] == 0x45 else 'Overworld') if world else MAPS[ram[0x63]]
+        if path.endswith('_n.mem'): where += ' (night)'
         for o in (0, 0x400):
             for r in range(0, 30, 2):
                 for c in range(0, 32, 2):

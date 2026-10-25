@@ -16,10 +16,15 @@ After loading, the game keeps (WRAM):
 $28 is 0 on overworld-style maps. The map list (bank 17 $B08D) gives the
 submaps of each of the 73 maps.
 
+Night: the palette is chosen at map load from the clock at WRAM $62ED (bank
+14 $BB02: night once it is >= $78). With --night the clock is set to $80
+before each warp and files are named MM_SS_n (towns, castles and the
+overworld load their night palettes; dungeons look the same).
+
 Writes OUT/MM_SS.mem / .png per submap (+ index.json). Maps whose palette is
 still fading in are retried with more frames.
 
-usage: capture_field.py HOST OUT [--jobs 2]
+usage: capture_field.py HOST OUT [--jobs 2] [--night]
 """
 import argparse, json, os, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -50,7 +55,8 @@ def size(mp, sub):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('host'); ap.add_argument('out')
-    ap.add_argument('--jobs', type=int, default=2); a = ap.parse_args()
+    ap.add_argument('--jobs', type=int, default=2); ap.add_argument('--night', action='store_true')
+    a = ap.parse_args(); sfx = '_n' if a.night else ''
     os.makedirs(a.out, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix='dw4field')
     base, dump = os.path.join(tmp, 'exit.cs'), os.path.join(tmp, 'exit.mem')
@@ -58,6 +64,9 @@ def main():
                     str(EXIT_FRAME), '--mem-out', dump, '--save-state', f'{EXIT_FRAME}:{base}'], check=True, capture_output=True)
     st = open(base, 'rb').read(); ram = load(dump)['ram']
     ram_at = st.find(bytes(ram[0x500:0x600])) - 0x500
+    if a.night:
+        wram_at = st.find(bytes(load(dump)['wram'][:0x400]))
+        st = bytearray(st); st[wram_at + 0x2ED] = 0x80; st = bytes(st)
 
     def warp(mp, sub, frames):
         w, h = size(mp, sub)
@@ -65,7 +74,7 @@ def main():
         for e in (0x5A0, 0x5A7):
             b[ram_at + e + 2: ram_at + e + 7] = bytes([mp, sub, min(w // 2, 120), min(h // 2, 120), 0x82])
         p = os.path.join(tmp, f'{mp}_{sub}.cs'); open(p, 'wb').write(b)
-        stem = os.path.join(a.out, f'{mp:02d}_{sub:02d}'); end = EXIT_FRAME + frames
+        stem = os.path.join(a.out, f'{mp:02d}_{sub:02d}{sfx}'); end = EXIT_FRAME + frames
         subprocess.run([a.host, ROM, '--load-state', p, '--frames', str(end + 1), '--no-save', '--input', ROUTE,
                         '--mem-frame', str(end), '--mem-out', stem + '.mem', '--screenshot', stem + '.png'],
                        check=True, capture_output=True)
@@ -85,11 +94,11 @@ def main():
     with ThreadPoolExecutor(a.jobs) as ex:
         res = list(ex.map(one, jobs))
     # The overworld itself, from the route (frame 7200 is on the world map).
-    subprocess.run([a.host, ROM, '--frames', '7201', '--no-save', '--input', ROUTE, '--mem-frame', '7200',
+    if not a.night: subprocess.run([a.host, ROM, '--frames', '7201', '--no-save', '--input', ROUTE, '--mem-frame', '7200',
                     '--mem-out', os.path.join(a.out, 'world.mem'), '--screenshot', os.path.join(a.out, 'world.png')],
                    check=True, capture_output=True)
-    json.dump(res, open(os.path.join(a.out, 'index.json'), 'w'), indent=0)
-    print(f'captured {len(res)} submaps + the overworld -> {a.out}')
+    json.dump(res, open(os.path.join(a.out, f'index{sfx}.json'), 'w'), indent=0)
+    print(f'captured {len(res)} submaps{" at night" if a.night else " + the overworld"} -> {a.out}')
 
 if __name__ == '__main__':
     main()

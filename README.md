@@ -108,6 +108,14 @@ How the map tiles are built (`tools/build_hd_pack.sh`):
    palette for every palette version. A quarter shared by several map tiles is
    told apart by its neighbouring quarter (`tileNearby`); repeating ground tiles
    get their edges evened out so they tile without seams.
+   - *Palettes and night:* the art is made for one palette per tile (stored in
+     `hd/field/ids.json`); every other palette the game draws it with (other
+     towns and dungeons, and night, captured with `capture_field.py --night`,
+     which sets the clock at `$62ED` past `$78`) gets a recoloured copy fitted
+     from the palette colours.
+   - *Fades:* screen transitions step every colour down by `$10` three times;
+     each version also gets entries for those three palettes, with the same art
+     at the matching brightness, so the HD art fades instead of flashing 8-bit.
 
 To redo art for some tiles: `tools/export_ai_tiles.py` exports every tile at
 160x160 (pixel and smoothed versions, atlases, README), and

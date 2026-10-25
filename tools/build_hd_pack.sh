@@ -53,9 +53,11 @@ if ls hd/field/source/*.png >/dev/null 2>&1; then
     FSTAMP="$FCAP/.stamp"
     fwant="$(shasum "$HOST" rom/DragonWarriorIV.nes routes/ch1_to_first_battles.txt tools/capture_field.py 2>/dev/null | shasum | cut -d' ' -f1)"
     if [ ! -f "$FSTAMP" ] || [ "$(cat "$FSTAMP")" != "$fwant" ]; then
-        echo "  capturing every map from the game (warping into each of 279 areas; a few minutes)"
+        echo "  capturing every map from the game (warping into each of 279 areas, day and night; several minutes)"
         rm -rf "$FCAP"
         "$PY" tools/capture_field.py "$HOST" "$FCAP/maps" --jobs "$JOBS"
+        echo "  capturing every map again at night"
+        "$PY" tools/capture_field.py "$HOST" "$FCAP/maps" --jobs "$JOBS" --night
         "$PY" tools/field_sheet.py "$FCAP/maps" "$FCAP" --json-only
         echo "$fwant" > "$FSTAMP"
     else
