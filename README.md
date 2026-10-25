@@ -164,6 +164,12 @@ They are framework bugs, kept here until they can go upstream:
   on `$6000-$7FFF` was always false. They now read the cartridge work RAM, where
   Dragon Warrior IV keeps its battle state (the pack gates Necrosaro's forms on
   `$6E7E`).
+- `0008-allow-prg-mismatch-env-for-tools.patch` — with the environment variable
+  `NESRECOMP_ALLOW_PRG_MISMATCH` set, the host accepts a modified ROM (and save
+  states made with the original). Only `tools/capture_types.py` uses it: it
+  patches Dragon Warrior IV's character table (bank 8 `$979B`) so a town's
+  people load every character type in turn. Without the variable nothing
+  changes.
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 

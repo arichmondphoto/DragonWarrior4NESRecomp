@@ -1,0 +1,26 @@
+diff --git a/runner/cyc/cyc_host.c b/runner/cyc/cyc_host.c
+index a05b7f9..96276e5 100644
+--- a/runner/cyc/cyc_host.c
++++ b/runner/cyc/cyc_host.c
+@@ -1388,7 +1388,7 @@ session_restart:
+ #endif
+         return 2;
+     }
+-    if (cyc_native_program_name && cyc_prg_hash() != cyc_native_prg_hash) {
++    if (cyc_native_program_name && cyc_prg_hash() != cyc_native_prg_hash && !getenv("NESRECOMP_ALLOW_PRG_MISMATCH")) {
+         cyc_diagnostics_error("PRG ROM does not match the ROM '%s' was recompiled from (hash %08X, expected %08X)\n",
+                 cyc_native_program_name, cyc_prg_hash(), cyc_native_prg_hash);
+ #if defined(CYC_WITH_SDL)
+diff --git a/runner/cyc/cyc_state.c b/runner/cyc/cyc_state.c
+index 4a1cd70..4b8c3a4 100644
+--- a/runner/cyc/cyc_state.c
++++ b/runner/cyc/cyc_state.c
+@@ -201,7 +201,7 @@ static int parse(const uint8_t *data, size_t len, Chunk *c, char *err, size_t er
+     memcpy(&h, data, sizeof(h));
+     if (memcmp(h.magic, STATE_MAGIC, 8)) { set_err(err, err_len, "not a save state"); return -1; }
+     if (h.version < 1u || h.version > 4u) { set_err(err, err_len, "save state of another version"); return -1; }
+-    if (h.prg_hash != cyc_prg_hash() || h.cart_hash != cyc_native_cart_hash || h.program_crc != program_crc()) {
++    if ((h.prg_hash != cyc_prg_hash() && !getenv("NESRECOMP_ALLOW_PRG_MISMATCH")) || h.cart_hash != cyc_native_cart_hash || h.program_crc != program_crc()) {
+         set_err(err, err_len, "save state of another program");
+         return -1;
+     }

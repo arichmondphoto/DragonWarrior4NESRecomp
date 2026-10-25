@@ -95,18 +95,93 @@ def collect(cap):
                 chars[shape] = {'pieces': pieces, 'versions': {}, 'maps': set()}; order.append(shape)
             chars[shape]['versions'].setdefault(cols, set()).add(where)
             chars[shape]['maps'].add(where)
+            chars[shape].setdefault('pals', {}).setdefault(bytes(pal[0x10:0x20]), set()).add(where)
     return chars, order
+
+def collect_types(tdir):
+    """tools/capture_types.py runs -> [(type, pieces, sprite palette 16 bytes)] in type order."""
+    out = []
+    for r in json.load(open(os.path.join(tdir, 'types.json'))):
+        m = load(os.path.join(tdir, r['mem'])); w, ch, pal = m['wram'], m['chr_ram'], m['palette']
+        for s, t in r['slots'].items():
+            pieces = [[(bytes(ch[16 * x:16 * x + 16]), a) for x, a in f] for f in slot_frames(w, int(s))]
+            if any(any(c) for f in pieces for c, a in f): out.append((t, pieces, bytes(pal[0x10:0x20])))
+    return sorted(out, key=lambda x: x[0])
+
+def piece_cols(pieces, pal16):
+    return tuple(bytes(pal16[4 * (a & 3) + 1:4 * (a & 3) + 4]) for f in pieces for c, a in f)
+
+def merge(chars, order, types):
+    """Every character type first (type order; identical types share an
+    entry), then any captured character that isn't one of them. A captured
+    character whose tiles are among a type's tiles (a still or
+    single-direction variant, at least half its tiles) is folded into that
+    type."""
+    ents = []
+    by_shape = {}
+    for t, pieces, pal16 in types:
+        shape = b''.join(c + bytes([a & 0xC0]) for f in pieces for c, a in f)
+        if shape in by_shape: by_shape[shape]['types'].append(t); continue
+        e = {'pieces': pieces, 'types': [t], 'versions': {}, 'maps': set(), 'fallback': pal16,
+             'tiles': {c for f in pieces for c, a in f if any(c)}}
+        by_shape[shape] = e; ents.append(e)
+    turned = {}
+    for e in ents:
+        for x in e['tiles']:
+            px = tile_px(x).astype(np.uint8)
+            for k in range(4):
+                for q in (np.rot90(px, k), np.rot90(px, k)[:, ::-1]): turned.setdefault(q.tobytes(), set()).add(id(e))
+    for shape in order:
+        c = chars[shape]; tiles = {x for f in c['pieces'] for x, a in f if any(x)}
+        home = by_shape.get(shape)
+        if home is None and tiles:
+            # A type loaded with the $80 flag (bank 8 $82BE) only gets some
+            # frames; the rest show whatever tiles were left in its CHR, so
+            # match on most of the tiles rather than all of them.
+            best = max((e for e in ents if e.get('tiles')), key=lambda e: len(tiles & e['tiles']))
+            if len(tiles & best['tiles']) >= 0.5 * len(tiles): home = best
+        if home is None and tiles:
+            # Lying-down people (beds, at night): the loader's $80 mode builds
+            # them by turning the type's own tiles 90 degrees (bank 8 $82D4).
+            # No art of their own: the HD pack turns the type's art.
+            votes = {}
+            for x in tiles:
+                for k in turned.get(tile_px(x).astype(np.uint8).tobytes(), ()): votes[k] = votes.get(k, 0) + 1
+            if votes:
+                k = max(votes, key=votes.get)
+                if votes[k] >= 0.75 * len(tiles):
+                    home = next(e for e in ents if id(e) == k); home['turned'] = home.get('turned', 0) + 1
+        if home is None:
+            ents.append({'pieces': c['pieces'], 'types': [], 'versions': dict(c['versions']), 'maps': set(c['maps'])})
+            continue
+        home['maps'] |= c['maps']
+        for pal16, wh in c['pals'].items():
+            home['versions'].setdefault(piece_cols(home['pieces'], pal16), set()).update(wh)
+    for e in ents:
+        if not e['versions']: e['versions'][piece_cols(e['pieces'], e['fallback'])] = set()
+    return ents
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('capture'); ap.add_argument('out')
+    ap.add_argument('--types', help='tools/capture_types.py output: include every character type')
     ap.add_argument('--json-only', action='store_true'); a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     chars, order = collect(a.capture)
+    if a.types:
+        ents = merge(chars, order, collect_types(a.types))
+    else:
+        ents = [{'pieces': chars[s]['pieces'], 'types': [], 'versions': chars[s]['versions'], 'maps': chars[s]['maps']} for s in order]
+    # A type drawn only with tiles of another (single-pose copies of the
+    # heroes, pieces of a bigger object) needs no art of its own.
+    tl = [{x for f in c['pieces'] for x, a in f if any(x)} for c in ents]
+    for i, c in enumerate(ents):
+        for j in range(len(ents)):
+            if j != i and c['types'] and tl[i] and tl[i] <= tl[j] and (len(tl[i]) < len(tl[j]) or j < i):
+                c['art_from'] = f'C{j + 1:03d}'; break
     rows = []
-    for n, shape in enumerate(order, 1):
-        c = chars[shape]
+    for n, c in enumerate(ents, 1):
         vs = sorted(c['versions'].items(), key=lambda kv: -len(kv[1]))
-        rows.append({'id': f'C{n:03d}', 'maps': sorted(c['maps']),
+        rows.append({'id': f'C{n:03d}', 'types': c['types'], 'lying_down_variants': c.get('turned', 0), 'art_from': c.get('art_from'), 'maps': sorted(c['maps']),
                      'frames': [[[chr16.hex(), att] for chr16, att in f] for f in c['pieces']],
                      'versions': [{'colours': [cc.hex() for cc in cols], 'used_in': sorted(wh)} for cols, wh in vs]})
     json.dump(rows, open(os.path.join(a.out, 'characters.json'), 'w'), indent=0)
