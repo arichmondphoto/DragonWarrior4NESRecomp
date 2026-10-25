@@ -50,10 +50,11 @@ SIZE = '1536x1024'
 # platform.openai.com/docs/pricing). Used to report cost from each
 # response's token counts.
 RATES = {'text_in': 5.00, 'image_in': 8.00, 'image_out': 30.00}
-# Rough output size (image tokens) per quality for a 1536x1024 image, for
-# the --dry-run estimate only; the log has the real numbers after the first run.
-OUT_TOKENS = {'low': 200, 'medium': 1400, 'high': 5500, 'xhigh': 8000, 'max': 11000}
-IN_TOKENS_PER_IMAGE = 1500
+# Output image tokens per request at 1536x1024, for the --dry-run estimate.
+# 'high' is measured (pilot, gpt-image-2.5-sunburst: 1372 out, 1280 per input
+# image, ~$0.065 per character); the others are guesses. The log has the real numbers.
+OUT_TOKENS = {'low': 300, 'medium': 700, 'high': 1372, 'xhigh': 2600, 'max': 4000}
+IN_TOKENS_PER_IMAGE = 1280
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -135,7 +136,7 @@ def main():
     if a.limit: jobs = jobs[:a.limit]
     nimg = 3 if a.silhouette else 2
     est_each = (a.variants * OUT_TOKENS.get(a.quality, 5500) * RATES['image_out'] +
-                nimg * IN_TOKENS_PER_IMAGE * RATES['image_in'] + 900 * RATES['text_in']) / 1e6
+                nimg * IN_TOKENS_PER_IMAGE * RATES['image_in'] + 600 * RATES['text_in']) / 1e6
     print(f'{len(jobs)} characters, model {a.model}, quality {a.quality}, {a.variants} image(s) each'
           f'{", with silhouettes" if a.silhouette else ""}')
     print(f'estimated ~${est_each:.2f} each, ~${est_each * len(jobs):.2f} in all '

@@ -50,7 +50,7 @@ Hard rules:
 2. Trace each frame: keep the 8-bit sprite's exact silhouette, pose and proportions. Fill the whole silhouette and do not paint outside it.{sil}
 3. Keep Image 1's colour scheme: the same colours in the same places.
 4. It is the same character in all 8 frames: same face, outfit and details. Do not redesign it; add painted detail, soft shading and crisp dark outlines only.
-5. Background: transparent. If transparency isn't possible, flat grey #8C8C8C. No shadows, ground, scenery, borders, grid lines, labels or text.
+5. Background: transparent. If transparency isn't possible, flat grey #8C8C8C. No shadows, glow, ground, scenery, borders, grid lines, labels or text.
 """
 SIL = " Image 3 shows each frame's exact silhouette in black."
 
@@ -66,7 +66,7 @@ Every result is cut back into frames by position and laid over the original spri
   - Keep the colours of Image 1 in the same places.
   - One consistent character across all 8 frames; do not redesign it.
   - Style from Image 2: painterly shading, crisp dark outlines, rich but not neon colours.
-  - Transparent background (or flat grey #8C8C8C). No shadows, ground, borders, grid lines, labels or text.
+  - Transparent background (or flat grey #8C8C8C). No shadows, glow, ground, borders, grid lines, labels or text.
 Generate the image directly; don't ask questions or describe a plan first.
 """
 

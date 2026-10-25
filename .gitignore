@@ -18,3 +18,4 @@ hd/pack/
 
 # The owner's own map-tile art (atlases) is committed
 !hd/field/source/*.png
+!hd/sprites/source/*.png
