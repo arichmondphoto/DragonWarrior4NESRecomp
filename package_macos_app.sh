@@ -37,6 +37,13 @@ die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
 [ -x "build/$EXE" ] || die "build/$EXE not found. Run ./build_macos.sh first."
 [ -f rom/DragonWarriorIV.nes ] || die "rom/DragonWarriorIV.nes not found."
+# Framework fixes (patches/) newer than the game build: rebuild the game first,
+# or the app (and the HD pack's capture tools) would run the old engine.
+if [ -n "$(find patches -name '*.patch' -newer "build/$EXE" 2>/dev/null)" ]; then
+    say "Engine fixes changed since the last build: rebuilding the game"
+    tools/apply_patches.sh
+    cmake --build build --parallel "$(sysctl -n hw.ncpu)" || die "Rebuild failed; run ./build_macos.sh"
+fi
 
 VERSION="1.0.$(git rev-list --count HEAD 2>/dev/null || echo 0)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
