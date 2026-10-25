@@ -62,12 +62,15 @@ def main():
 
     def town(rom_path, stem):
         end = EXIT_FRAME + 160
+        # one empty catalog per run: the game writes its mod state there, and
+        # runs in parallel sharing one folder trip over each other's files
+        own_mods = tempfile.mkdtemp(prefix='mods', dir=tmp)
         r = subprocess.run([a.host, rom_path, '--load-state', warp_state, '--frames', str(end + 1), '--no-save', '--input',
-                            ROUTE, '--mods-root', mods, '--mem-frame', str(end), '--mem-out', stem + '.mem',
+                            ROUTE, '--mods-root', own_mods, '--mem-frame', str(end), '--mem-out', stem + '.mem',
                             '--screenshot', stem + '.png'], capture_output=True, text=True, env=env)
         if r.returncode:
             sys.exit(f'capture_types: the game exited with {r.returncode} for {os.path.basename(rom_path)}:\n'
-                     f'{(r.stdout + r.stderr).strip()[-800:]}\n(was the host rebuilt with patches/nesrecomp/0008?)')
+                     f'{(r.stdout + r.stderr).strip()[-800:]}')
         return load(stem + '.mem')
 
     # The town's own list: which table entry each person slot (4 + index) uses.
