@@ -143,6 +143,7 @@ def main():
         ref.paste(bg.convert('RGB'), (i * 341 + (341 - fr.width) // 2, 682 + (341 - fr.height) // 2))
     ref.save(os.path.join(out, 'style_reference.png'))
     open(os.path.join(out, 'PROJECT_INSTRUCTIONS.txt'), 'w').write(INSTRUCTIONS)
+    json.dump({'background': 'opaque'}, open(os.path.join(out, 'settings.json'), 'w'))   # tiles are never see-through
     shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'openai_sprites.py'), os.path.join(out, 'openai_sprites.py'))
     pilot = ','.join(k for k in sheets if k.endswith('01'))
     open(os.path.join(out, 'README.txt'), 'w').write(README.format(n=len(tiles), s=len(sheets), pilot=pilot))

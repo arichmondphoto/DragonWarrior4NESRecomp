@@ -115,7 +115,11 @@ def main():
     ap.add_argument('--jobs', type=int, default=3)
     ap.add_argument('--budget', type=float)
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--background', help='transparent | opaque (default: the package\'s settings.json, else transparent)')
     a = ap.parse_args()
+    cfg = os.path.join(a.folder, 'settings.json')
+    settings = json.load(open(cfg)) if os.path.exists(cfg) else {}
+    if not a.background: a.background = settings.get('background', a.background)
 
     folder = a.folder
     if not os.path.isdir(os.path.join(folder, 'inputs')):
@@ -167,7 +171,7 @@ def main():
         if a.silhouette:
             files.append(('image[]', cid + '_silhouette.png', open(os.path.join(folder, sub + 'silhouettes', cid + '.png'), 'rb').read()))
         fields = [('model', a.model), ('prompt', prompt), ('size', SIZE), ('quality', a.quality),
-                  ('background', 'transparent'), ('output_format', 'png'), ('n', a.variants)]
+                  ('background', a.background), ('output_format', 'png'), ('n', a.variants)]
         body, ctype = multipart(fields, files)
         t0 = time.time()
         for attempt in range(6):

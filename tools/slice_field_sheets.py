@@ -7,7 +7,9 @@ to redraw the whole sheet slightly larger/smaller or shifted, so each sheet
 is first lined up with its input (rebuilt from the game's tiles) by a small
 scale + shift search on blurred brightness; then each 240 px cell is cut a
 few pixels inside its edges (the model softens tile edges into the grey
-gaps) and scaled to 160x160. Tiles cut here replace the atlas art
+gaps) and scaled to 160x160, and its colours are pulled most of the way to the
+original tile's (the model paints darker and duller than the NES palette).
+Tiles cut here replace the atlas art
 (hd/field/source) for the same IDs.
 
 usage: slice_field_sheets.py FIELD_TILES_JSON OUTDIR [--sheets DIR]
@@ -19,6 +21,21 @@ sys.path.insert(0, os.path.dirname(__file__))
 from export_chatgpt_tiles import W, H, CELL, cell_origin, render_sheet, art_tiles, HERE
 
 INSET = 5
+MATCH = 0.4          # how far each tile's colours are pulled to the original's
+
+def colour_match(tile, orig, k=MATCH):
+    """The model paints in its own palette (often darker and duller than
+    the NES colours, black areas turn grey). Fit an RGB affine map (3x3 +
+    offset, regularised toward identity) from the tile at 16x16 to the
+    original 16x16 tile, and move the art that fraction of the way."""
+    a = np.asarray(tile).astype(float); X = np.asarray(tile.resize((16, 16), Image.BOX)).reshape(-1, 3).astype(float)
+    Y = np.asarray(orig.resize((16, 16), Image.BOX)).reshape(-1, 3).astype(float)
+    Xa = np.hstack([X, np.full((len(X), 1), 255.0)])
+    lam = 2000.0 * np.eye(4); prior = np.vstack([np.eye(3), np.zeros((1, 3))])
+    M = np.linalg.solve(Xa.T @ Xa + lam, Xa.T @ Y + lam @ prior)
+    flat = a.reshape(-1, 3); fit = np.hstack([flat, np.full((len(flat), 1), 255.0)]) @ M
+    out = flat + k * (fit - flat)
+    return Image.fromarray(np.clip(np.round(out), 0, 255).astype(np.uint8).reshape(a.shape))
 
 def lum(im, f=4):
     a = np.asarray(im.convert('L').resize((W // f, H // f), Image.BILINEAR).filter(ImageFilter.GaussianBlur(2))).astype(float)
@@ -50,7 +67,8 @@ def register(res, ref):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('field_tiles'); ap.add_argument('out')
-    ap.add_argument('--sheets', default=os.path.join(HERE, 'hd', 'field', 'sheets')); a = ap.parse_args()
+    ap.add_argument('--sheets', default=os.path.join(HERE, 'hd', 'field', 'sheets'))
+    ap.add_argument('--match', type=float, default=MATCH, help='colour pull toward the original (0-1)'); a = ap.parse_args()
     meta = os.path.join(a.sheets, 'sheets.json')
     if not os.path.exists(meta): print('  no generated sheets'); return
     sheets = json.load(open(meta))['sheets']
@@ -59,7 +77,9 @@ def main():
     for name, cells in sheets.items():
         p = os.path.join(a.sheets, name + '.png')
         if not os.path.exists(p): continue
-        res = Image.open(p).convert('RGB').resize((W, H), Image.LANCZOS)
+        src = Image.open(p).convert('RGBA')
+        res = Image.new('RGBA', src.size, (0, 0, 0, 255)); res.alpha_composite(src)   # transparent = black (as in the game)
+        res = res.convert('RGB').resize((W, H), Image.LANCZOS)
         ref = render_sheet([tiles[c] for c in cells])
         score, s, dx, dy = register(res, ref)
         # put the result into the input's frame: scale about the origin, then shift
@@ -67,8 +87,9 @@ def main():
         placed.paste(res.resize((round(W * s), round(H * s)), Image.LANCZOS), (dx, dy))
         for i, aid in enumerate(cells):
             x, y = cell_origin(i)
-            placed.crop((x + INSET, y + INSET, x + CELL - INSET, y + CELL - INSET)).resize((160, 160), Image.LANCZOS) \
-                .save(os.path.join(a.out, aid + '.png'))
+            cut = placed.crop((x + INSET, y + INSET, x + CELL - INSET, y + CELL - INSET)).resize((160, 160), Image.LANCZOS)
+            if a.match > 0: cut = colour_match(cut, ref.crop((x, y, x + CELL, y + CELL)), a.match)
+            cut.save(os.path.join(a.out, aid + '.png'))
             n += 1
         print(f'  {name}: {len(cells)} tiles (scale {s:.2f}, shift {dx:+d},{dy:+d}, match {score:.2f})')
     print(f'{n} tiles from generated sheets -> {a.out}')
