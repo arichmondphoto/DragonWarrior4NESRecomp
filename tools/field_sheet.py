@@ -96,6 +96,7 @@ def collect(cap):
         cat = 'world' if world else 'dungeon' if ram[0x63] in DUNGEON else 'town'
         where = ('Underworld' if ram[0x63] == 0x45 else 'Overworld') if world else MAPS[ram[0x63]]
         if path.endswith('_n.mem'): where += ' (night)'
+        if 'world_dusk' in path: where += ' (nightfall)'
         defs = [(bytes(w[0x1600 + 4 * i:0x1604 + 4 * i]), w[0x16C0 + i] & 3) for i in range(32)]
         if world: defs += [(bytes(w[0x1680 + 4 * i:0x1684 + 4 * i]), 0) for i in range(16)]
         for t, p in defs:
@@ -109,6 +110,10 @@ def collect(cap):
             if tiles not in shapes: shapes[tiles] = {'cats': set(), 'variants': {}}; order.append(tiles)
             shapes[tiles]['cats'].add(cat)
             shapes[tiles]['variants'].setdefault(cols, set()).add(where)
+            if world and p == 0:
+                # overworld water animates by swapping colours 2 and 3 of
+                # sub-palette 0 every few frames: list the other phase too
+                shapes[tiles]['variants'].setdefault(bytes([cols[0], cols[1], cols[3], cols[2]]), set()).add(where)
     # Second pass: colours actually on screen. Some maps recolour parts of a
     # tileset (palette overrides), so add on-screen colours of known tiles.
     # (Unknown on-screen shapes are half-drawn rows at the scroll seam.)

@@ -21,6 +21,13 @@ Night: the palette is chosen at map load from the clock at WRAM $62ED (bank
 before each warp and files are named MM_SS_n (towns, castles and the
 overworld load their night palettes; dungeons look the same).
 
+Overworld nightfall: on the world map the clock advances as the hero walks,
+and the palette steps through dusk and early-night palettes on its way to
+night (clock $78, $7C, $80, $84; dawn reverses them at $C0-$C8); the water
+palette also alternates. The day run also walks the overworld across each
+of those steps (clock set just before it, from route frame 7200) and saves
+world_dusk1..4.mem (+ a second water phase each).
+
 Writes OUT/MM_SS.mem / .png per submap (+ index.json). Maps whose palette is
 still fading in are retried with more frames.
 
@@ -94,9 +101,33 @@ def main():
     with ThreadPoolExecutor(a.jobs) as ex:
         res = list(ex.map(one, jobs))
     # The overworld itself, from the route (frame 7200 is on the world map).
-    if not a.night: subprocess.run([a.host, ROM, '--frames', '7201', '--no-save', '--input', ROUTE, '--mem-frame', '7200',
-                    '--mem-out', os.path.join(a.out, 'world.mem'), '--screenshot', os.path.join(a.out, 'world.png')],
-                   check=True, capture_output=True)
+    if not a.night:
+        wst = os.path.join(tmp, 'world.cs')
+        subprocess.run([a.host, ROM, '--frames', '7201', '--no-save', '--input', ROUTE, '--mem-frame', '7200',
+                        '--mem-out', os.path.join(a.out, 'world.mem'), '--screenshot', os.path.join(a.out, 'world.png'),
+                        '--save-state', f'7200:{wst}'], check=True, capture_output=True)
+        wm = load(os.path.join(a.out, 'world.mem')); wbase = open(wst, 'rb').read()
+        wat = wbase.find(bytes(wm['wram'][:0x400])); day = bytes(wm['palette'][:16])
+        def dusk(job):
+            n, clock = job
+            b = bytearray(wbase); b[wat + 0x2ED] = clock
+            p = os.path.join(tmp, f'dusk{n}.cs'); open(p, 'wb').write(b)
+            def at(f, stem):
+                subprocess.run([a.host, ROM, '--load-state', p, '--frames', str(f + 1), '--no-save', '--input', ROUTE,
+                                '--mem-frame', str(f), '--mem-out', stem + '.mem'], check=True, capture_output=True)
+                return load(stem + '.mem')
+            stem = os.path.join(a.out, f'world_dusk{n}')
+            for f in range(7220, 7700, 20):                  # walk until the palette steps
+                m = at(f, stem)
+                if m['wram'][0x2ED] > clock and bytes(m['palette'][4:16]) != day[4:16]:
+                    at(f + 10, stem + 'b')                    # the other water phase
+                    return True
+            for x in (stem + '.mem', stem + 'b.mem'):
+                if os.path.exists(x): os.remove(x)
+            return False
+        with ThreadPoolExecutor(a.jobs) as ex:
+            got = list(ex.map(dusk, [(1, 0x77), (2, 0x7B), (3, 0x7F), (4, 0x83)]))
+        print(f'  overworld nightfall: {sum(got)} of 4 palette steps captured')
     json.dump(res, open(os.path.join(a.out, f'index{sfx}.json'), 'w'), indent=0)
     print(f'captured {len(res)} submaps{" at night" if a.night else " + the overworld"} -> {a.out}')
 

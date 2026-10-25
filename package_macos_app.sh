@@ -184,7 +184,7 @@ fi
 # turn it on in the launcher (Mods > HD text, windows and monsters).
 # Set DW4_NO_HD=1 to skip.
 HD_ID="dragon-warrior-4.hd-text"
-HD_VERSION="0.7.0"
+HD_VERSION="0.7.1"
 if [ "${DW4_NO_HD:-0}" != 1 ]; then
     say "Generating the HD pack from your ROM (text, windows, monsters, maps)"
     PYB="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYB" ] || PYB=python3
