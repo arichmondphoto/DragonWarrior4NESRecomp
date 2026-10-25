@@ -44,14 +44,24 @@ def tileable(px):
     return axis(g), axis(g.T)
 
 def make_seamless(img, h, v):
+    """Make a repeating ground tile meet itself across its edges (h: left/right,
+    v: top/bottom): (1) a gentle ramp so the edge bands' average colours match,
+    then (2) a wrap-around blur that fades in only within a few pixels of the
+    seam, so texture flows across it instead of stopping at a line."""
     a = np.asarray(img.convert('RGB')).astype(float)
-    W = a.shape[1]
+    W = a.shape[1]; ramp = np.arange(W) / (W - 1) - 0.5
     if h:
-        d = ndimage.gaussian_filter1d(a[:, 0] - a[:, -1], 6, axis=0, mode='wrap')
-        a += d[:, None, :] * (np.arange(W)[None, :, None] / (W - 1) - 0.5)   # edges meet
+        d = ndimage.gaussian_filter1d(a[:, :8].mean(1) - a[:, -8:].mean(1), 10, axis=0, mode='wrap')
+        a += d[:, None, :] * ramp[None, :, None]
     if v:
-        d = ndimage.gaussian_filter1d(a[0] - a[-1], 6, axis=0, mode='wrap')
-        a += d[None, :, :] * (np.arange(W)[:, None, None] / (W - 1) - 0.5)
+        d = ndimage.gaussian_filter1d(a[:8].mean(0) - a[-8:].mean(0), 10, axis=0, mode='wrap')
+        a += d[None, :, :] * ramp[:, None, None]
+    dist = np.minimum(np.arange(W), W - 1 - np.arange(W)) + 0.5
+    wgt = np.exp(-(dist / 5.0) ** 2)
+    if h:
+        a = a * (1 - wgt[None, :, None]) + ndimage.gaussian_filter1d(a, 3, axis=1, mode='wrap') * wgt[None, :, None]
+    if v:
+        a = a * (1 - wgt[:, None, None]) + ndimage.gaussian_filter1d(a, 3, axis=0, mode='wrap') * wgt[:, None, None]
     return Image.fromarray(np.clip(np.round(a), 0, 255).astype(np.uint8))
 
 def main():

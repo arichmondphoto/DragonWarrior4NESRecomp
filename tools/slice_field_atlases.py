@@ -30,6 +30,20 @@ def bounds(dark_frac):
             else: edges += [172 + 168 * (k - 1), 180 + 168 * (k - 1)]
     return [(edges[2 * i], edges[2 * i + 1]) for i in range(6)]
 
+def trim(a, x0, y0, x1, y1, most=6):
+    """Generators soften the black gutters into the cell, leaving a dark
+    1-3 px fringe that shows as grid lines in the game. Step each side in
+    while its edge line is clearly darker than the line a few pixels inside
+    (up to `most` px), then one more pixel for the anti-aliased transition."""
+    a = a.astype(float)
+    def side(get, n):
+        k = 0
+        while k < most and get(k).mean() < 0.8 * get(k + 4).mean() - 4: k += 1
+        return k + 1 if k else 1
+    l = side(lambda k: a[y0:y1, x0 + k], 0); r = side(lambda k: a[y0:y1, x1 - 1 - k], 0)
+    t = side(lambda k: a[y0 + k, x0:x1], 0); b = side(lambda k: a[y1 - 1 - k, x0:x1], 0)
+    return x0 + l, y0 + t, x1 - r, y1 - b
+
 def main():
     out = sys.argv[1]; os.makedirs(out, exist_ok=True); n = 0
     for js in sorted(glob.glob(os.path.join(SRC, '*.json'))):
@@ -39,6 +53,7 @@ def main():
         cols, rows = bounds((a < 25).mean(0)), bounds((a < 25).mean(1))
         for i, tid in enumerate(json.load(open(js))['cells']):
             (x0, x1), (y0, y1) = cols[i % 6], rows[i // 6]
+            x0, y0, x1, y1 = trim(a, x0, y0, x1, y1)
             im.crop((x0, y0, x1, y1)).resize((160, 160), Image.LANCZOS).save(os.path.join(out, tid + '.png')); n += 1
     print(f'{n} tiles -> {out}')
 
