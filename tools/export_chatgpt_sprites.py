@@ -76,6 +76,16 @@ README = """Dragon Warrior IV characters - package for ChatGPT
 {n} characters to draw (inputs/ + prompts/), plus {k} optional effects
 (optional/: shadows, sparkles - fine to leave 8-bit).
 
+Automatic (OpenAI API) - recommended
+  openai_sprites.py sends every character to OpenAI's image API with the same
+  settings and saves generated/results/<ID>.png. See the top of the script:
+    export OPENAI_API_KEY=sk-...
+    python3 openai_sprites.py --dry-run
+    python3 openai_sprites.py --ids C007,C017,C042     (pilot)
+    python3 openai_sprites.py --budget 25              (the rest)
+  Send back generated/results/ (and log.jsonl).
+
+By hand in ChatGPT
 Set up once
   1. In ChatGPT make a Project (e.g. "DW4 sprites"). Paste
      PROJECT_INSTRUCTIONS.txt into the project's instructions and add
@@ -144,6 +154,7 @@ def main():
         ref.paste(im, ((i % 3) * 341 + (341 - im.width) // 2, (i // 3) * 341 + (341 - im.height) // 2))
     ref.save(os.path.join(out, 'style_reference.png'))
     open(os.path.join(out, 'PROJECT_INSTRUCTIONS.txt'), 'w').write(INSTRUCTIONS)
+    shutil.copy(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'openai_sprites.py'), os.path.join(out, 'openai_sprites.py'))
     open(os.path.join(out, 'README.txt'), 'w').write(README.format(n=n, k=k))
     shutil.make_archive(out, 'zip', os.path.dirname(out), os.path.basename(out))
     print(f'{n} characters + {k} optional -> {out} (+ .zip)')
