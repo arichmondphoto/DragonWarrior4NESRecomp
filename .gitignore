@@ -15,3 +15,6 @@ build-win2/
 build-hd/
 hd/text/
 hd/pack/
+
+# The owner's own map-tile art (atlases) is committed
+!hd/field/source/*.png

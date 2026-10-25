@@ -44,6 +44,10 @@ and sliced onto the game's own monster tiles by tools/make_monster_hdpack.py.
 NOTE
 
 # ---- map tiles (towns, castles, dungeons, overworld) ---------------------
+for js in hd/field/source/*.json; do
+    [ -e "$js" ] || continue
+    [ -f "${js%.json}.png" ] || { echo "ERROR: map-tile atlas ${js%.json}.png is missing (git pull?)" >&2; exit 1; }
+done
 if ls hd/field/source/*.png >/dev/null 2>&1; then
     FCAP="$(dirname "$OUT")/field-capture"
     FSTAMP="$FCAP/.stamp"
