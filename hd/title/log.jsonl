@@ -1,0 +1,1 @@
+{"id": "TITLE", "model": "gpt-image-2.5-sunburst", "quality": "high", "variants": 1, "silhouette": false, "usage": {"input_tokens": 2729, "input_tokens_details": {"image_tokens": 2544, "text_tokens": 185}, "output_tokens": 1910, "output_tokens_details": {"image_tokens": 1910, "text_tokens": 0}, "total_tokens": 4639}, "cost_usd": 0.078577, "seconds": 41}

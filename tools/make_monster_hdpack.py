@@ -30,7 +30,7 @@ pack) in OUTDIR/hires.txt.
 
 usage: make_monster_hdpack.py CAPTURE OUTDIR [--scale 10] [--report FILE]
 """
-import argparse, json, os, sys
+import argparse, glob, json, os, sys
 from PIL import Image, ImageOps
 sys.path.insert(0, os.path.dirname(__file__))
 from monster_tiles import monster, FIRST_MONSTER_TILE
@@ -97,6 +97,10 @@ def main():
     conds, tiles, report = [], [], {}
     jobs = [(int(k), v, f'{v:03d}') for k, v in sorted(mapping['map'].items(), key=lambda kv: kv[1])]
     jobs += [(int(k), os.path.basename(v), v) for k, v in mapping.get('captures', {}).items() if not k.startswith('_')]
+    # monsters the sheet has no sprite for: separate pictures, hd/monsters/extra/M<id>.png
+    # (transparent, generated with tools/openai_sprites.py from tools/export_gaps.py)
+    for p in sorted(glob.glob(os.path.join(MON, 'extra', 'M[0-9][0-9][0-9].png'))):
+        mid = int(os.path.basename(p)[1:4]); jobs.append((f'extra:{mid}', mid, f'{mid:03d}'))
     # Sprites that share tiles with another sheet sprite (Necrosaro's forms reuse
     # most of the previous form's tiles) are gated on game memory: "when" maps
     # a sheet index to ADDR==VALUE, e.g. the form counter $6E7E.
@@ -112,7 +116,13 @@ def main():
         first_tile = len(tiles)
         m = monster(os.path.join(a.capture, stem + '.mem'), os.path.join(a.capture, stem + '.png'))
         if not m: report[mid] = 'no monster pieces in capture'; continue
-        canvas = fit(cut(sheet, boxes[s]), m['image'], S)
+        if isinstance(s, str):
+            art = Image.open(os.path.join(MON, 'extra', f'M{mid:03d}.png')).convert('RGBA')
+            al = art.getchannel('A').point(lambda v: v if v >= 64 else 0)   # drop the faint glow
+            art.putalpha(al); art = art.crop(al.getbbox())
+        else:
+            art = cut(sheet, boxes[s])
+        canvas = fit(art, m['image'], S)
         ox, oy = m['box'][:2]
         bg, spr = m['bg'], m['spr']
         packer = Sheet(len(bg) + len(spr) * (5 if s in gates else 1), T)   # gated: room for cells under sprites

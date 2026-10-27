@@ -1,0 +1,106 @@
+diff --git a/runner/cyc/cyc_hdpack.c b/runner/cyc/cyc_hdpack.c
+index 34ba3b1..473867b 100644
+--- a/runner/cyc/cyc_hdpack.c
++++ b/runner/cyc/cyc_hdpack.c
+@@ -72,7 +72,10 @@ static void fetch_tile(HdFetchedTile *tile,uint16_t address,uint8_t value,bool h
+     tile->bytes[row+(high?8:0)]=value;
+ }
+ void cyc_hdpack_bg_fetch(uint16_t address,uint8_t value,bool high) {
+-    if(hdpack_recording())fetch_tile(&pipeline.bg_fetch,address,value,high);
++    if(!hdpack_recording())return;
++    fetch_tile(&pipeline.bg_fetch,address,value,high);
++    /* coarse X is still this tile's until the end of its 8-dot fetch */
++    if(!high)pipeline.bg_fetch.ntx=(uint8_t)((ppu.v&0x1f)|((ppu.v>>5)&0x20));
+ }
+ void cyc_hdpack_bg_reload(void) {
+     if(!hdpack_recording())return;
+@@ -105,7 +108,7 @@ void cyc_hdpack_pixel(unsigned bg_color,unsigned bg_palette,int sprite,unsigned
+     const HdFetchedTile *bg=&pipeline.bg[15-ppu.fine_x];
+     if(ppu.show_bg && (ppu.dot>8 || ppu.show_bg8) && bg->valid) {
+         p->flags=1;p->bg_index=bg->index;memcpy(p->bg_tile,bg->bytes,16);
+-        p->bg_x=bg->x;p->bg_y=bg->row;p->bg_color=(uint8_t)bg_color;
++        p->bg_x=bg->x;p->bg_y=bg->row;p->bg_ntx=bg->ntx;p->bg_color=(uint8_t)bg_color;
+         for(unsigned j=1;j<4;j++)p->bg_pal[j]=ppu.palette[bg_palette*4+j];
+     }
+     if(sprite<0 && active && hdpack_sprite_cells()) {
+@@ -156,7 +159,7 @@ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height
+         p->bg_has=r->flags&1;p->sp_has=(r->flags>>1)&1;
+         p->bg_p0=r->bg_pal[0];p->bg_p1=r->bg_pal[1];p->bg_p2=r->bg_pal[2];p->bg_p3=r->bg_pal[3];
+         p->sp_p1=r->sp_pal[0];p->sp_p2=r->sp_pal[1];p->sp_p3=r->sp_pal[2];
+-        p->bg_ox=r->bg_x;p->bg_oy=r->bg_y;p->sp_ox=r->sp_x;p->sp_oy=r->sp_y;
++        p->bg_ox=r->bg_x;p->bg_oy=r->bg_y;p->bg_ntx=r->bg_ntx;p->sp_ox=r->sp_x;p->sp_oy=r->sp_y;
+         p->sp_hm=(r->flags>>2)&1;p->sp_vm=(r->flags>>3)&1;p->sp_clear=p->sp_has&&!r->sp_color;
+         p->backdrop=color(r->bg_pal[0],r->mask);
+         p->bg_argb=color(r->bg_pal[r->bg_color],r->mask);
+diff --git a/runner/cyc/cyc_hdpack_state.inc b/runner/cyc/cyc_hdpack_state.inc
+index 7bf40c6..0eda38e 100644
+--- a/runner/cyc/cyc_hdpack_state.inc
++++ b/runner/cyc/cyc_hdpack_state.inc
+@@ -4,6 +4,7 @@
+ typedef struct {
+     int32_t index;
+     uint8_t bytes[16], row, x, valid;
++    uint8_t ntx;   /* BG: nametable column (coarse X + 32 * NT X select); fills padding */
+ } HdFetchedTile;
+ /* All tile keys are owned bytes, rather than pointers into mutable CHR RAM.
+  * Four records keep each saved block below the mod registry's 1 MiB limit. */
+@@ -11,7 +12,9 @@ typedef struct {
+     int32_t bg_index,sp_index;
+     uint8_t bg_tile[16],sp_tile[16],bg_pal[4],sp_pal[3];
+     uint8_t bg_x,bg_y,sp_x,sp_y,flags,mask,bg_color,sp_color;
++    uint8_t bg_ntx;   /* fills padding: the saved layout is unchanged */
+ } HdRecordedPixel;
++_Static_assert(sizeof(HdFetchedTile)==24 && sizeof(HdRecordedPixel)==56,"HD snapshot layout changed");
+ typedef struct {
+     HdFetchedTile bg_fetch,bg[16],sprite[8];
+     uint8_t sprite_x[8];
+diff --git a/runner/include/hdpack.h b/runner/include/hdpack.h
+index 4178c02..1f35cd8 100644
+--- a/runner/include/hdpack.h
++++ b/runner/include/hdpack.h
+@@ -29,6 +29,7 @@ typedef struct {
+     uint8_t        bg_p0, bg_p1, bg_p2, bg_p3;  /* backdrop + colors 1..3 (6-bit) */
+     uint8_t        bg_ox, bg_oy;    /* within-tile pixel offset */
+     uint8_t        bg_has;
++    uint8_t        bg_ntx;          /* nametable column: coarse X + 32 * NT X select (cycle PPU) */
+     uint32_t       bg_argb;         /* original BG color (fallback when unmatched) */
+     uint32_t       backdrop;        /* universal bg color (transparent HD BG -> this) */
+ 
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 4c21b8e..9295d82 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -110,7 +110,7 @@ typedef enum {
+     CT_FRAME_RANGE,                          /* frame % A >= B */
+     CT_TILE_AT_POS, CT_SPRITE_AT_POS,        /* fixed screen pos (per-frame) */
+     CT_TILE_NEARBY, CT_SPRITE_NEARBY,        /* current pixel +- delta (per-pixel) */
+-    CT_POS_X, CT_POS_Y, CT_ORIGIN_X, CT_ORIGIN_Y,
++    CT_POS_X, CT_POS_Y, CT_ORIGIN_X, CT_ORIGIN_Y, CT_NT_X, CT_NT_COL,
+     CT_HMIRROR, CT_VMIRROR,                  /* built-in: current tile's flip flags */
+     CT_UNKNOWN,
+ } HdCondType;
+@@ -569,6 +569,15 @@ static void process_condition(char *rest) {
+                   strstr(ty, "X") ? CT_ORIGIN_X : CT_ORIGIN_Y;
+         c->operandA = (uint32_t)atoi(tok[3]);
+         c->use_cache = 0;
++    } else if (!strcmp(ty, "nametableX") || !strcmp(ty, "nametableColumn")) {
++        /* nesrecomp extension: the nametable column the BG pixel was fetched
++         * from, so a cell keeps its art while the screen scrolls (Mesen's
++         * positionCheckX is screen space). nametableX: 0-31, +32 for the
++         * right-hand table; nametableColumn: 0-31 (mirrored tables alike). */
++        if (n < 4 || !parse_op(tok[2], &c->op)) { free(c); return; }
++        c->type = ty[9] == 'X' ? CT_NT_X : CT_NT_COL;
++        c->operandA = (uint32_t)atoi(tok[3]);
++        c->use_cache = 0;
+     } else {
+         free(c); return;   /* unknown / unsupported condition type */
+     }
+@@ -1035,6 +1044,8 @@ static int cond_eval(HdCond *c, int x, int y, HdPixel *cur, int is_sprite) {
+         case CT_POS_Y: r = cond_cmp(y, c->op, (int)c->operandA); break;
+         case CT_ORIGIN_X: if (cur) r = cond_cmp(x - cur->bg_ox, c->op, (int)c->operandA); break;
+         case CT_ORIGIN_Y: if (cur) r = cond_cmp(y - cur->bg_oy, c->op, (int)c->operandA); break;
++        case CT_NT_X: r = !is_sprite && cur && cond_cmp(cur->bg_ntx, c->op, (int)c->operandA); break;
++        case CT_NT_COL: r = !is_sprite && cur && cond_cmp(cur->bg_ntx & 31, c->op, (int)c->operandA); break;
+         case CT_HMIRROR:  r = is_sprite && cur && cur->sp_hm; break;  /* NES BG tiles never flip */
+         case CT_VMIRROR:  r = is_sprite && cur && cur->sp_vm; break;
+         default: break;

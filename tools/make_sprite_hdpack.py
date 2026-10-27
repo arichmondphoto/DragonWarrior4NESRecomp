@@ -269,6 +269,9 @@ def main():
         for (v, L, k) in versions:
             for (c2, p, imgs, slot, t) in items:
                 sidx = imgs[(p, L[p])]
+                # beds only in the art's own colours (and night/fades of them): the
+                # rarer recoloured looks would double the pack's size for little
+                if '_r' in os.path.basename(img_path[sidx]): continue
                 if sidx not in made: made[sidx] = None
         for sidx in list(made):
             src = Image.open(os.path.join(a.outdir, img_path[sidx]))
@@ -284,6 +287,7 @@ def main():
             for (v, L, k) in versions:
                 cols = v[p]
                 if black(cols): continue
+                if imgs[(p, L[p])] not in made: continue
                 ti, pos = made[imgs[(p, L[p])]]; n = pos[c2]
                 turn_lines.append(f'<tile>{ti},{c2.hex().upper()},{palkey(cols)},{(n % 8) * SL},{(n // 8) * SL},'
                                   f'{bright(u, v, L, k):g},N')

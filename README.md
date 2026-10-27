@@ -154,9 +154,25 @@ How the characters are built (`tools/build_hd_pack.sh`):
    The pack sets `<options>spriteCells` (patch 0009) so the art is drawn over
    the whole 8x8 sprite, not clipped to its 8-bit pixels.
 
+- *Title screen* — the owner's painting `hd/title/TITLE.png` (sunset version;
+  made with `tools/export_gaps.py`). `tools/capture_extras.py` captures the
+  intro (blue sky at frame 1200, finished at 2400, and every 4th frame in
+  between: `title_seq.json`) and `tools/make_title_hdpack.py` keys every screen
+  cell by CHR + colours, gated on its nametable column (patch 0010, so the
+  scrolling cloud rows keep their art) and row. The blue-sky phase is the same
+  painting recoloured; letters being typed show the painted letter where the
+  8-bit letter is already drawn.
+- *Castle doors* — the three in-between frames of the big doors opening
+  (drawn straight into the nametable, so not map tiles): `hd/field/doors/DOOR1.png`,
+  cut by `tools/door_frames.py` into map tiles DR01-DR12 in every palette the
+  closed door uses.
+- *Night town crowd* — `hd/field/sheets/N01.png` (tiles T118-T127), cut by
+  `tools/slice_field_sheets.py`.
+- *More monsters* — `hd/monsters/extra/M###.png` (monsters the atlases didn't cover).
+
 - macOS: `./build_macos.sh` (or `./package_macos_app.sh`) generates the pack and
   installs it in the Mods catalog. In the launcher open **Mods**, turn on
-  **HD text, windows, monsters, maps and characters**, then start. `DW4_NO_HD=1` skips it.
+  **HD text, windows, monsters, maps, characters and title**, then start. `DW4_NO_HD=1` skips it.
 - Tiles are matched by their 16 CHR-RAM bytes and exact palettes.
   Bump `HD_VERSION` in `package_macos_app.sh` when the pack's content changes.
 
@@ -210,6 +226,12 @@ They are framework bugs, kept here until they can go upstream:
   opaque pixels, which clipped smooth art to a stair-stepped silhouette. A
   transparent pixel of a sprite with no HD art draws nothing. Packs without the
   option behave as before.
+- `0010-hdpack-nametable-column-condition.patch` — new pack conditions
+  `nametableColumn` (0-31) and `nametableX` (0-63, with the nametable select):
+  the column of the nametable the background pixel was fetched from. Mesen's
+  `positionCheckX` is screen space, so art keyed to a cell slides off when a
+  row scrolls (the title's parallax clouds). The column is kept in padding
+  bytes of the HD record, so save states are unchanged.
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 

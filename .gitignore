@@ -20,3 +20,6 @@ hd/pack/
 !hd/field/source/*.png
 !hd/sprites/source/*.png
 !hd/field/sheets/*.png
+!hd/monsters/extra/*.png
+!hd/field/doors/*.png
+!hd/title/*.png

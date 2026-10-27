@@ -45,6 +45,16 @@ Battle monsters: the project owner's artwork (hd/monsters/source), fitted
 and sliced onto the game's own monster tiles by tools/make_monster_hdpack.py.
 NOTE
 
+# ---- title screen and castle door animation (captured from the route) ----
+XCAP="$(dirname "$OUT")/extra-capture"
+xwant="$(shasum "$HOST" rom/DragonWarriorIV.nes routes/ch1_to_first_battles.txt tools/capture_extras.py 2>/dev/null | shasum | cut -d' ' -f1)"
+if [ ! -f "$XCAP/.stamp" ] || [ "$(cat "$XCAP/.stamp")" != "$xwant" ]; then
+    echo "  capturing the title screen and the castle door animation"
+    rm -rf "$XCAP"
+    "$PY" tools/capture_extras.py "$HOST" "$XCAP"
+    echo "$xwant" > "$XCAP/.stamp"
+fi
+
 # ---- map tiles (towns, castles, dungeons, overworld) ---------------------
 for js in hd/field/source/*.json; do
     [ -e "$js" ] || continue
@@ -70,11 +80,24 @@ if ls hd/field/source/*.png >/dev/null 2>&1; then
     "$PY" tools/slice_field_atlases.py "$FCAP/art"
     # sheets generated with the API (tools/export_chatgpt_tiles.py) replace atlas art per tile
     "$PY" tools/slice_field_sheets.py "$FCAP/field_tiles.json" "$FCAP/art"
-    "$PY" tools/make_field_hdpack.py "$FCAP/field_tiles.json" "$FCAP/art" "$OUT" --report "$(dirname "$OUT")/field-report.json"
+    # the castle doors' in-between frames, as extra map tiles (hd/field/doors)
+    "$PY" tools/door_frames.py "$FCAP/field_tiles.json" "$XCAP/doors.json" "$FCAP/art" "$FCAP/field_tiles_all.json"
+    "$PY" tools/make_field_hdpack.py "$FCAP/field_tiles_all.json" "$FCAP/art" "$OUT" --report "$(dirname "$OUT")/field-report.json"
     cat >> "$OUT/NOTICE.txt" <<'NOTE'
 
 Map tiles: the project owner's artwork (hd/field/source atlases), cut per
 8x8 tile and keyed onto the game's own map tiles by tools/make_field_hdpack.py.
+NOTE
+fi
+
+# ---- title screen ---------------------------------------------------------
+if [ -f hd/title/TITLE.png ]; then
+    echo "  title screen"
+    "$PY" tools/make_title_hdpack.py "$XCAP" "$OUT"
+    cat >> "$OUT/NOTICE.txt" <<'NOTE'
+
+Title screen: the project owner's artwork (hd/title/TITLE.png), keyed per
+screen cell by tools/make_title_hdpack.py.
 NOTE
 fi
 

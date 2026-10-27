@@ -201,18 +201,9 @@
   "191": "necro/necro_7"
  },
  "no_art": {
-  "_about": "Game monster IDs with no sprite on the sheet; they keep their original 8-bit art.",
+  "_about": "Game monster IDs with no art: 173 (its forced battle shows a shop). The others once listed here have separate pictures in hd/monsters/extra/.",
   "ids": [
-   43,
-   68,
-   83,
-   84,
-   87,
-   105,
-   114,
-   127,
-   173,
-   189
+   173
   ]
  },
  "when": {
