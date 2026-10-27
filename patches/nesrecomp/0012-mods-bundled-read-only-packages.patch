@@ -1,0 +1,86 @@
+diff --git a/runner/src/mod_runtime.cpp b/runner/src/mod_runtime.cpp
+index c4c3ccf..fcb1456 100644
+--- a/runner/src/mod_runtime.cpp
++++ b/runner/src/mod_runtime.cpp
+@@ -120,6 +120,7 @@ struct Package {
+     std::vector<Option> options;
+     std::vector<ExternalRom> external_roms;
+     std::vector<HdPack> hd_packs;
++    bool bundled = false;   /* shipped with the app (read-only): not removable */
+ };
+ 
+ struct FeatureSelection {
+@@ -1030,15 +1031,15 @@ bool snapshot_committed_external_rom_paths(Runtime& runtime,
+     return true;
+ }
+ 
+-bool scan(Runtime& runtime, std::string* error) {
+-    runtime.packages.clear();
+-    const fs::path packages_root = runtime.root / "packages";
++/* Packages are read from the catalog's own packages/ folder and, first, from a
++ * read-only folder shipped with the app: NESRECOMP_BUNDLED_MODS names a folder
++ * laid out like the catalog (packages/<id>/<version>/manifest.toml). A copy
++ * the user installed into the catalog wins over the bundled one of the same
++ * id and version; bundled packages cannot be removed from the Mods screen.
++ * Selections (on/off, options) stay in the catalog's state.toml either way. */
++static bool scan_packages(Runtime& runtime, const fs::path& packages_root, bool bundled,
++                          std::string* error) {
+     std::error_code ec;
+-    fs::create_directories(packages_root, ec);
+-    if (ec) {
+-        set_error(error, "cannot create mods directory: " + ec.message());
+-        return false;
+-    }
+     for (const fs::directory_entry& package_dir :
+          fs::directory_iterator(packages_root, ec)) {
+         if (ec) break;
+@@ -1058,6 +1059,7 @@ bool scan(Runtime& runtime, std::string* error) {
+                 return false;
+             }
+             package.root = version_dir.path();
++            package.bundled = bundled;
+             runtime.packages[package.id][package.version] = std::move(package);
+         }
+         if (ec) break;
+@@ -1069,6 +1071,24 @@ bool scan(Runtime& runtime, std::string* error) {
+     return true;
+ }
+ 
++bool scan(Runtime& runtime, std::string* error) {
++    runtime.packages.clear();
++    const fs::path packages_root = runtime.root / "packages";
++    std::error_code ec;
++    fs::create_directories(packages_root, ec);
++    if (ec) {
++        set_error(error, "cannot create mods directory: " + ec.message());
++        return false;
++    }
++    const char* bundled = std::getenv("NESRECOMP_BUNDLED_MODS");
++    if (bundled && *bundled) {
++        const fs::path bundled_root = fs::path(bundled) / "packages";
++        if (fs::is_directory(bundled_root, ec) &&
++            !scan_packages(runtime, bundled_root, true, error)) return false;
++    }
++    return scan_packages(runtime, packages_root, false, error);
++}
++
+ bool load_state(Runtime& runtime, std::string* error) {
+     runtime.selections.clear();
+     const fs::path path = runtime.root / "state.toml";
+@@ -2247,6 +2267,16 @@ int provider_remove(void*, const char* package_id,
+         state().error = "Disable this package's features before removing it.";
+         return 0;
+     }
++    {
++        const auto ids = state().packages.find(package_id);
++        if (ids != state().packages.end()) {
++            const auto it = ids->second.find(version);
++            if (it != ids->second.end() && it->second.bundled) {
++                state().error = "This package comes with the app and can't be removed.";
++                return 0;
++            }
++        }
++    }
+     std::error_code ec;
+     const fs::path path =
+         state().root / "packages" / package_id / version;

@@ -8,7 +8,7 @@
 # (or ~/Applications when /Applications isn't writable).
 #
 # The app is self-contained: the game, its SDL2 library, the launcher's
-# fonts/images and your ROM are inside it. Settings, battery saves and save
+# fonts/images, the HD pack and your ROM are inside it. Settings, battery saves and save
 # states live in ~/Library/Application Support/DragonWarrior4Recomp, so
 # reinstalling or rebuilding the app never touches your progress.
 #
@@ -70,6 +70,7 @@ mkdir -p "\$DATA/saves" "\$DATA/diagnostics"
 cd "\$DATA" || exit 1
 export NESRECOMP_DIAGNOSTICS_DIR="\$DATA/diagnostics"
 HERE="\$(cd "\$(dirname "\$0")" && pwd)"
+export NESRECOMP_BUNDLED_MODS="\$HERE/../Resources/mods"   # the HD pack inside the app
 exec "\$HERE/$EXE" "\$HERE/../Resources/DragonWarriorIV.nes" "\$@"
 EOF
 chmod +x "$C/MacOS/launch"
@@ -155,6 +156,43 @@ cat > "$C/Info.plist" <<EOF
 </plist>
 EOF
 
+# --- HD pack (text, windows, battle monsters) --------------------------------
+# Generated from your ROM: the game's own text and window tiles smoothly
+# upscaled, plus your monster art (hd/monsters) sliced onto the monsters the
+# game draws (captured by forcing one battle per monster; cached between
+# builds). Bundled inside the app (Contents/Resources/mods, laid out like the
+# Mods catalog; the launch script points NESRECOMP_BUNDLED_MODS at it, patch
+# 0012), so it is replaced with the app and nothing is copied into your
+# Library folder. Its on/off setting stays in your Mods catalog (state.toml),
+# so it carries over between versions; on a new Mac turn it on once in the
+# launcher (Mods > HD text, windows, monsters, maps, characters and title).
+# Set DW4_NO_HD=1 to skip.
+HD_ID="dragon-warrior-4.hd-text"
+HD_VERSION="0.10.0"
+if [ "${DW4_NO_HD:-0}" != 1 ]; then
+    say "Generating the HD pack from your ROM (text, windows, monsters, maps)"
+    PYB="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYB" ] || PYB=python3
+    VENV=build/.hd-venv
+    if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c 'import PIL, numpy, scipy' 2>/dev/null; then
+        "$PYB" -m venv "$VENV"
+        "$VENV/bin/pip" install --quiet --upgrade pip pillow numpy scipy
+    fi
+    tools/build_hd_pack.sh "build/$EXE" build/hd/pack "$VENV/bin/python" "$(sysctl -n hw.ncpu)"
+    NESMOD="dist/dw4-hd-$HD_VERSION.nesmod"
+    rm -f "$NESMOD"
+    "$VENV/bin/python" nesrecomp/tools/package_hdpack.py --pack build/hd/pack --rom rom/DragonWarriorIV.nes \
+        --game-id dragon-warrior-4 --id "$HD_ID" --version "$HD_VERSION" \
+        --name "HD text, windows, monsters, maps, characters and title" --author "DragonWarrior4NESRecomp" \
+        --license "Personal use; generated from your ROM and your artwork" --notice build/hd/pack/NOTICE.txt --out "$NESMOD"
+    DEST_PKG="$C/Resources/mods/packages/$HD_ID/$HD_VERSION"
+    rm -rf "$C/Resources/mods"; mkdir -p "$DEST_PKG"
+    "$VENV/bin/python" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$NESMOD" "$DEST_PKG"
+    # Earlier builds installed the pack into the Mods catalog; the bundled copy
+    # replaces it (and the old DejaVu font proof of concept).
+    rm -rf "$DATA_DIR/mods/packages/$HD_ID" "$DATA_DIR/mods/packages/dragon-warrior-4.hd-font"
+    echo "  $DEST_PKG"
+fi
+
 # --- signing (ad-hoc; required on Apple Silicon after editing load paths) ---
 say "Signing (ad-hoc)"
 for f in "$C"/Frameworks/*.dylib; do [ -e "$f" ] && codesign --force --sign - "$f"; done
@@ -180,41 +218,6 @@ if [ -d build/saves ]; then
         b="$(basename "$f")"
         [ -e "$DATA_DIR/saves/$b" ] || { cp "$f" "$DATA_DIR/saves/$b"; echo "Copied save $b"; }
     done
-fi
-
-# --- HD pack (text, windows, battle monsters) --------------------------------
-# Generated from your ROM: the game's own text and window tiles smoothly
-# upscaled, plus your monster art (hd/monsters) sliced onto the monsters the
-# game draws (captured by forcing one battle per monster; cached between
-# builds). Installed into the Mods catalog beside config.ini, exactly as the
-# launcher's Mods > Install lays it out. Like every pack it starts disabled:
-# turn it on in the launcher (Mods > HD text, windows and monsters).
-# Set DW4_NO_HD=1 to skip.
-HD_ID="dragon-warrior-4.hd-text"
-HD_VERSION="0.10.0"
-if [ "${DW4_NO_HD:-0}" != 1 ]; then
-    say "Generating the HD pack from your ROM (text, windows, monsters, maps)"
-    PYB="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYB" ] || PYB=python3
-    VENV=build/.hd-venv
-    if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c 'import PIL, numpy, scipy' 2>/dev/null; then
-        "$PYB" -m venv "$VENV"
-        "$VENV/bin/pip" install --quiet --upgrade pip pillow numpy scipy
-    fi
-    tools/build_hd_pack.sh "build/$EXE" build/hd/pack "$VENV/bin/python" "$(sysctl -n hw.ncpu)"
-    NESMOD="dist/dw4-hd-$HD_VERSION.nesmod"
-    rm -f "$NESMOD"
-    "$VENV/bin/python" nesrecomp/tools/package_hdpack.py --pack build/hd/pack --rom rom/DragonWarriorIV.nes \
-        --game-id dragon-warrior-4 --id "$HD_ID" --version "$HD_VERSION" \
-        --name "HD text, windows, monsters, maps, characters and title" --author "DragonWarrior4NESRecomp" \
-        --license "Personal use; generated from your ROM and your artwork" --notice build/hd/pack/NOTICE.txt --out "$NESMOD"
-    DEST_PKG="$DATA_DIR/mods/packages/$HD_ID/$HD_VERSION"
-    # Replace every earlier version: the saved selection (and its on/off
-    # state) carries over to the version that remains installed.
-    rm -rf "$DATA_DIR/mods/packages/$HD_ID"; mkdir -p "$DEST_PKG"
-    "$VENV/bin/python" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$NESMOD" "$DEST_PKG"
-    # Replaced by this pack: the earlier DejaVu-based font proof of concept.
-    rm -rf "$DATA_DIR/mods/packages/dragon-warrior-4.hd-font"
-    echo "  $DEST_PKG"
 fi
 
 # --- install --------------------------------------------------------------

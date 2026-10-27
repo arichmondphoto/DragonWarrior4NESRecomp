@@ -18,7 +18,8 @@ README.md is the full reference; this file is the working summary.
 
 ## Building
 - Owner (macOS): `./build_macos.sh` (installs deps, applies patches, builds, makes the app) and
-  `./package_macos_app.sh` (rebuilds when patches changed, builds the HD pack, installs it as a mod).
+  `./package_macos_app.sh` (rebuilds when patches changed, builds the HD pack and bundles it in the app's
+  `Contents/Resources/mods`, found via `NESRECOMP_BUNDLED_MODS` set by the app's launch script, patch 0012).
 - Linux headless host used for tests here (`build-hd/DragonWarrior4`, NESRECOMP_HEADLESS=ON, MODS + HD
   packs): `tools/apply_patches.sh && cmake --build build-hd`.
 - HD pack: `tools/build_hd_pack.sh HOST OUTDIR [PYTHON] [JOBS]` (e.g. `build-hd/DragonWarrior4 out/build7/pack python3 2`).
@@ -58,7 +59,7 @@ README.md is the full reference; this file is the working summary.
   beats an unconditional one; `positionCheckX/Y` are per pixel in screen space.
 - Project patches add: `memoryCheck` on WRAM (0007), `<options>spriteCells` (0009),
   `nametableColumn`/`nametableX` conditions (0010, for scrolling rows like the title clouds),
-  `rgb:`/`rot:` tile transforms + shared decoded blocks (0011).
+  `rgb:`/`rot:` tile transforms + shared decoded blocks (0011), read-only bundled mod packages (0012).
 - Map tiles and characters: other palettes are affine recolours of the art (`rgb:` at load time); palettes that are only reorderings of each
   other (colour-cycling animations such as the overworld sea) share one recolour. Seamless smoothing
   is skipped where the painted edges differ (SEAM_MAX). Fades = the same art at lower brightness.

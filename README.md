@@ -171,8 +171,10 @@ How the characters are built (`tools/build_hd_pack.sh`):
 - *More monsters* — `hd/monsters/extra/M###.png` (monsters the atlases didn't cover).
 
 - macOS: `./build_macos.sh` (or `./package_macos_app.sh`) generates the pack and
-  installs it in the Mods catalog. In the launcher open **Mods**, turn on
-  **HD text, windows, monsters, maps, characters and title**, then start. `DW4_NO_HD=1` skips it.
+  bundles it inside the app (`Contents/Resources/mods`; nothing is copied to
+  your Library folder). In the launcher open **Mods**, turn on
+  **HD text, windows, monsters, maps, characters and title** (once — the setting
+  is kept in your Mods catalog), then start. `DW4_NO_HD=1` skips it.
 - Tiles are matched by their 16 CHR-RAM bytes and exact palettes.
   Bump `HD_VERSION` in `package_macos_app.sh` when the pack's content changes.
 
@@ -238,6 +240,11 @@ They are framework bugs, kept here until they can go upstream:
   picture once and the player derives palette versions (other towns, night) and
   turned forms (people in bed) at load time; identical blocks are decoded once
   and shared. The pack went from 241 to 165 MiB and peak memory from ~2 GB to ~1.1 GB.
+- `0012-mods-bundled-read-only-packages.patch` — with `NESRECOMP_BUNDLED_MODS`
+  set to a folder laid out like the Mods catalog (`packages/<id>/<version>/`),
+  its packages are listed as well (read-only, not removable; a copy installed in
+  the catalog wins). The macOS app's launch script points it at the pack inside
+  the app. Selections stay in the catalog's `state.toml`.
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 
