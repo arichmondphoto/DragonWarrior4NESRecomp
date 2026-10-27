@@ -56,6 +56,8 @@ def tileable(px):
         return seam <= inner * 1.5 + 0.05
     return axis(g), axis(g.T)
 
+SEAM_MAX = 30   # mean edge-band colour difference (0-255) above which an axis is left alone
+
 def make_seamless(img, h, v):
     """Make a repeating ground tile meet itself across its edges (h: left/right,
     v: top/bottom): (1) a gentle ramp so the edge bands' average colours match,
@@ -63,12 +65,18 @@ def make_seamless(img, h, v):
     seam, so texture flows across it instead of stopping at a line."""
     a = np.asarray(img.convert('RGB')).astype(float)
     W = a.shape[1]; ramp = np.arange(W) / (W - 1) - 0.5
+    # Edges whose colours differ a lot are not one repeating texture in the art
+    # (a tower's foot standing on a red floor matches itself in the 8-bit tile
+    # but not in the painting): ramping those would tint the whole tile, so they
+    # are left as painted.
     if h:
         d = ndimage.gaussian_filter1d(a[:, :8].mean(1) - a[:, -8:].mean(1), 10, axis=0, mode='wrap')
-        a += d[:, None, :] * ramp[None, :, None]
+        if np.abs(d).mean() > SEAM_MAX: h = False
+        else: a += d[:, None, :] * ramp[None, :, None]
     if v:
         d = ndimage.gaussian_filter1d(a[:8].mean(0) - a[-8:].mean(0), 10, axis=0, mode='wrap')
-        a += d[None, :, :] * ramp[:, None, None]
+        if np.abs(d).mean() > SEAM_MAX: v = False
+        else: a += d[None, :, :] * ramp[:, None, None]
     dist = np.minimum(np.arange(W), W - 1 - np.arange(W)) + 0.5
     wgt = np.exp(-(dist / 5.0) ** 2)
     if h:
@@ -129,18 +137,30 @@ def main():
         base_img = load(base); main_idx = None; tinted = {}
         ref = bytes.fromhex(ref_pal.get(iid) or vs[0]['nes_colors'])   # palette the art was made for
         X = np.array([rgb(ref[k]) for k in range(4)]); W = cnt + 0.5
-        for r in vs:
-            pal = bytes.fromhex(r['nes_colors'])
-            over = os.path.join(a.art, aid + r['id'][len(iid):] + '.png') if r['id'] != iid else None
-            Y = np.array([rgb(pal[k]) for k in range(4)])
-            # per-channel affine fit (weighted by how much of each colour the tile
-            # uses) from the art's palette to this one: how the game recolours it
-            fit = []
+        def fit_of(pal):
+            Y = np.array([rgb(pal[k]) for k in range(4)]); fit, err = [], 0.0
             for ch in range(3):
                 x, y = X[:, ch], Y[:, ch]; mx, my = (W * x).sum() / W.sum(), (W * y).sum() / W.sum()
                 vx = (W * (x - mx) ** 2).sum()
                 g = (W * (x - mx) * (y - my)).sum() / vx if vx > 50 else ((W @ Y.mean(1)) / max(W @ X.mean(1), 1))
                 g = float(np.clip(g, 0, 3)); fit.append((g, my - g * mx))
+                err += float((W * (g * x + my - g * mx - y) ** 2).sum())
+            return fit, err
+        # The game animates some tiles by swapping colours (the overworld sea
+        # cycles 0F 30 21 12 <-> 0F 30 12 21). A palette that is only a
+        # reordering of another is the same picture: the whole group uses the
+        # recolour of the member whose order fits the art best (the art's own
+        # palette when it is in the group), so the HD tile holds still instead
+        # of flashing between a good and a garbled tint.
+        fits = {r['nes_colors']: fit_of(bytes.fromhex(r['nes_colors'])) for r in vs}
+        group = lambda h: (h[:2], tuple(sorted(h[i:i + 2] for i in range(2, 8, 2))))
+        rep = {}
+        for h in sorted(fits, key=lambda h: (bytes.fromhex(h) != ref, fits[h][1])):
+            rep.setdefault(group(h), h)
+        for r in vs:
+            pal = bytes.fromhex(r['nes_colors'])
+            over = os.path.join(a.art, aid + r['id'][len(iid):] + '.png') if r['id'] != iid else None
+            fit = fits[rep[group(r['nes_colors'])]][0]
             if over and os.path.exists(over):
                 idx = add_img(load(over), aid + r['id'][len(iid):])
             elif any(abs(g - 1) > 0.06 or abs(o) > 8 for g, o in fit):
