@@ -23,10 +23,11 @@ README.md is the full reference; this file is the working summary.
   packs): `tools/apply_patches.sh && cmake --build build-hd`.
 - HD pack: `tools/build_hd_pack.sh HOST OUTDIR [PYTHON] [JOBS]` (e.g. `build-hd/DragonWarrior4 out/build7/pack python3 2`).
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
-  A full build takes ~25 min; peak RAM ~2 GB per host process — use 2 jobs at most on a 7 GB machine.
+  A full build takes ~25 min; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.9.1. Pack name: "HD text, windows, monsters, maps, characters and title".
-- The nesmod package limit is 256 MiB; the pack is ~241 MiB — watch its size (`du -sb OUTDIR`).
+  catalog keys on it). Current: 0.10.0. Pack name: "HD text, windows, monsters, maps, characters and title".
+- The nesmod package limit is 256 MiB; the pack is ~165 MiB — watch its size (`du -sb OUTDIR`). Never store
+  recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
 ## Headless testing
 - `HOST rom/DragonWarriorIV.nes --frames N [--input ROUTE] --no-save --mods-root MODS --present-out f.png`
@@ -56,8 +57,9 @@ README.md is the full reference; this file is the working summary.
 - Mesen `hires.txt` format; keys are 16 CHR-RAM bytes + 4 palette colours. A passing conditional entry
   beats an unconditional one; `positionCheckX/Y` are per pixel in screen space.
 - Project patches add: `memoryCheck` on WRAM (0007), `<options>spriteCells` (0009),
-  `nametableColumn`/`nametableX` conditions (0010, for scrolling rows like the title clouds).
-- Map tiles: other palettes are affine recolours of the art; palettes that are only reorderings of each
+  `nametableColumn`/`nametableX` conditions (0010, for scrolling rows like the title clouds),
+  `rgb:`/`rot:` tile transforms + shared decoded blocks (0011).
+- Map tiles and characters: other palettes are affine recolours of the art (`rgb:` at load time); palettes that are only reorderings of each
   other (colour-cycling animations such as the overworld sea) share one recolour. Seamless smoothing
   is skipped where the painted edges differ (SEAM_MAX). Fades = the same art at lower brightness.
 - Castle doors and the title are drawn straight into the nametable (no map tiles): see

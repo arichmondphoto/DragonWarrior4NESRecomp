@@ -1,0 +1,151 @@
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 9295d82..404fa2b 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -347,6 +347,91 @@ static int load_sheet(const char *name) {
+     return s_sheet_count++;
+ }
+ 
++/* ── tile blocks: shared, optionally recoloured / turned ──────────────────────
++ * nesrecomp extension tokens after a <tile> line's default field:
++ *   rgb:GR/OR/GG/OG/GB/OB  per-channel colour map out = in*G + O (straight, not
++ *                          premultiplied, colour; G float, O integer; clamped)
++ *   rot:N                  the 8x8 block turned N*90 degrees counter-clockwise
++ * so a pack stores one picture and derives its palette versions and turned
++ * forms (beds) at load time instead of shipping a copy of each. Identical
++ * (image, position, transform) blocks are decoded once and shared by every
++ * tile entry that uses them (fades, conditional variants). */
++typedef struct { int rot; int has_rgb; float g[3]; int o[3]; } HdXform;
++typedef struct HdBlock {
++    int sheet, x, y, w, h; HdXform xf;
++    uint32_t *px; int has_transparent, fully_transparent;
++    struct HdBlock *next;
++} HdBlock;
++#define HD_NBLOCKBUCKETS 16384
++static HdBlock *s_block_buckets[HD_NBLOCKBUCKETS];
++
++static void parse_block_xform(const char *t, HdXform *xf) {
++    if (!strncmp(t, "rot:", 4)) { xf->rot = atoi(t + 4) & 3; return; }
++    if (!strncmp(t, "rgb:", 4)) {
++        float g[3]; int o[3];
++        if (sscanf(t + 4, "%f/%d/%f/%d/%f/%d", &g[0], &o[0], &g[1], &o[1], &g[2], &o[2]) == 6) {
++            xf->has_rgb = 1;
++            for (int c = 0; c < 3; c++) { xf->g[c] = g[c]; xf->o[c] = o[c]; }
++        }
++    }
++}
++static int xform_eq(const HdXform *a, const HdXform *b) {
++    if (a->rot != b->rot || a->has_rgb != b->has_rgb) return 0;
++    if (!a->has_rgb) return 1;
++    for (int c = 0; c < 3; c++) if (a->g[c] != b->g[c] || a->o[c] != b->o[c]) return 0;
++    return 1;
++}
++static uint32_t recolour_px(uint32_t v, const HdXform *xf) {
++    uint32_t a = v >> 24;
++    if (!a) return v;
++    int ch[3] = { (int)((v >> 16) & 0xFF), (int)((v >> 8) & 0xFF), (int)(v & 0xFF) };
++    for (int c = 0; c < 3; c++) {
++        float s = a == 255 ? (float)ch[c] : ch[c] * 255.0f / (float)a;   /* un-premultiply */
++        int r = (int)(s * xf->g[c] + (float)xf->o[c] + 0.5f);
++        if (r < 0) r = 0; if (r > 255) r = 255;
++        ch[c] = a == 255 ? r : (int)((r * (a + 1)) >> 8);                 /* premultiply (as premul()) */
++    }
++    return (a << 24) | ((uint32_t)ch[0] << 16) | ((uint32_t)ch[1] << 8) | (uint32_t)ch[2];
++}
++static const HdBlock *get_block(int sheet, int X, int Y, int W, int H, const HdXform *xf) {
++    uint32_t h = ((uint32_t)sheet * 2654435761u) ^ ((uint32_t)X * 40503u) ^ ((uint32_t)Y * 9973u) ^ (uint32_t)xf->rot;
++    if (xf->has_rgb) h ^= (uint32_t)(xf->g[0] * 977.0f) ^ ((uint32_t)xf->o[0] << 7) ^ ((uint32_t)(xf->g[1] * 131.0f) << 3) ^ ((uint32_t)xf->o[2] << 11);
++    h &= HD_NBLOCKBUCKETS - 1;
++    for (HdBlock *b = s_block_buckets[h]; b; b = b->next)
++        if (b->sheet == sheet && b->x == X && b->y == Y && b->w == W && b->h == H && xform_eq(&b->xf, xf)) return b;
++    HdBlock *b = (HdBlock *)calloc(1, sizeof(HdBlock));
++    if (!b) return NULL;
++    b->px = (uint32_t *)malloc((size_t)W * H * sizeof(uint32_t));
++    if (!b->px) { free(b); return NULL; }
++    b->sheet = sheet; b->x = X; b->y = Y; b->w = W; b->h = H; b->xf = *xf;
++    const HdSheet *sh = &s_sheets[sheet];
++    b->fully_transparent = 1;
++    for (int y = 0; y < H; y++) {
++        for (int x = 0; x < W; x++) {
++            int sx = x, sy = y;                  /* source of output (x,y) for a CCW turn */
++            switch (xf->rot) {
++                case 1: sx = W - 1 - y; sy = x; break;
++                case 2: sx = W - 1 - x; sy = H - 1 - y; break;
++                case 3: sx = y; sy = H - 1 - x; break;
++            }
++            uint32_t v = sh->px[(size_t)(Y + sy) * sh->w + X + sx];
++            if (xf->has_rgb) v = recolour_px(v, xf);
++            b->px[(size_t)y * W + x] = v;
++            if ((v & 0xFF000000u) != 0xFF000000u) b->has_transparent = 1;
++            if (v & 0xFF000000u) b->fully_transparent = 0;
++        }
++    }
++    b->next = s_block_buckets[h]; s_block_buckets[h] = b;
++    return b;
++}
++static void free_blocks(void) {
++    for (int i = 0; i < HD_NBLOCKBUCKETS; i++) {
++        HdBlock *b = s_block_buckets[i];
++        while (b) { HdBlock *nx = b->next; free(b->px); free(b); b = nx; }
++        s_block_buckets[i] = NULL;
++    }
++}
++
+ /* ── <tile> processing ────────────────────────────────────────────────────── */
+ 
+ static void process_tile(const char *cond_str, char *rest) {
+@@ -358,6 +443,7 @@ static void process_tile(const char *cond_str, char *rest) {
+     HdKey key; memset(&key, 0, sizeof(key));
+     int bitmap_index, X, Y, default_tile, brightness;
+     int idx = 0;
++    HdXform xf; memset(&xf, 0, sizeof(xf));
+ 
+     if (s_version < 100) {
+         /* legacy: tileIdx, img, palR, palG, palB, X, Y, brightness, default[, 16 dec bytes] */
+@@ -390,7 +476,9 @@ static void process_tile(const char *cond_str, char *rest) {
+         X = atoi(tok[idx++]); Y = atoi(tok[idx++]);
+         brightness = (int)(atof(tok[idx++]) * 255.0);
+         default_tile = (tok[idx][0] == 'Y' || tok[idx][0] == 'y'); idx++;
+-        /* trailing chrBank/tileIndex (CHR-RAM) are not used for matching */
++        /* trailing chrBank/tileIndex (CHR-RAM) are not used for matching;
++         * nesrecomp extensions (see parse_block_xform) may follow */
++        for (; idx < n; idx++) parse_block_xform(tok[idx], &xf);
+     }
+ 
+     if (bitmap_index < 0 || bitmap_index >= s_sheet_count) {
+@@ -417,19 +505,11 @@ static void process_tile(const char *cond_str, char *rest) {
+     t->w = W; t->h = H;
+     t->conds = tc; t->neg = tn; t->ncond = tcn;
+     t->brightness = brightness;
+-    t->data = (uint32_t *)malloc((size_t)W * H * sizeof(uint32_t));
+-    t->has_transparent = 0;
+-    t->fully_transparent = 1;
+-    for (int y = 0; y < H; y++) {
+-        const uint32_t *src = sh->px + (size_t)(Y + y) * sh->w + X;
+-        uint32_t *dst = t->data + (size_t)y * W;
+-        for (int x = 0; x < W; x++) {
+-            uint32_t v = src[x];
+-            dst[x] = v;
+-            if ((v & 0xFF000000u) != 0xFF000000u) t->has_transparent = 1;
+-            if (v & 0xFF000000u) t->fully_transparent = 0;
+-        }
+-    }
++    const HdBlock *blk = get_block(bitmap_index, X, Y, W, H, &xf);
++    if (!blk) { free(t->conds); free(t->neg); free(t); return; }
++    t->data = blk->px;
++    t->has_transparent = blk->has_transparent;
++    t->fully_transparent = blk->fully_transparent;
+ 
+     register_tile(t, default_tile);
+ }
+@@ -746,8 +826,9 @@ void hdpack_unload(void) {
+         s_buckets[i] = NULL;
+     }
+     for (int i = 0; i < s_all_count; i++) {
+-        if (s_all[i]) { free(s_all[i]->conds); free(s_all[i]->neg); free(s_all[i]->data); free(s_all[i]); }
++        if (s_all[i]) { free(s_all[i]->conds); free(s_all[i]->neg); free(s_all[i]); }   /* data: shared blocks */
+     }
++    free_blocks();
+     free(s_all); s_all = NULL; s_all_count = s_all_cap = 0;
+     for (int i = 0; i < s_sheet_count; i++) free(s_sheets[i].px);
+     free(s_sheets); s_sheets = NULL; s_sheet_count = s_sheet_cap = 0;

@@ -161,29 +161,26 @@ def main():
             pal = bytes.fromhex(r['nes_colors'])
             over = os.path.join(a.art, aid + r['id'][len(iid):] + '.png') if r['id'] != iid else None
             fit = fits[rep[group(r['nes_colors'])]][0]
+            xf = ''
             if over and os.path.exists(over):
                 idx = add_img(load(over), aid + r['id'][len(iid):])
-            elif any(abs(g - 1) > 0.06 or abs(o) > 8 for g, o in fit):
-                gkey = tuple((round(g / 0.05) * 0.05, round(o / 4) * 4) for g, o in fit)
-                if gkey not in tinted:
-                    arr = np.asarray(base_img).astype(float)
-                    arr = np.dstack([arr[..., ch] * gkey[ch][0] + gkey[ch][1] for ch in range(3)])
-                    tinted[gkey] = add_img(Image.fromarray(np.clip(np.round(arr), 0, 255).astype(np.uint8)),
-                                           f'{aid}_p{len(tinted) + 1}')
-                    nights += 1
-                idx = tinted[gkey]
             else:
                 if main_idx is None: main_idx = add_img(base_img, aid)
                 idx = main_idx
+                if any(abs(g - 1) > 0.06 or abs(o) > 8 for g, o in fit):
+                    # recoloured by the player at load time (patch 0011), not stored
+                    gkey = tuple((round(g / 0.05) * 0.05, round(o / 4) * 4) for g, o in fit)
+                    xf = ',rgb:' + '/'.join(f'{g:.2f}/{int(o)}' for g, o in gkey)
+                    if gkey not in tinted: tinted[gkey] = True; nights += 1
             uses = len(r['used_in'])
-            versions.append(dict(id=r['id'], item=iid, chr=t, pal=pal, img=idx, bright=1.0, uses=uses, real=True))
+            versions.append(dict(id=r['id'], item=iid, chr=t, pal=pal, img=idx, xf=xf, bright=1.0, uses=uses, real=True))
             L0 = lum(pal, cnt)
             for k in (1, 2, 3):
                 fp = fade(pal, k)
                 if all((c & 0x0F) >= 0x0D or c == 0x0F for c in fp[1:]) and fp[0] == 0x0F and k == 3:
                     continue                                   # black: nothing to draw
                 br = 0.0 if L0 <= 0 else min(1.0, lum(fp, cnt) / L0)
-                versions.append(dict(id=f'{r["id"]}~{k}', item=iid, chr=t, pal=fp, img=idx, bright=round(br, 3),
+                versions.append(dict(id=f'{r["id"]}~{k}', item=iid, chr=t, pal=fp, img=idx, xf=xf, bright=round(br, 3),
                                      uses=uses / (10 * k), real=False))
 
     # a fade step that equals a real palette of the same tile is that palette
@@ -216,12 +213,12 @@ def main():
     gated_only = unresolved = 0
     for (chr_hex, pal), own in owners.items():
         distinct = {}
-        for v, q in own: distinct.setdefault((v['img'], q, v['bright']), (v, q))
+        for v, q in own: distinct.setdefault((v['img'], v['xf'], q, v['bright']), (v, q))
         own = sorted(distinct.values(), key=lambda vq: (-vq[0]['real'], -vq[0]['uses']))
         blank = not any(bytes.fromhex(chr_hex))
         out_list = real_tiles if own[0][0]['real'] else fade_tiles
         entry = lambda v, q: (f'<tile>{v["img"]},{chr_hex},{pal},{QOFF[q][0] * 10},{QOFF[q][1] * 10},'
-                              f'{v["bright"]:g},N')
+                              f'{v["bright"]:g},N{v["xf"]}')
         if len(own) == 1 and not blank:
             out_list.append(entry(*own[0])); continue
         if not blank: out_list.append(entry(*own[0]))     # most used owner = plain default

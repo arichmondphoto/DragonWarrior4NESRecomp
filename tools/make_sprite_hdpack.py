@@ -146,15 +146,14 @@ def main():
             imgs = {}                                  # (slot p, look subpal) -> image index
             if only is None: main_imgs = imgs
             base = None
-            arr0 = np.asarray(canvas).astype(float)
             cache = {}
             for (v, L, k) in versions:
                 for p in ref:
                     T = L[p]
                     if (p, T) in imgs: continue
+                    if base is None: base = add_img(canvas, label)
                     if T == ref[p]:
-                        if base is None: base = add_img(canvas, label)
-                        imgs[(p, T)] = base; continue
+                        imgs[(p, T)] = (base, ''); continue
                     X = np.array([rgb(ref[p][i]) for i in range(3)]); Y = np.array([rgb(T[i]) for i in range(3)])
                     Wt = cnt[p][1:] + 0.5
                     fit = []
@@ -165,10 +164,8 @@ def main():
                         g = float(np.clip(g, 0, 3)); fit.append((round(g / 0.05) * 0.05, round((my - g * mx) / 4) * 4))
                     key = tuple(fit)
                     if key not in cache:
-                        out = arr0.copy()
-                        for ch in range(3): out[..., ch] = arr0[..., ch] * fit[ch][0] + fit[ch][1]
-                        cache[key] = add_img(Image.fromarray(np.clip(np.round(out), 0, 255).astype(np.uint8), 'RGBA'),
-                                             f'{label}_r{len(cache) + 1}')
+                        # recoloured by the player at load time (patch 0011), not stored
+                        cache[key] = (base, ',rgb:' + '/'.join(f'{g:.2f}/{int(o)}' for g, o in fit))
                         recolours += 1
                     imgs[(p, T)] = cache[key]
             # uses
@@ -245,8 +242,8 @@ def main():
             pal = palkey(cols)
             out = real_lines if k == 0 else fade_lines
             def entry(u):
-                idx = u['imgs'][(p, L[p])]; sl = u['slot']
-                return f'<tile>{idx},{c.hex().upper()},{pal},{(sl % 8) * SL},{(sl // 8) * SL},{bright(u, v, L, k):g},N'
+                idx, xf = u['imgs'][(p, L[p])]; sl = u['slot']
+                return f'<tile>{idx},{c.hex().upper()},{pal},{(sl % 8) * SL},{(sl // 8) * SL},{bright(u, v, L, k):g},N{xf}'
             if not blank: out.append(entry(own_d[0]))           # default: first use
             elif k == 0: gated_only += 1
             if len(own_d) == 1 and not blank: continue
@@ -265,32 +262,16 @@ def main():
         if c2 not in real_keys: groups[it[0]].append((c2,) + it[1:])
     cnt_of = {(u['cid'], u['p']): u['cnt'] for u in uses}
     for cid, items in groups.items():
-        made = {}                                   # source image -> (turned image, {chr: n})
-        for (v, L, k) in versions:
-            for (c2, p, imgs, slot, t) in items:
-                sidx = imgs[(p, L[p])]
-                # beds only in the art's own colours (and night/fades of them): the
-                # rarer recoloured looks would double the pack's size for little
-                if '_r' in os.path.basename(img_path[sidx]): continue
-                if sidx not in made: made[sidx] = None
-        for sidx in list(made):
-            src = Image.open(os.path.join(a.outdir, img_path[sidx]))
-            cv = Image.new('RGBA', (8 * SL, ((len(items) + 7) // 8) * SL), (0, 0, 0, 0)); pos = {}
-            for n, (c2, p, imgs, slot, t) in enumerate(items):
-                sl = src.crop(((slot % 8) * SL, (slot // 8) * SL, (slot % 8) * SL + SL, (slot // 8) * SL + SL))
-                if t % 4: sl = sl.rotate(90 * (t % 4))       # counter-clockwise, like np.rot90
-                if t >= 4: sl = sl.transpose(Image.FLIP_LEFT_RIGHT)
-                cv.paste(sl, ((n % 8) * SL, (n // 8) * SL)); pos[c2] = n
-            made[sidx] = (add_img(cv, f'{cid}_turned{len([m for m in made.values() if m]) + 1}'), pos)
+        # the source slice turned by the player at load time (rot:, patch 0011),
+        # in every look and its night/fade steps
         for (c2, p, imgs, slot, t) in items:
             u = dict(p=p, cnt=cnt_of[(cid, p)])
             for (v, L, k) in versions:
                 cols = v[p]
-                if black(cols): continue
-                if imgs[(p, L[p])] not in made: continue
-                ti, pos = made[imgs[(p, L[p])]]; n = pos[c2]
-                turn_lines.append(f'<tile>{ti},{c2.hex().upper()},{palkey(cols)},{(n % 8) * SL},{(n // 8) * SL},'
-                                  f'{bright(u, v, L, k):g},N')
+                if black(cols) or (p, L[p]) not in imgs: continue
+                idx, xf = imgs[(p, L[p])]
+                turn_lines.append(f'<tile>{idx},{c2.hex().upper()},{palkey(cols)},{(slot % 8) * SL},{(slot // 8) * SL},'
+                                  f'{bright(u, v, L, k):g},N,rot:{t % 4}{xf}')
 
     head = [l for l in lines if l.startswith(('<ver>', '<scale>'))]
     imgl = [l for l in lines if l.startswith('<img>')]

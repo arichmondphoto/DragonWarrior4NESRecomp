@@ -232,6 +232,12 @@ They are framework bugs, kept here until they can go upstream:
   `positionCheckX` is screen space, so art keyed to a cell slides off when a
   row scrolls (the title's parallax clouds). The column is kept in padding
   bytes of the HD record, so save states are unchanged.
+- `0011-hdpack-tile-recolour-turn-shared-blocks.patch` — `<tile>` lines may end
+  with `rgb:GR/OR/GG/OG/GB/OB` (per-channel colour map, out = in*G + O) and
+  `rot:N` (the block turned N*90 degrees counter-clockwise). The pack stores each
+  picture once and the player derives palette versions (other towns, night) and
+  turned forms (people in bed) at load time; identical blocks are decoded once
+  and shared. The pack went from 241 to 165 MiB and peak memory from ~2 GB to ~1.1 GB.
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 
