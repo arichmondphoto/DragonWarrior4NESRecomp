@@ -1,7 +1,7 @@
 # CLAUDE.md — Dragon Warrior IV NES recompilation
 
 Static recompilation of Dragon Warrior IV (USA, NES) with [mstan/nesrecomp](https://github.com/mstan/nesrecomp)
-(cycle backend), plus one HD texture pack built mostly from the owner's own artwork.
+(cycle backend), plus one HD texture pack built mostly from the owner's AI-generated artwork.
 README.md is the full reference; this file is the working summary.
 
 ## Layout
