@@ -101,6 +101,23 @@ by tools/make_title_hdpack.py.
 NOTE
 fi
 
+# ---- Endor casino: the poker table (captured by warping to it) -------------
+CCAP="$(dirname "$OUT")/casino-capture"
+cwant="$(shasum "$HOST" rom/DragonWarriorIV.nes routes/ch1_to_first_battles.txt tools/capture_casino.py 2>/dev/null | shasum | cut -d' ' -f1)"
+if [ ! -f "$CCAP/.stamp" ] || [ "$(cat "$CCAP/.stamp")" != "$cwant" ]; then
+    echo "  capturing the Endor casino's poker table"
+    rm -rf "$CCAP"
+    "$PY" tools/capture_casino.py "$HOST" "$CCAP"
+    echo "$cwant" > "$CCAP/.stamp"
+fi
+echo "  casino"
+"$PY" tools/make_casino_hdpack.py "$CCAP" "$OUT"
+cat >> "$OUT/NOTICE.txt" <<'NOTE'
+
+Endor casino: the poker cards are the project owner's artwork (hd/casino/cards);
+the poker screen's other tiles are smoothly upscaled from your ROM.
+NOTE
+
 # ---- walking characters (party, townspeople, animals, ships, ...) ---------
 if ls hd/sprites/source/C*.png >/dev/null 2>&1; then
     [ -f "$FCAP/.stamp" ] || { echo "ERROR: characters need the map capture (hd/field/source art)" >&2; exit 1; }
