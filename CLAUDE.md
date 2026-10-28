@@ -23,6 +23,12 @@ README.md is the full reference; this file is the working summary.
   `./build_macos.sh --release` = shareable zip without the ROM (+ `release/READ_ME_FIRST.txt`, placeholders
   filled by package_macos_app.sh); the launch script finds the ROM (bundled → rom.cfg → *.nes in the data
   folder → launcher picker), writes mods/state.toml on first run, sets NESRECOMP_SAVE_NAME/STATE_DIR (0015).
+- Linux (owner: Manjaro, Ryzen 7840HS): `./build_linux.sh [--release] [--native] [ROM]` → `dist/*.AppImage`
+  (+ `--release` tar.gz with `linux/READ_ME_FIRST.txt`). Container = `linux/Dockerfile` (Debian 12, SDL2 from
+  source); steps = `linux/build_in_env.sh` (build dir `build-linux/`); `linux/AppRun` sets NESRECOMP_DATA_DIR
+  (patch 0017) to ~/.local/share/DragonWarrior4Recomp, finds the ROM, turns the HD pack on at first run.
+  HD_VERSION is read from package_macos_app.sh (single source). Docker Hub is blocked from the cloud sandbox:
+  the container path is only testable on the owner's machine; test natively here.
 - Linux headless host used for tests here (`build-hd/DragonWarrior4`, NESRECOMP_HEADLESS=ON, MODS + HD
   packs): `tools/apply_patches.sh && cmake --build build-hd`.
 - HD pack: `tools/build_hd_pack.sh HOST OUTDIR [PYTHON] [JOBS]` (e.g. `build-hd/DragonWarrior4 out/build7/pack python3 2`).

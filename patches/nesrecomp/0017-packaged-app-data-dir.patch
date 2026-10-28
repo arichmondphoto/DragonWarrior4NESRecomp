@@ -1,0 +1,50 @@
+diff --git a/runner/cyc/cyc_fds_save.inc b/runner/cyc/cyc_fds_save.inc
+index 0867662..d182ab2 100644
+--- a/runner/cyc/cyc_fds_save.inc
++++ b/runner/cyc/cyc_fds_save.inc
+@@ -73,6 +73,9 @@ static uint8_t *fds_read_whole(const char *path, size_t *size, bool *missing)
+ static bool default_save_path(const char *image_path, const char *extension, char *out, size_t cap)
+ {
+     char dir[900] = ".";
++    const char *data = getenv("NESRECOMP_DATA_DIR");   /* packaged app: see cyc_settings_default_path */
++    if (data && *data) snprintf(dir, sizeof(dir), "%s", data);
++    else {
+ #ifdef _WIN32
+     DWORD n = GetModuleFileNameA(NULL, dir, sizeof(dir));
+     if (n == 0 || n >= sizeof(dir)) strcpy(dir, ".");
+@@ -83,6 +86,7 @@ static bool default_save_path(const char *image_path, const char *extension, cha
+     char *cut = strrchr(dir, '/'), *bcut = strrchr(dir, '\\');
+     if (bcut > cut) cut = bcut;
+     if (cut) *cut = 0;
++    }
+     const char *base = image_path, *s1 = strrchr(image_path, '/'), *s2 = strrchr(image_path, '\\');
+     if (s1 && s1 + 1 > base) base = s1 + 1;
+     if (s2 && s2 + 1 > base) base = s2 + 1;
+diff --git a/runner/cyc/cyc_host.c b/runner/cyc/cyc_host.c
+index 2a2427f..487e60b 100644
+--- a/runner/cyc/cyc_host.c
++++ b/runner/cyc/cyc_host.c
+@@ -137,6 +137,8 @@
+  *   Packaged apps (environment):
+  *     NESRECOMP_SAVE_NAME  the battery save's and save states' file name stem,
+  *                          instead of the ROM file's
++ *     NESRECOMP_DATA_DIR   the folder for config.ini, mods/, saves/, rom.cfg and
++ *                          cheats.txt (default: beside the program)
+  *     NESRECOMP_STATE_DIR  the folder for save-state slots (default
+  *                          <SDL base dir>/saves, inside a macOS app bundle)
+  *   A game's own options (cyc_host_extras.h) follow its --help lines.
+diff --git a/runner/cyc/cyc_settings.c b/runner/cyc/cyc_settings.c
+index 970afb4..d013558 100644
+--- a/runner/cyc/cyc_settings.c
++++ b/runner/cyc/cyc_settings.c
+@@ -38,6 +38,10 @@ const char *cyc_settings_default_path(void)
+ {
+     static char path[1024];
+     char dir[900] = ".";
++    /* A packaged app whose program folder is read-only (an AppImage) keeps
++     * config.ini, mods/, saves/, rom.cfg and cheats.txt in a data folder. */
++    const char *data = getenv("NESRECOMP_DATA_DIR");
++    if (data && *data) { snprintf(path, sizeof(path), "%s/config.ini", data); return path; }
+ #ifdef _WIN32
+     DWORD n = GetModuleFileNameA(NULL, dir, sizeof(dir));
+     if (n == 0 || n >= sizeof(dir)) strcpy(dir, ".");

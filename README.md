@@ -40,6 +40,26 @@ run `./build_macos.sh` again to rebuild and reinstall.
 Keyboard: arrows = D-pad, **Z** = A, **X** = B, **Return** = Start, `\` = Select. Gamepads work out of the box.
 Esc = menu, F7 = save states, F8 = rewind, Tab = fast-forward, F11 = fullscreen (on a Mac keyboard you may need fn+F7 etc.).
 
+## Play on Linux (AppImage)
+Requires Git and Podman or Docker (`sudo pacman -S podman` on Arch/Manjaro).
+```sh
+git clone https://github.com/arichmondphoto/DragonWarrior4NESRecomp.git
+cd DragonWarrior4NESRecomp
+./build_linux.sh "/path/to/Dragon Warrior IV (USA).nes"
+./dist/Dragon_Warrior_IV-*.AppImage
+```
+- The build runs in a Debian 12 container (`linux/Dockerfile`: toolchain, Python, SDL2 built from source with
+  X11/Wayland/PipeWire/PulseAudio/ALSA/controller support, each loaded at run time), so it works the same on any
+  distro and the AppImage runs on distros with glibc 2.36 or newer (2022 onward). `--native` builds on the host
+  instead (it prints the packages each distro needs; the result then needs a distro as new as yours).
+- The AppImage holds the game, SDL2, the launcher's assets and the HD pack (on by default), never the ROM:
+  pick it with **Browse For ROM** on first launch (remembered), or drop a `.nes` in the data folder.
+  Saves, settings, `cheats.txt` and the Mods selection live in `~/.local/share/DragonWarrior4Recomp`
+  (`$XDG_DATA_HOME`), set by the AppImage's `AppRun` (`NESRECOMP_DATA_DIR`, patch 0017).
+- `./build_linux.sh --release` also packs it with a player read-me (`linux/READ_ME_FIRST.txt`) as
+  `dist/DragonWarriorIV-linux-<arch>-<version>.tar.gz`.
+- The steps themselves are `linux/build_in_env.sh` (build dir `build-linux/`; the HD pack's captures are cached there).
+
 ## Build (headless baseline)
 ```sh
 git submodule update --init
@@ -297,6 +317,9 @@ They are framework bugs, kept here until they can go upstream:
   `NESRECOMP_STATE_DIR` moves the save-state slots out of the app bundle
   (a downloaded app is read-only). The macOS launch script sets both
   (`saves/DragonWarriorIV.*` in the data folder).
+- `0017-packaged-app-data-dir.patch` — `NESRECOMP_DATA_DIR` moves config.ini,
+  mods/, saves/, rom.cfg and cheats.txt from beside the program (read-only
+  inside an AppImage) to a data folder; the Linux AppImage's `AppRun` sets it.
 - `0016-hdpack-faster-compositing.patch` — the HD frame (2560x2400 at 10x) is
   composed on the CPU every frame; the title, with its stacked full-screen
   layers, took 70-100 ms per frame (well under 60 fps on an M1). Now: blending

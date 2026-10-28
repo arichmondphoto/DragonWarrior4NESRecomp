@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Dragon Warrior IV
+Comment=Dragon Warrior IV (NES), recompiled, with HD graphics
+Exec=DragonWarrior4
+Icon=dragon-warrior-4
+Categories=Game;RolePlaying;
+Terminal=false
+X-AppImage-Version=@VERSION@

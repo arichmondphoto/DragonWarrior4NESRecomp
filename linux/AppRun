@@ -1,0 +1,33 @@
+#!/bin/sh
+# The AppImage's entry point (filled in by linux/build_in_env.sh).
+# The AppImage itself is read-only, so everything the player creates lives in
+# ~/.local/share/DragonWarrior4Recomp (or $XDG_DATA_HOME/DragonWarrior4Recomp):
+# config.ini, saves/ (battery save and save states), mods/ (the HD pack's
+# on/off), rom.cfg (the ROM picked in the launcher) and cheats.txt.
+HERE="$(dirname "$(readlink -f "$0")")"
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}/DragonWarrior4Recomp"
+mkdir -p "$DATA/saves" "$DATA/mods" "$DATA/diagnostics"
+cd "$DATA" || exit 1
+export NESRECOMP_DATA_DIR="$DATA"
+export NESRECOMP_DIAGNOSTICS_DIR="$DATA/diagnostics"
+export NESRECOMP_SAVE_NAME="DragonWarriorIV"
+export NESRECOMP_STATE_DIR="$DATA/saves"
+export NESRECOMP_BUNDLED_MODS="$HERE/usr/share/dragonwarrior4/mods"   # the HD pack inside the AppImage
+
+# First run: the HD pack starts switched on (Mods in the launcher turns it off).
+if [ ! -f mods/state.toml ] && [ -d "$NESRECOMP_BUNDLED_MODS/packages/@HD_ID@/@HD_VERSION@" ]; then
+    printf 'format_version = 1\n\n[[package]]\nid = "%s"\nversion = "%s"\n\n[[feature]]\npackage_id = "%s"\nid = "hd-pack"\nenabled = true\n' \
+        "@HD_ID@" "@HD_VERSION@" "@HD_ID@" > mods/state.toml
+fi
+
+# The ROM: the one picked in the launcher (rom.cfg), else a .nes file in the
+# data folder, else none - the launcher then asks for it.
+ROM=""
+if [ -f rom.cfg ] && [ -f "$(head -n 1 rom.cfg)" ]; then
+    ROM="$(head -n 1 rom.cfg)"
+else
+    for f in "$DATA"/*.nes "$DATA"/*.NES; do
+        if [ -f "$f" ]; then ROM="$f"; break; fi
+    done
+fi
+exec "$HERE/usr/bin/@EXE@" ${ROM:+"$ROM"} "$@"
