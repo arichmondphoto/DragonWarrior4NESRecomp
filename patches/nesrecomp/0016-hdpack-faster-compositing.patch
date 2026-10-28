@@ -1,0 +1,298 @@
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 4c10dc6..d9b2566 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -53,6 +53,7 @@ typedef struct HdTile {
+     int            brightness;      /* 0..255 (or >255 for HDR; rare) */
+     int            has_transparent; /* any pixel with alpha != 0xFF */
+     int            fully_transparent;
++    int            invisible;       /* every pixel alpha <= 1: matched, but draws nothing visible */
+     struct HdCond **conds; int *neg; int ncond;  /* [cond] gate; 0 = unconditional */
+     struct HdTile *next;            /* primary hash chain */
+ } HdTile;
+@@ -149,6 +150,8 @@ typedef struct {
+     char      name[256];
+     uint32_t *px;            /* premultiplied ARGB, w*h */
+     int       w, h;
++    uint8_t  *opaque;        /* per scale x scale block: 1 = every pixel opaque (finalize_backgrounds) */
++    int       ow, oh, os;    /* that grid's size and block size */
+ } HdBgImg;
+ 
+ typedef struct HdBg {
+@@ -361,7 +364,7 @@ static int load_sheet(const char *name) {
+ typedef struct { int rot; int has_rgb; float g[3]; int o[3]; } HdXform;
+ typedef struct HdBlock {
+     int sheet, x, y, w, h; HdXform xf;
+-    uint32_t *px; int has_transparent, fully_transparent;
++    uint32_t *px; int has_transparent, fully_transparent, invisible;
+     struct HdBlock *next;
+ } HdBlock;
+ #define HD_NBLOCKBUCKETS 16384
+@@ -407,7 +410,7 @@ static const HdBlock *get_block(int sheet, int X, int Y, int W, int H, const HdX
+     if (!b->px) { free(b); return NULL; }
+     b->sheet = sheet; b->x = X; b->y = Y; b->w = W; b->h = H; b->xf = *xf;
+     const HdSheet *sh = &s_sheets[sheet];
+-    b->fully_transparent = 1;
++    b->fully_transparent = 1; b->invisible = 1;
+     for (int y = 0; y < H; y++) {
+         for (int x = 0; x < W; x++) {
+             int sx = x, sy = y;                  /* source of output (x,y) for a CCW turn */
+@@ -421,6 +424,7 @@ static const HdBlock *get_block(int sheet, int X, int Y, int W, int H, const HdX
+             b->px[(size_t)y * W + x] = v;
+             if ((v & 0xFF000000u) != 0xFF000000u) b->has_transparent = 1;
+             if (v & 0xFF000000u) b->fully_transparent = 0;
++            if ((v >> 24) > 1) b->invisible = 0;
+         }
+     }
+     b->next = s_block_buckets[h]; s_block_buckets[h] = b;
+@@ -512,6 +516,7 @@ static void process_tile(const char *cond_str, char *rest) {
+     t->data = blk->px;
+     t->has_transparent = blk->has_transparent;
+     t->fully_transparent = blk->fully_transparent;
++    t->invisible = blk->invisible;
+ 
+     register_tile(t, default_tile);
+ }
+@@ -754,7 +759,32 @@ static void process_background(const char *cond_str, char *rest) {
+ static int bg_priority_cmp(const void *a, const void *b) {
+     return (*(HdBg * const *)a)->priority - (*(HdBg * const *)b)->priority;
+ }
++/* Which scale x scale blocks of each background image are fully opaque, so
++ * the compositor can start at the topmost opaque layer of a block and copy
++ * opaque blocks row by row. */
++static void build_opaque_grids(void) {
++    for (int i = 0; i < s_bgimg_count; i++) {
++        HdBgImg *im = s_bgimgs[i];
++        free(im->opaque); im->opaque = NULL;
++        int sc = s_scale, ow = im->w / sc, oh = im->h / sc;
++        if (sc < 1 || ow < 1 || oh < 1) continue;
++        im->opaque = (uint8_t *)malloc((size_t)ow * oh);
++        if (!im->opaque) continue;
++        im->ow = ow; im->oh = oh; im->os = sc;
++        for (int gy = 0; gy < oh; gy++)
++            for (int gx = 0; gx < ow; gx++) {
++                int ok = 1;
++                for (int y = 0; y < sc && ok; y++) {
++                    const uint32_t *row = im->px + (long)(gy * sc + y) * im->w + gx * sc;
++                    for (int x = 0; x < sc; x++) if ((row[x] >> 24) != 0xFF) { ok = 0; break; }
++                }
++                im->opaque[gy * ow + gx] = (uint8_t)ok;
++            }
++    }
++}
++
+ static void finalize_backgrounds(void) {
++    build_opaque_grids();
+     if (s_bg_count == 0) return;
+     s_bg_sorted = (HdBg **)malloc(s_bg_count * sizeof(HdBg *));
+     for (int i = 0; i < s_bg_count; i++) s_bg_sorted[i] = &s_bgs[i];
+@@ -852,7 +882,7 @@ void hdpack_unload(void) {
+     free(s_bgs); s_bgs = NULL; s_bg_count = s_bg_cap = 0;
+     free(s_bg_sorted); s_bg_sorted = NULL;
+     free(s_actbg); s_actbg = NULL; s_nact = 0;
+-    for (int i = 0; i < s_bgimg_count; i++) { free(s_bgimgs[i]->px); free(s_bgimgs[i]); }
++    for (int i = 0; i < s_bgimg_count; i++) { free(s_bgimgs[i]->px); free(s_bgimgs[i]->opaque); free(s_bgimgs[i]); }
+     free(s_bgimgs); s_bgimgs = NULL; s_bgimg_count = s_bgimg_cap = 0;
+     s_missing_cond = s_bg_unrenderable = 0; s_disable_orig = 0; s_sprite_cells = 0;
+ 
+@@ -953,9 +983,16 @@ int hdpack_load_from_config(int is_chr_ram_game, int native_w) {
+ 
+ /* ── HD rendering (mirrors HdNesPack::DrawTile sampling) ───────────────────── */
+ 
++/* x / 255 for 0 <= x <= 65535*255, exact (truncating), without a divide */
++static inline uint32_t div255(uint32_t x) { return (x + 1 + (x >> 8)) >> 8; }
++
+ static uint32_t adjust_brightness(uint32_t px, int b) {
+     uint32_t a = px >> 24;
+     int r = (px >> 16) & 0xFF, g = (px >> 8) & 0xFF, bl = px & 0xFF;
++    if (b <= 255) {
++        r = (int)div255((uint32_t)(r * b)); g = (int)div255((uint32_t)(g * b)); bl = (int)div255((uint32_t)(bl * b));
++        return (a << 24) | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)bl;
++    }
+     r = r * b / 255; if (r > 255) r = 255;
+     g = g * b / 255; if (g > 255) g = 255;
+     bl = bl * b / 255; if (bl > 255) bl = 255;
+@@ -963,12 +1000,12 @@ static uint32_t adjust_brightness(uint32_t px, int b) {
+ }
+ 
+ /* Premultiplied alpha over an opaque background color. */
+-static uint32_t blend_over(uint32_t under, uint32_t src) {
++static inline uint32_t blend_over(uint32_t under, uint32_t src) {
+     uint32_t a = src >> 24;
+     uint32_t inv = 255 - a;
+-    int r = ((src >> 16) & 0xFF) + (int)((((under >> 16) & 0xFF) * inv) / 255);
+-    int g = ((src >> 8) & 0xFF) + (int)((((under >> 8) & 0xFF) * inv) / 255);
+-    int b = (src & 0xFF) + (int)(((under & 0xFF) * inv) / 255);
++    int r = ((src >> 16) & 0xFF) + (int)div255(((under >> 16) & 0xFF) * inv);
++    int g = ((src >> 8) & 0xFF) + (int)div255(((under >> 8) & 0xFF) * inv);
++    int b = (src & 0xFF) + (int)div255((under & 0xFF) * inv);
+     if (r > 255) r = 255; if (g > 255) g = 255; if (b > 255) b = 255;
+     return 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+ }
+@@ -1017,6 +1054,14 @@ static void blit_over(uint32_t *dst, int hd_w, const HdTile *t,
+     long bo; int small_inc, large_inc;
+     blit_setup(t, off_x, off_y, hmir, vmir, s, &bo, &small_inc, &large_inc);
+     uint32_t *out = dst;
++    if (t->invisible) return;      /* alpha <= 1/255 everywhere: nothing visible to draw */
++    if (!t->has_transparent && t->brightness == 255 && small_inc == 1) {
++        for (int y = 0; y < s; y++) {          /* opaque, unmirrored: plain row copies */
++            memcpy(out, bm + bo, (size_t)s * sizeof(uint32_t));
++            bo += s + large_inc; out += hd_w;
++        }
++        return;
++    }
+     for (int y = 0; y < s; y++) {
+         for (int x = 0; x < s; x++) {
+             uint32_t px = bm[bo];
+@@ -1216,54 +1261,77 @@ static uint32_t sat_sub(uint32_t u, uint32_t s) {
+     if (r<0) r=0; if (g<0) g=0; if (b<0) b=0;
+     return 0xFF000000u | ((uint32_t)r<<16) | ((uint32_t)g<<8) | (uint32_t)b;
+ }
++/* Does background b cover native pixel (sx,sy)'s whole block with opaque pixels
++ * (alpha blend)? Blocks always fall on the image's scale grid. */
++static int bg_block_opaque(const HdBg *b, int sx, int sy, int s) {
++    const HdBgImg *im = b->img;
++    if (!im->opaque || im->os != s || b->blend != 0) return 0;
++    int gx = b->left + sx + b->offx, gy = b->top + sy + b->offy;
++    if (b->wrap) { gx %= im->ow; if (gx < 0) gx += im->ow; if (im->ow * s != im->w) return 0; }
++    if (gx < 0 || gy < 0 || gx >= im->ow || gy >= im->oh) return 0;
++    return im->opaque[gy * im->ow + gx];
++}
++
+ /* Composite one background's scale*scale contribution at native pixel (sx,sy). */
+ static void blend_bg_block(uint32_t *dst, int hd_w, const HdBg *b, int sx, int sy, int s) {
+     int offx = b->offx, offy = b->offy;
+     const HdBgImg *im = b->img;
++    const int w = im->w, bright = b->brightness, mode = b->blend;
++    if (bright == 255 && bg_block_opaque(b, sx, sy, s)) {   /* opaque block: row copies */
++        int gx = b->left + sx + offx; if (b->wrap) { gx %= im->ow; if (gx < 0) gx += im->ow; }
++        const uint32_t *src = im->px + (long)((b->top + sy + offy) * s) * w + (long)gx * s;
++        for (int dy = 0; dy < s; dy++) memcpy(dst + (long)dy * hd_w, src + (long)dy * w, (size_t)s * sizeof(uint32_t));
++        return;
++    }
++    int px0 = (b->left + sx + offx) * s;
++    if (b->wrap) { px0 %= w; if (px0 < 0) px0 += w; }
++    else if (px0 >= w || px0 + s <= 0) return;           /* the block is beside the image */
+     for (int dy = 0; dy < s; dy++) {
+         int py = (b->top + sy + offy) * s + dy;
+         if (py < 0 || py >= im->h) continue;
+-        const uint32_t *row = im->px + (long)py * im->w;
++        const uint32_t *row = im->px + (long)py * w;
+         uint32_t *out = dst + (long)dy * hd_w;
+-        for (int dx = 0; dx < s; dx++) {
+-            int px = (b->left + sx + offx) * s + dx;
+-            if (b->wrap) { px %= im->w; if (px < 0) px += im->w; }
+-            if (px < 0 || px >= im->w) continue;
++        int px = px0;
++        for (int dx = 0; dx < s; dx++, px++) {
++            if (px >= w) { if (!b->wrap) break; px -= w; }
++            if (px < 0) continue;
+             uint32_t v = row[px];
+-            if (b->brightness != 255) v = adjust_brightness(v, b->brightness);
++            if (bright != 255) v = adjust_brightness(v, bright);
+             uint32_t a = v >> 24;
+             if (!a) continue;
+-            if (b->blend == 1)      out[dx] = sat_add(out[dx], v);
+-            else if (b->blend == 2) out[dx] = sat_sub(out[dx], v);
++            if (mode == 1)          out[dx] = sat_add(out[dx], v);
++            else if (mode == 2)     out[dx] = sat_sub(out[dx], v);
+             else if (a == 0xFF)     out[dx] = v;
+             else                    out[dx] = blend_over(out[dx], v);
+         }
+     }
+ }
+ 
+-void hdpack_upscale(const uint32_t *native_fb, int native_w, uint32_t *hd_buf) {
+-    if (!s_active) return;
+-    if (s_opt_debug < 0)     s_opt_debug = getenv("NESRECOMP_HDPACK_DEBUG") ? 1 : 0;
+-    if (s_opt_hide_orig < 0) s_opt_hide_orig = getenv("NESRECOMP_HDPACK_HIDE_ORIGINALS") ? 1 : 0;
++/* Rows [y0, y1) of the HD frame. Reads only per-frame state (pixels, active
++ * backgrounds, conditions already evaluated), so bands can run in parallel. */
++typedef struct { const uint32_t *native_fb; int native_w; uint32_t *hd_buf; int y0, y1; } HdBand;
++static void upscale_rows(const uint32_t *native_fb, int native_w, uint32_t *hd_buf, int y0, int y1) {
+     int s = s_scale, hd_w = native_w * s;
+     int hide_orig = s_disable_orig || s_opt_hide_orig;
+-
+-    eval_backgrounds_for_frame();
+-
+-    for (int sy = 0; sy < 240; sy++) {
++    for (int sy = y0; sy < y1; sy++) {
+         for (int sx = 0; sx < native_w; sx++) {
+             int idx = sy * native_w + sx;
+             uint32_t *dst = hd_buf + (long)(sy * s) * hd_w + (long)sx * s;
+             HdPixel *p = &s_pixels[idx];
+ 
+-            /* base: backdrop where BG is enabled, else the universal native pixel */
+-            fill_block(dst, hd_w, p->bg_has ? p->backdrop : native_fb[idx], s);
+-
+             /* under-backgrounds (priority 0..19). Suppressed inside an opaque HUD
+              * overlay's top strip so its transparent holes (empty item/heart slots)
+-             * fall back to the backdrop instead of bleeding the scrolling room art. */
++             * fall back to the backdrop instead of bleeding the scrolling room art.
++             * Drawing starts at the topmost one that is opaque over this block:
++             * everything beneath it (and the backdrop) would be covered anyway. */
++            int first = 0, covered = 0;
++            if (sy >= s_hud_rows)
++                for (int i = s_band_mid - 1; i >= 0; i--)
++                    if (bg_block_opaque(s_actbg[i], sx, sy, s)) { first = i; covered = 1; break; }
++            /* base: backdrop where BG is enabled, else the universal native pixel */
++            if (!covered) fill_block(dst, hd_w, p->bg_has ? p->backdrop : native_fb[idx], s);
+             if (sy >= s_hud_rows)
+-                for (int i = 0; i < s_band_mid; i++) blend_bg_block(dst, hd_w, s_actbg[i], sx, sy, s);
++                for (int i = first; i < s_band_mid; i++) blend_bg_block(dst, hd_w, s_actbg[i], sx, sy, s);
+ 
+             /* NES background HD tile (composites over whatever is beneath) */
+             HdTile *bt = p->bg_has ? match_layer(0, p->bg_index, p->bg_t16,
+@@ -1302,3 +1370,51 @@ void hdpack_upscale(const uint32_t *native_fb, int native_w, uint32_t *hd_buf) {
+         }
+     }
+ }
++
++#if !defined(_WIN32) && !defined(NESRECOMP_HDPACK_SINGLE_THREAD)
++#include <pthread.h>
++#include <unistd.h>
++#define HD_MAX_THREADS 16
++static void *band_main(void *arg) {
++    HdBand *b = (HdBand *)arg;
++    upscale_rows(b->native_fb, b->native_w, b->hd_buf, b->y0, b->y1);
++    return NULL;
++}
++static int hd_threads(void) {
++    static int n = 0;
++    if (!n) {
++        const char *e = getenv("NESRECOMP_HDPACK_THREADS");
++        long c = e && *e ? atol(e) : sysconf(_SC_NPROCESSORS_ONLN);
++        n = c < 1 ? 1 : c > HD_MAX_THREADS ? HD_MAX_THREADS : (int)c;
++    }
++    return n;
++}
++#endif
++
++void hdpack_upscale(const uint32_t *native_fb, int native_w, uint32_t *hd_buf) {
++    if (!s_active) return;
++    if (s_opt_debug < 0)     s_opt_debug = getenv("NESRECOMP_HDPACK_DEBUG") ? 1 : 0;
++    if (s_opt_hide_orig < 0) s_opt_hide_orig = getenv("NESRECOMP_HDPACK_HIDE_ORIGINALS") ? 1 : 0;
++
++    eval_backgrounds_for_frame();
++    /* Conditions that are constant for the frame (memory, tile at a position,
++     * frame range) are settled here once, so the bands below only read them. */
++    for (int i = 0; i < s_cond_count; i++)
++        if (s_cond_all[i]->use_cache) cond_eval(s_cond_all[i], 0, 0, NULL, 0);
++
++#if !defined(_WIN32) && !defined(NESRECOMP_HDPACK_SINGLE_THREAD)
++    int n = hd_threads();
++    if (n > 1) {
++        pthread_t th[HD_MAX_THREADS]; HdBand band[HD_MAX_THREADS]; int started[HD_MAX_THREADS];
++        for (int i = 0; i < n; i++) {
++            band[i] = (HdBand){ native_fb, native_w, hd_buf, 240 * i / n, 240 * (i + 1) / n };
++            started[i] = i > 0 && pthread_create(&th[i], NULL, band_main, &band[i]) == 0;
++            if (i > 0 && !started[i]) band_main(&band[i]);      /* no thread: do it here */
++        }
++        band_main(&band[0]);
++        for (int i = 1; i < n; i++) if (started[i]) pthread_join(th[i], NULL);
++        return;
++    }
++#endif
++    upscale_rows(native_fb, native_w, hd_buf, 0, 240);
++}
+\ No newline at end of file

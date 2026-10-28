@@ -69,7 +69,9 @@ README.md is the full reference; this file is the working summary.
   `nametableColumn`/`nametableX` conditions (0010, for scrolling rows like the title clouds),
   `rgb:`/`rot:` tile transforms + shared decoded blocks (0011), read-only bundled mod packages (0012),
   `<background>` `line:Y` scroll + `wrap` (0013), Game Genie cheats (0014, `cyc_cheats.c`; launcher Cheats
-  page = recomp-ui 0003; `cheats.txt` beside config.ini, `--cheats FILE` headless).
+  page = recomp-ui 0003; `cheats.txt` beside config.ini, `--cheats FILE` headless), faster multi-threaded
+  compositing (0016: opaque-layer skipping, invisible-tile skip, bands on all cores; `NESRECOMP_HDPACK_THREADS`).
+  The title is the heaviest screen: keep its layer count low and use fully opaque blocks where possible.
 - Map tiles and characters: other palettes are affine recolours of the art (`rgb:` at load time); palettes that are only reorderings of each
   other (colour-cycling animations such as the overworld sea) share one recolour. Seamless smoothing
   is skipped where the painted edges differ (SEAM_MAX). Fades = the same art at lower brightness.

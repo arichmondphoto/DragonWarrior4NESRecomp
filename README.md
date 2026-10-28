@@ -297,6 +297,17 @@ They are framework bugs, kept here until they can go upstream:
   `NESRECOMP_STATE_DIR` moves the save-state slots out of the app bundle
   (a downloaded app is read-only). The macOS launch script sets both
   (`saves/DragonWarriorIV.*` in the data folder).
+- `0016-hdpack-faster-compositing.patch` — the HD frame (2560x2400 at 10x) is
+  composed on the CPU every frame; the title, with its stacked full-screen
+  layers, took 70-100 ms per frame (well under 60 fps on an M1). Now: blending
+  without divides, no per-pixel modulo for wrapping layers, opaque tiles and
+  background blocks copied row by row, drawing starts at the topmost
+  background that is opaque over a block (a per-image grid built at load),
+  tiles that are invisible everywhere (alpha <= 1/255) are skipped, and the
+  frame is composed in horizontal bands on all cores (up to 16;
+  `NESRECOMP_HDPACK_THREADS=N` overrides). Same picture (within 1/255 where
+  an invisible tile was blended before); about 2.5x faster per core, more with
+  the cores.
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 
