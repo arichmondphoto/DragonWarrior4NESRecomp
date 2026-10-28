@@ -1,0 +1,16 @@
+{
+ "_about": "How tools/compose_deck.py builds the deck from the generated sheets C01-C09 (card ids: rank*4+suit in hex, suits sword/shield/slime/crown; 34 = joker). Points are on a 400 x 560 card.",
+ "blank": "07",
+ "pips": [
+  {"suit": "sword", "card": "0c", "near": [125, 115], "scale": 1.2},
+  {"suit": "shield", "card": "0d", "near": [125, 115]},
+  {"suit": "slime", "card": "0e", "near": [125, 115]},
+  {"suit": "crown", "card": "0f", "near": [125, 115]}
+ ],
+ "pip_size": 76,
+ "face_pip_scale": 0.9,
+ "aces": ["00", "01", "02", "03"],
+ "ace_size": [240, 300],
+ "whole": ["34", "back"],
+ "corner_height": 52
+}

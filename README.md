@@ -173,14 +173,20 @@ How the characters are built (`tools/build_hd_pack.sh`):
   (the exit table at `$05A0` pointed at map 4, submap 1; coins in WRAM `$62AD`).
   Poker: `tools/capture_casino.py` writes chosen cards into the deck (WRAM
   `$7600`, rank*4+suit, `$34` = joker) and deals them, so all 53 cards and the
-  back are recorded; `tools/make_casino_hdpack.py` cuts the owner's card sheets
-  `hd/casino/cards/C01-C09.png` into 5x7-tile cards (shared tiles told apart by
-  `tileNearby`). Slot machine: `tools/capture_slots.py` plays three rounds (stand
+  back are recorded; `tools/compose_deck.py` builds one consistent deck from parts
+  of the owner's card sheets `hd/casino/cards/C01-C09.png` (chosen in `deck.json`:
+  one blank face, one pip per suit, the four ace pictures, the joker and back used
+  whole), laid out like the game's own cards, with ranks and J/Q/K letters from
+  `glyphs.png` (rendered once by `tools/make_card_glyphs.py`, Liberation Serif
+  Bold); `tools/make_casino_hdpack.py` keys it as 5x7-tile cards (shared tiles
+  told apart by `tileNearby`). Slot machine: `tools/capture_slots.py` plays three rounds (stand
   below a machine, step up to face it); `tools/make_slots_hdpack.py` draws the
   owner's painting `hd/casino/slots/SLOT.png` as a still `<background>` (read from
-  the JACKPOT sign, with the fade steps; its text window is always blanked, since
-  the text tiles are partly transparent) and the seven reel symbols (8x8 sprites
-  in 16x16 groups) from `hd/casino/slots/SYMBOLS.png`; lamps and coin digits are
+  the JACKPOT sign, with the fade steps; resampled onto the game's layout by the
+  straight-line x/y maps in `hd/casino/slots/layout.json`; its text window is
+  always blanked, since the text tiles are partly transparent) and the seven reel
+  symbols (8x8 sprites in 16x16 groups) cut out of the painting's own pay table
+  (boxes in `layout.json`; `SYMBOLS.png` is the fallback); lamps and coin digits are
   smoothed. `tools/export_casino.py` makes the art package for OpenAI's image
   API. Without the art only the smoothed tiles are added. The arena needs nothing
   extra (HD monsters and text).
@@ -191,7 +197,7 @@ How the characters are built (`tools/build_hd_pack.sh`):
 - macOS: `./build_macos.sh` (or `./package_macos_app.sh`) generates the pack and
   bundles it inside the app (`Contents/Resources/mods`; nothing is copied to
   your Library folder). In the launcher open **Mods**, turn on
-  **HD text, windows, monsters, maps, characters and title** (once — the setting
+  **HD text, windows, monsters, maps, characters, title and casino** (once — the setting
   is kept in your Mods catalog), then start. `DW4_NO_HD=1` skips it.
 - Tiles are matched by their 16 CHR-RAM bytes and exact palettes.
   Bump `HD_VERSION` in `package_macos_app.sh` when the pack's content changes.

@@ -1,0 +1,97 @@
+{
+ "_about": "SLOT.png (the owner's painting, 1280x1200) -> the game's layout. warp: straight-line maps of x and y, game (screen*5) -> painting; symbols: each reel symbol's box in the painting's pay table (cut out at build time).",
+ "warp": {
+  "x_game": [
+   0,
+   142,
+   240,
+   394,
+   480,
+   634,
+   720,
+   874,
+   950,
+   1209,
+   1279
+  ],
+  "x_paint": [
+   0,
+   104,
+   218,
+   372,
+   467,
+   614,
+   706,
+   864,
+   941,
+   1226,
+   1279
+  ],
+  "y_game": [
+   0,
+   160,
+   275,
+   689,
+   800,
+   839,
+   895,
+   1104,
+   1199
+  ],
+  "y_paint": [
+   0,
+   160,
+   258,
+   735,
+   843,
+   891,
+   949,
+   1125,
+   1199
+  ]
+ },
+ "symbols": {
+  "seven": [
+   998,
+   148,
+   1040,
+   197
+  ],
+  "BAR": [
+   1002,
+   230,
+   1050,
+   281
+  ],
+  "sun": [
+   1001,
+   312,
+   1048,
+   374
+  ],
+  "moon": [
+   1000,
+   404,
+   1046,
+   457
+  ],
+  "star": [
+   1001,
+   490,
+   1049,
+   547
+  ],
+  "water drop": [
+   1002,
+   579,
+   1042,
+   639
+  ],
+  "cherries": [
+   1000,
+   669,
+   1048,
+   725
+  ]
+ }
+}

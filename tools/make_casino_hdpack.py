@@ -3,9 +3,10 @@
 From tools/capture_casino.py (CAPTURE/cards.json):
 
   cards   the owner's generated card sheets hd/casino/cards/C01-C09.png
-          (tools/export_casino.py layout; sheets.json lists the cards) are
-          cut into one 400 x 560 picture per card (each card is found on its
-          sheet by its white face, so a slightly shifted card still fits).
+          (tools/export_casino.py layout; sheets.json lists the cards). With
+          hd/casino/cards/deck.json the whole deck is composed from one set of
+          their parts (tools/compose_deck.py), so the cards match; without it
+          each card is cut from its sheet (found by its white face).
           A card is 5 x 7 tiles; each of its 35 cells is keyed by CHR +
           colours and, where other cards share that tile, told apart by the
           fewest of its own card's other cells (tileNearby). Screen-fade
@@ -85,7 +86,10 @@ def main():
     # ---- cards ----------------------------------------------------------
     cards = dict(cap['cards']); cards['back'] = cap['back']
     art = {}
-    for n, ids in enumerate(SHEET_CARDS, 1):
+    if os.path.exists(os.path.join(ART, 'deck.json')):          # one consistent deck from the sheets' parts
+        from compose_deck import compose
+        art = {cid: im.resize((5 * C, 7 * C), Image.LANCZOS) for cid, im in compose(cap, ART).items()}
+    for n, ids in enumerate(SHEET_CARDS if not art else [], 1):
         p = os.path.join(ART, f'C{n:02d}.png')
         if not os.path.exists(p): continue
         sheet = Image.open(p).convert('RGB')

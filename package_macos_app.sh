@@ -165,10 +165,10 @@ EOF
 # 0012), so it is replaced with the app and nothing is copied into your
 # Library folder. Its on/off setting stays in your Mods catalog (state.toml),
 # so it carries over between versions; on a new Mac turn it on once in the
-# launcher (Mods > HD text, windows, monsters, maps, characters and title).
+# launcher (Mods > HD text, windows, monsters, maps, characters, title and casino).
 # Set DW4_NO_HD=1 to skip.
 HD_ID="dragon-warrior-4.hd-text"
-HD_VERSION="0.11.0"
+HD_VERSION="0.12.0"
 if [ "${DW4_NO_HD:-0}" != 1 ]; then
     say "Generating the HD pack from your ROM (text, windows, monsters, maps)"
     PYB="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYB" ] || PYB=python3
@@ -182,7 +182,7 @@ if [ "${DW4_NO_HD:-0}" != 1 ]; then
     rm -f "$NESMOD"
     "$VENV/bin/python" nesrecomp/tools/package_hdpack.py --pack build/hd/pack --rom rom/DragonWarriorIV.nes \
         --game-id dragon-warrior-4 --id "$HD_ID" --version "$HD_VERSION" \
-        --name "HD text, windows, monsters, maps, characters and title" --author "DragonWarrior4NESRecomp" \
+        --name "HD text, windows, monsters, maps, characters, title and casino" --author "DragonWarrior4NESRecomp" \
         --license "Personal use; generated from your ROM and your artwork" --notice build/hd/pack/NOTICE.txt --out "$NESMOD"
     DEST_PKG="$C/Resources/mods/packages/$HD_ID/$HD_VERSION"
     rm -rf "$C/Resources/mods"; mkdir -p "$DEST_PKG"

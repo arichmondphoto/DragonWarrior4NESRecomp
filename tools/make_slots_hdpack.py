@@ -9,10 +9,16 @@ From tools/capture_slots.py (CAPTURE/slots.json, screen.mem):
            steps). Every background tile of the machine then gets an almost
            transparent HD tile so the painting shows through; the text and
            its window keep the text pack's tiles.
-  symbols  the owner's sheet hd/casino/slots/SYMBOLS.png: each of the seven
-           reel symbols is a 16 x 16 group of sprites; its four sprite tiles
-           draw the four quarters of the painted symbol (found on the sheet
-           by its outline, so a slightly shifted symbol still fits).
+           hd/casino/slots/layout.json maps the painting onto the game's
+           layout (straight-line maps of x and y through the reel windows,
+           lamps, coin box, pay table and text window), since a generated
+           painting need not keep the screen's proportions exactly.
+  symbols  each of the seven reel symbols is a 16 x 16 group of sprites; its
+           four sprite tiles draw the four quarters of the painted symbol, cut
+           out of the painting's own pay table (layout.json "symbols": a box
+           per symbol name) so the reels match the pay table, and fitted to
+           the 8-bit symbol's size. Without those boxes the sheet
+           hd/casino/slots/SYMBOLS.png is used (found by outline).
   the rest the payline lamps, the coin counter's digits and other sprites,
            smoothly upscaled from the game's tiles (tools/smooth_pixels.py).
 
@@ -28,7 +34,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from vramdump import load
 from field_sheet import NES
 from make_casino_hdpack import smooth_tile, fade, dark, lum, rgb
-from export_casino import sym_origin, SK, symbol_image
+from export_casino import sym_origin, SK, symbol_image, symbol_name
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ART = os.path.join(HERE, 'hd', 'casino', 'slots')
@@ -58,6 +64,48 @@ def blank_text_window(im, cap, backdrop, k):
     y0 = min(y for x, y in cells); y1 = max(y for x, y in cells) + 1
     v = NES[backdrop & 0x3F]
     im.paste(((v >> 16) & 255, (v >> 8) & 255, v & 255), (x0 * 8 * k, y0 * 8 * k, x1 * 8 * k, y1 * 8 * k))
+
+def warp_machine(im, lay):
+    """The painting resampled onto the game's layout (layout.json "warp")."""
+    from scipy import ndimage
+    w = lay.get('warp')
+    if not w: return im
+    W, H = im.size
+    mx = np.interp(np.arange(W), w['x_game'], w['x_paint']); my = np.interp(np.arange(H), w['y_game'], w['y_paint'])
+    yy, xx = np.meshgrid(my, mx, indexing='ij'); a = np.asarray(im).astype(float)
+    out = np.stack([ndimage.map_coordinates(a[..., c], [yy, xx], order=3, mode='nearest') for c in range(3)], -1)
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
+
+def paytable_symbol(paint, box, parchment=(235, 215, 170)):
+    """A pay-table symbol cut out of the painting: RGBA, the parchment made transparent."""
+    from scipy import ndimage
+    x0, y0, x1, y1 = box; pad = 4
+    a = np.asarray(paint.convert('RGB').crop((x0 - pad, y0 - pad, x1 + pad, y1 + pad))).astype(float)
+    d = np.sqrt(((a - np.array(parchment)) ** 2).sum(-1))
+    hard = ndimage.binary_fill_holes(ndimage.binary_closing(d > 70, iterations=2))
+    lab, n = ndimage.label(hard)
+    if n > 1:                                        # keep the symbol, not bits of its neighbours
+        sz = ndimage.sum(hard, lab, range(1, n + 1)); hard = lab == (np.argmax(sz) + 1)
+    soft = np.clip((d - 40) / 50, 0, 1)
+    alpha = np.where(ndimage.binary_erosion(hard, iterations=1), 1.0, soft * ndimage.binary_dilation(hard, iterations=1))
+    rgba = np.dstack([a, alpha * 255]).astype(np.uint8)
+    im = Image.fromarray(rgba, 'RGBA'); bb = im.getbbox()
+    return im.crop(bb) if bb else im
+
+def fit_symbol(cut, chs, pal):
+    """The cut-out symbol scaled into a 160 x 160 cell over the 8-bit symbol's own extent."""
+    ref = np.asarray(symbol_image(chs, pal, k=1))[..., 3] > 0
+    ry, rx = np.nonzero(ref)
+    if not ry.size: ry, rx = np.array([0, 15]), np.array([0, 15])
+    bx0, by0, bx1, by1 = rx.min() * S, ry.min() * S, (rx.max() + 1) * S, (ry.max() + 1) * S
+    f = min((bx1 - bx0) / cut.width, (by1 - by0) / cut.height)
+    w, h = max(1, round(cut.width * f)), max(1, round(cut.height * f))
+    big = cut.resize((w * 2, h * 2), Image.LANCZOS).resize((w, h), Image.LANCZOS)
+    from PIL import ImageFilter
+    big = big.filter(ImageFilter.UnsharpMask(radius=2, percent=60, threshold=2))
+    cell = Image.new('RGBA', (2 * C, 2 * C), (0, 0, 0, 0))
+    cell.alpha_composite(big, (round((bx0 + bx1 - w) / 2), round((by0 + by1 - h) / 2)))
+    return cell
 
 def symbol_art(sheet, i, chs, pal):
     """The painted symbol i as 160 x 160, registered on the 8-bit symbol's outline."""
@@ -100,9 +148,12 @@ def main():
         conds.append(f'<condition>slot{k},tileAtPosition,{tx * 8},{ty * 8},{jc.hex().upper()},{pk.hex().upper()}')
         phases.append((k, br, f'slot{k}'))
 
+    lay_p = os.path.join(ART, 'layout.json')
+    lay = json.load(open(lay_p)) if os.path.exists(lay_p) else {}
     machine = os.path.join(ART, 'SLOT.png')
     if os.path.exists(machine):
-        im = Image.open(machine).convert('RGB').resize((256 * S, 240 * S), Image.LANCZOS)
+        im = warp_machine(Image.open(machine).convert('RGB').resize((1280, 1200), Image.LANCZOS), lay)
+        im = im.resize((256 * S, 240 * S), Image.LANCZOS)
         blank_text_window(im, cap, scr['palette'][0], S)
         im.save(os.path.join(outdir, 'casino', 'slot_machine.png'), optimize=True)
         for k, br, cn in phases:
@@ -118,7 +169,15 @@ def main():
     # sprites: reel symbols from the owner's sheet, the rest smoothed
     sym_tiles = {}
     sheet_p = os.path.join(ART, 'SYMBOLS.png')
-    if os.path.exists(sheet_p):
+    if lay.get('symbols') and os.path.exists(machine):
+        paint = Image.open(machine).convert('RGB').resize((1280, 1200), Image.LANCZOS)
+        for i, (chs, spal) in enumerate(cap['symbols']):
+            box = lay['symbols'].get(symbol_name(chs, i))
+            if not box: print(f'  slots: no pay-table box for {symbol_name(chs, i)}'); continue
+            art = fit_symbol(paytable_symbol(paint, box), chs, spal)
+            for q, c in enumerate(chs):
+                if any(bytes.fromhex(c)): sym_tiles[(c, spal)] = art.crop(((q % 2) * C, (q // 2) * C, (q % 2 + 1) * C, (q // 2 + 1) * C))
+    elif os.path.exists(sheet_p):
         sheet = Image.open(sheet_p).convert('RGBA')
         if sheet.size != (1536, 1024): sheet = sheet.resize((1536, 1024), Image.LANCZOS)
         for i, (chs, spal) in enumerate(cap['symbols']):
