@@ -1,0 +1,52 @@
+diff --git a/runner/cyc/cyc_fds_save.inc b/runner/cyc/cyc_fds_save.inc
+index c2b1d97..0867662 100644
+--- a/runner/cyc/cyc_fds_save.inc
++++ b/runner/cyc/cyc_fds_save.inc
+@@ -88,6 +88,10 @@ static bool default_save_path(const char *image_path, const char *extension, cha
+     if (s2 && s2 + 1 > base) base = s2 + 1;
+     const char *dot = strrchr(base, '.');
+     int stem = (int)(dot ? (size_t)(dot - base) : strlen(base));
++    /* A packaged app names its saves itself, so they don't depend on what the
++     * player called the ROM file. */
++    const char *fixed = getenv("NESRECOMP_SAVE_NAME");
++    if (fixed && *fixed) { base = fixed; stem = (int)strlen(fixed); }
+     char saves[1000];
+     snprintf(saves, sizeof(saves), "%s/saves", dir);
+     if (fds_mkdir(saves) != 0 && errno != EEXIST) return false;
+diff --git a/runner/cyc/cyc_host.c b/runner/cyc/cyc_host.c
+index f1e8ca6..2a2427f 100644
+--- a/runner/cyc/cyc_host.c
++++ b/runner/cyc/cyc_host.c
+@@ -134,6 +134,11 @@
+  *     --cheats FILE        apply the enabled Game Genie codes in FILE; the
+  *                          window reads cheats.txt beside config.ini (the
+  *                          launcher's Cheats page). Never applied online.
++ *   Packaged apps (environment):
++ *     NESRECOMP_SAVE_NAME  the battery save's and save states' file name stem,
++ *                          instead of the ROM file's
++ *     NESRECOMP_STATE_DIR  the folder for save-state slots (default
++ *                          <SDL base dir>/saves, inside a macOS app bundle)
+  *   A game's own options (cyc_host_extras.h) follow its --help lines.
+  *
+  *   Window (SDL builds without headless options): config.ini beside the
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index f24d05a..fc053d1 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -374,9 +374,14 @@ static void state_slot(char *out, size_t n)
+     snprintf(stem, sizeof(stem), "%s", *base ? base : "game");
+     char *dot = strrchr(stem, '.');
+     if (dot && dot != stem) *dot = 0;
++    /* A packaged app keeps states with the player's other data (an app bundle
++     * is read-only once downloaded) under a fixed name. */
++    const char *fixed = getenv("NESRECOMP_SAVE_NAME"), *state_dir = getenv("NESRECOMP_STATE_DIR");
++    if (fixed && *fixed) snprintf(stem, sizeof(stem), "%s", fixed);
+     char dir[1100];
+-    char *base_path = SDL_GetBasePath();
+-    if (base_path) { snprintf(dir, sizeof(dir), "%ssaves", base_path); SDL_free(base_path); }
++    char *base_path = (state_dir && *state_dir) ? NULL : SDL_GetBasePath();
++    if (state_dir && *state_dir) snprintf(dir, sizeof(dir), "%s", state_dir);
++    else if (base_path) { snprintf(dir, sizeof(dir), "%ssaves", base_path); SDL_free(base_path); }
+     else exe_path(dir, sizeof(dir), "saves");
+     make_dir(dir);
+     snprintf(out, n, "%s/%s.%s", dir, stem, s_fds ? "state" : "cycstate");

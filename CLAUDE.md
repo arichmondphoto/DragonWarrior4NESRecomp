@@ -20,6 +20,9 @@ README.md is the full reference; this file is the working summary.
 - Owner (macOS): `./build_macos.sh` (installs deps, applies patches, builds, makes the app) and
   `./package_macos_app.sh` (rebuilds when patches changed, builds the HD pack and bundles it in the app's
   `Contents/Resources/mods`, found via `NESRECOMP_BUNDLED_MODS` set by the app's launch script, patch 0012).
+  `./build_macos.sh --release` = shareable zip without the ROM (+ `release/READ_ME_FIRST.txt`, placeholders
+  filled by package_macos_app.sh); the launch script finds the ROM (bundled → rom.cfg → *.nes in the data
+  folder → launcher picker), writes mods/state.toml on first run, sets NESRECOMP_SAVE_NAME/STATE_DIR (0015).
 - Linux headless host used for tests here (`build-hd/DragonWarrior4`, NESRECOMP_HEADLESS=ON, MODS + HD
   packs): `tools/apply_patches.sh && cmake --build build-hd`.
 - HD pack: `tools/build_hd_pack.sh HOST OUTDIR [PYTHON] [JOBS]` (e.g. `build-hd/DragonWarrior4 out/build7/pack python3 2`).

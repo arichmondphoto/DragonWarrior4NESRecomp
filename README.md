@@ -26,6 +26,13 @@ run `./build_macos.sh` again to rebuild and reinstall.
   (kept across rebuilds; anything in the old `build/saves` is copied over once).
 - The app bundles SDL2, the launcher assets and **your ROM** — don't share the app.
 - `DW4_NO_INSTALL=1 ./build_macos.sh` leaves the app in `dist/`; `./play_macos.sh` still runs the unpackaged build.
+- **A download for other players:** `./build_macos.sh --release` builds the app *without* your ROM and zips it
+  with a `READ ME FIRST.txt` (installing, opening an app from outside the App Store, adding the ROM) as
+  `dist/DragonWarriorIV-macOS-<arch>-<version>.zip`. Players pick their own ROM with **Browse For ROM** on first
+  launch (remembered in `rom.cfg`), or drop a `.nes` file in the data folder; the HD pack starts switched on.
+  The app runs on Macs of the build machine's architecture, and on the oldest macOS its bundled Homebrew
+  libraries allow (both are written into the read-me). It is ad-hoc signed, not notarized, so players confirm it
+  once in System Settings > Privacy & Security.
 - Cheats: the launcher's **Cheats** page takes Game Genie codes (6 or 8 letters), each with an optional name and
   an on/off switch. They are saved in `cheats.txt` in the same folder and apply when the game starts.
   Codes that rewrite the game's code run it on the built-in interpreter for that session (same speed in practice).
@@ -285,6 +292,11 @@ They are framework bugs, kept here until they can go upstream:
   or operand) makes the session run on the interpreter, which reads every byte
   at run time (no visible cost: the PPU dominates). Never applied online. The
   launcher's Cheats page (recomp-ui patch 0003) edits the file.
+- `0015-packaged-app-save-paths.patch` — `NESRECOMP_SAVE_NAME` names the
+  battery save and save states (instead of the ROM file's name) and
+  `NESRECOMP_STATE_DIR` moves the save-state slots out of the app bundle
+  (a downloaded app is read-only). The macOS launch script sets both
+  (`saves/DragonWarriorIV.*` in the data folder).
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Package build/DragonWarrior4 into "Dragon Warrior IV.app" and install it.
 #
-# Usage:  ./package_macos_app.sh [--no-install] [--dest DIR]
+# Usage:  ./package_macos_app.sh [--no-install] [--dest DIR] [--release]
 #
 # Run after build_macos.sh (which calls this automatically). The app is
 # written to dist/ and, unless --no-install, copied to /Applications
@@ -13,6 +13,13 @@
 # reinstalling or rebuilding the app never touches your progress.
 #
 # The app contains your ROM. Don't share it.
+#
+# --release makes a shareable download instead: the same app WITHOUT the ROM
+# (the player picks their own in the launcher on first launch), zipped with a
+# "READ ME FIRST.txt" (installing, opening an app from outside the App Store,
+# adding the ROM) as dist/DragonWarriorIV-macOS-<arch>-<version>.zip. It is
+# not installed. It runs on Macs of the build machine's architecture and on
+# the oldest macOS its libraries allow (both are written in the read-me).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -22,11 +29,12 @@ EXE=DragonWarrior4
 DATA_DIR_NAME="DragonWarrior4Recomp"
 DATA_DIR="$HOME/Library/Application Support/$DATA_DIR_NAME"
 
-INSTALL=1; DEST=""
+INSTALL=1; DEST=""; RELEASE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-install) INSTALL=0 ;;
         --dest) DEST="$2"; shift ;;
+        --release) RELEASE=1; INSTALL=0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
     shift
@@ -46,6 +54,9 @@ if [ -n "$(find patches -name '*.patch' -newer "build/$EXE" 2>/dev/null)" ]; the
 fi
 
 VERSION="1.0.$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+HD_ID="dragon-warrior-4.hd-text"
+HD_VERSION="0.12.0"     # bump whenever the pack's content changes (the Mods catalog keys on it)
+SAVE_NAME="DragonWarriorIV"   # battery save / save states: saves/DragonWarriorIV.*, whatever the ROM file is called
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 APP="dist/$APP_NAME.app"
@@ -54,24 +65,44 @@ say "Assembling $APP (version $VERSION, $COMMIT)"
 rm -rf "$APP"
 mkdir -p "$C/MacOS" "$C/Resources" "$C/Frameworks"
 
-# --- game binary, launcher assets, ROM ------------------------------------
+# --- game binary, launcher assets, ROM (not in a release) -----------------
 cp "build/$EXE" "$C/MacOS/$EXE"
 [ -d build/assets ] && cp -R build/assets "$C/Resources/assets"
-cp rom/DragonWarriorIV.nes "$C/Resources/DragonWarriorIV.nes"
+[ "$RELEASE" = 1 ] || cp rom/DragonWarriorIV.nes "$C/Resources/DragonWarriorIV.nes"
 
 
 # --- launch script: run from the data folder ------------------------------
-# config.ini, the battery save (saves/*.sav) and mods/ are created in the
-# working directory, so start the game there.
+# config.ini, the battery save (saves/*.sav), mods/, rom.cfg and cheats.txt
+# live in the working directory, so start the game there. Save states go to
+# the same saves/ folder (patch 0015), under a fixed name.
+# The ROM: the one inside the app (your own build), else the one the launcher
+# remembers (rom.cfg, written when the player picks it with Browse For ROM),
+# else a .nes file the player put in the data folder, else none: the launcher
+# then asks for it.
 cat > "$C/MacOS/launch" <<EOF
 #!/bin/bash
 DATA="\$HOME/Library/Application Support/$DATA_DIR_NAME"
-mkdir -p "\$DATA/saves" "\$DATA/diagnostics"
+mkdir -p "\$DATA/saves" "\$DATA/diagnostics" "\$DATA/mods"
 cd "\$DATA" || exit 1
 export NESRECOMP_DIAGNOSTICS_DIR="\$DATA/diagnostics"
+export NESRECOMP_SAVE_NAME="$SAVE_NAME"
+export NESRECOMP_STATE_DIR="\$DATA/saves"
 HERE="\$(cd "\$(dirname "\$0")" && pwd)"
 export NESRECOMP_BUNDLED_MODS="\$HERE/../Resources/mods"   # the HD pack inside the app
-exec "\$HERE/$EXE" "\$HERE/../Resources/DragonWarriorIV.nes" "\$@"
+# First run: the HD pack starts switched on (Mods in the launcher turns it off).
+if [ ! -f mods/state.toml ] && [ -d "\$NESRECOMP_BUNDLED_MODS/packages/$HD_ID/$HD_VERSION" ]; then
+    printf 'format_version = 1\\n\\n[[package]]\\nid = "%s"\\nversion = "%s"\\n\\n[[feature]]\\npackage_id = "%s"\\nid = "hd-pack"\\nenabled = true\\n' \\
+        "$HD_ID" "$HD_VERSION" "$HD_ID" > mods/state.toml
+fi
+ROM=""
+if [ -f "\$HERE/../Resources/DragonWarriorIV.nes" ]; then
+    ROM="\$HERE/../Resources/DragonWarriorIV.nes"
+elif [ -f rom.cfg ] && [ -f "\$(head -n 1 rom.cfg)" ]; then
+    ROM="\$(head -n 1 rom.cfg)"
+else
+    for f in "\$DATA"/*.nes "\$DATA"/*.NES; do [ -f "\$f" ] && { ROM="\$f"; break; }; done
+fi
+exec "\$HERE/$EXE" \${ROM:+"\$ROM"} "\$@"
 EOF
 chmod +x "$C/MacOS/launch"
 
@@ -124,6 +155,12 @@ if otool -L "$C/MacOS/$EXE" "$C"/Frameworks/*.dylib 2>/dev/null | grep -E '/opt/
     die "the app still references Homebrew libraries (listed above)"
 fi
 
+# The oldest macOS the app runs on: the newest minimum among the game and the
+# libraries bundled with it (Homebrew builds them for this Mac's macOS).
+MIN_MACOS="$(otool -l "$C/MacOS/$EXE" "$C"/Frameworks/*.dylib 2>/dev/null | awk '/minos /{print $2}' | sort -t. -k1,1n -k2,2n | tail -1)"
+[ -n "$MIN_MACOS" ] || MIN_MACOS=11.0
+ARCHS="$(lipo -archs "$C/MacOS/$EXE" 2>/dev/null || uname -m)"
+
 # --- icon -----------------------------------------------------------------
 say "Building icon"
 ICONSET="$(mktemp -d)/AppIcon.iconset"; mkdir -p "$ICONSET"
@@ -149,7 +186,7 @@ cat > "$C/Info.plist" <<EOF
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>CFBundleGetInfoString</key><string>NESRecomp build $COMMIT</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.role-playing-games</string>
-    <key>LSMinimumSystemVersion</key><string>11.0</string>
+    <key>LSMinimumSystemVersion</key><string>$MIN_MACOS</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
 </dict>
@@ -167,8 +204,6 @@ EOF
 # so it carries over between versions; on a new Mac turn it on once in the
 # launcher (Mods > HD text, windows, monsters, maps, characters, title and casino).
 # Set DW4_NO_HD=1 to skip.
-HD_ID="dragon-warrior-4.hd-text"
-HD_VERSION="0.12.0"
 if [ "${DW4_NO_HD:-0}" != 1 ]; then
     say "Generating the HD pack from your ROM (text, windows, monsters, maps)"
     PYB="$(brew --prefix python@3.12 2>/dev/null)/bin/python3.12"; [ -x "$PYB" ] || PYB=python3
@@ -189,7 +224,7 @@ if [ "${DW4_NO_HD:-0}" != 1 ]; then
     "$VENV/bin/python" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$NESMOD" "$DEST_PKG"
     # Earlier builds installed the pack into the Mods catalog; the bundled copy
     # replaces it (and the old DejaVu font proof of concept).
-    rm -rf "$DATA_DIR/mods/packages/$HD_ID" "$DATA_DIR/mods/packages/dragon-warrior-4.hd-font"
+    [ "$RELEASE" = 1 ] || rm -rf "$DATA_DIR/mods/packages/$HD_ID" "$DATA_DIR/mods/packages/dragon-warrior-4.hd-font"
     echo "  $DEST_PKG"
 fi
 
@@ -200,13 +235,29 @@ codesign --force --sign - "$C/MacOS/$EXE"
 codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP" && echo "  signature OK"
 
-# Save-state slots are written to "<SDL base dir>/saves", which for an app is
-# Contents/Resources. Point that at the user's data folder so states sit beside
-# the battery save and survive reinstalling. Added after signing because
-# codesign refuses symlinks that leave the bundle; the binary's signature is
-# unaffected, and a locally built (non-quarantined) app is not re-assessed.
-mkdir -p "$DATA_DIR/saves"
-ln -s "$DATA_DIR/saves" "$C/Resources/saves"
+# --- release: zip the app (no ROM) with the player's read-me -----------------
+if [ "$RELEASE" = 1 ]; then
+    if find "$APP" -iname '*.nes' | grep -q .; then die "the release app contains a ROM"; fi
+    ARCH_TAG="$(echo "$ARCHS" | tr ' ' '-')"
+    case "$ARCHS" in
+        *arm64*x86_64*|*x86_64*arm64*) MACS="any Mac (Apple Silicon or Intel)" ;;
+        *arm64*) MACS="a Mac with Apple Silicon (M1 or later); Intel Macs are not supported" ;;
+        *) MACS="an Intel Mac" ;;
+    esac
+    ZIP="dist/DragonWarriorIV-macOS-$ARCH_TAG-$VERSION.zip"
+    STAGE="$(mktemp -d)/Dragon Warrior IV"
+    mkdir -p "$STAGE"
+    ditto "$APP" "$STAGE/$APP_NAME.app"
+    sed -e "s|@VERSION@|$VERSION ($COMMIT)|g" -e "s|@MACS@|$MACS|g" -e "s|@MINOS@|$MIN_MACOS|g" \
+        -e "s|@DATA@|$DATA_DIR_NAME|g" -e "s|@SAVE@|$SAVE_NAME|g" \
+        release/READ_ME_FIRST.txt > "$STAGE/READ ME FIRST.txt"
+    rm -f "$ZIP"
+    ditto -c -k --sequesterRsrc --keepParent "$STAGE" "$ZIP"
+    say "Release package: $ZIP"
+    echo "  for $MACS, macOS $MIN_MACOS or later; $(du -h "$ZIP" | cut -f1)"
+    echo "  The ROM is not included: players add their own (see READ ME FIRST.txt)."
+    exit 0
+fi
 
 # --- carry over progress from the old build/ folder (first time only) -------
 if [ -f build/config.ini ] && [ ! -f "$DATA_DIR/config.ini" ]; then

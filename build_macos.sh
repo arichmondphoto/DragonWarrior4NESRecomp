@@ -1,17 +1,25 @@
 #!/usr/bin/env bash
 # Build the windowed Dragon Warrior IV recomp on macOS (Apple Silicon or Intel).
 #
-# Usage:  ./build_macos.sh [path/to/Dragon Warrior IV (USA).nes]
+# Usage:  ./build_macos.sh [--release] [path/to/Dragon Warrior IV (USA).nes]
 #
-# Without an argument the ROM is taken from rom/DragonWarriorIV.nes.
+# Without a path the ROM is taken from rom/DragonWarriorIV.nes.
 # The result is build/DragonWarrior4, packaged as "Dragon Warrior IV.app" and
 # installed in /Applications (see package_macos_app.sh).
+#
+# --release instead makes a download to share: the app without your ROM,
+# zipped with a "READ ME FIRST.txt" for players (they add their own ROM in the
+# launcher), as dist/DragonWarriorIV-macOS-<arch>-<version>.zip. Nothing is
+# installed. Building still needs your ROM (the game code and the HD pack are
+# generated from it).
 set -euo pipefail
 cd "$(dirname "$0")"
 
 EXPECTED_SHA1="1b3dc265ba0d7e4b2cef9b3f8b0be0847df67c3c"   # PRG+CHR, header excluded
 
 say()  { printf '\n==> %s\n' "$*"; }
+RELEASE=0
+if [ "${1:-}" = "--release" ]; then RELEASE=1; shift; fi
 die()  { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
 # 1. Toolchain -------------------------------------------------------------
@@ -55,6 +63,7 @@ echo "ROM OK (Dragon Warrior IV USA)"
 say "Configuring (generates C from the ROM; takes a minute)"
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
       -DPython3_EXECUTABLE="$PY" \
       -DDW4_ROM="$PWD/rom/DragonWarriorIV.nes"
 
@@ -66,7 +75,10 @@ cmake --build build --parallel "$(sysctl -n hw.ncpu)"
 # 5. Package -----------------------------------------------------------------
 # Builds "Dragon Warrior IV.app" and installs it in /Applications.
 # Set DW4_NO_APP=1 to skip, or DW4_NO_INSTALL=1 to leave the app in dist/.
-if [ "${DW4_NO_APP:-0}" != 1 ]; then
+if [ "$RELEASE" = 1 ]; then
+    ./package_macos_app.sh --release
+    say "Done. Share the .zip in dist/ (it does not contain your ROM)."
+elif [ "${DW4_NO_APP:-0}" != 1 ]; then
     if [ "${DW4_NO_INSTALL:-0}" = 1 ]; then ./package_macos_app.sh --no-install; else ./package_macos_app.sh; fi
     say "Done. Open \"Dragon Warrior IV\" from Applications or Launchpad."
 else
