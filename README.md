@@ -4,6 +4,8 @@ Static recompilation of Dragon Warrior IV (NES) using [mstan/nesrecomp](https://
 
 Not 100% play tested - gameplay seems normal. If you find a bug or a graphic that was missed in the HD pack, please report it with details. Screenshots are appreciated.
 
+I do not have access to a Windows machine, so this was authored with what I have available for testing in mind (MacOS on Apple Silicon and Linux x86_64).
+
 ## ROM (not included)
 Dragon Warrior IV (USA), NES 2.0 header, 524,304 bytes.
 - CRC32 (no header): `506E259D`
