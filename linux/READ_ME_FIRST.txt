@@ -6,9 +6,10 @@ single AppImage file.
 The game itself is NOT included: you need your own ROM file of
 Dragon Warrior IV (USA) for the NES (a .nes file).
 
-Requirements: a @ARCH@ PC with a desktop Linux from about 2022 or newer
-(glibc @GLIBC@ or newer) - Ubuntu, Fedora, Arch, Manjaro, Mint, openSUSE,
-SteamOS desktop mode, ... X11 and Wayland both work.
+Requirements: an @ARCH@ PC with a desktop Linux whose C library is
+glibc @GLIBC@ or newer (check with:  ldd --version) - current Ubuntu,
+Fedora, Arch, Manjaro, Mint, openSUSE, SteamOS desktop mode, ...
+X11 and Wayland both work.
 
 
 1. Install

@@ -122,7 +122,7 @@ say "AppImage: $OUT ($(du -h "$OUT" | cut -f1))"
 
 # --- release: the AppImage with the player's read-me ----------------------------
 if [ "$RELEASE" = 1 ]; then
-    GLIBC="$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+$' || echo unknown)"
+    GLIBC="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}')"; [ -n "$GLIBC" ] || GLIBC=unknown
     STAGE="$(mktemp -d)/Dragon Warrior IV"
     mkdir -p "$STAGE"
     cp "$OUT" "$STAGE/"
