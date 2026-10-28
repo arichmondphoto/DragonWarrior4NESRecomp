@@ -91,13 +91,13 @@ NOTE
 fi
 
 # ---- title screen ---------------------------------------------------------
-if [ -f hd/title/TITLE.png ]; then
+if [ -f hd/title/layers/layout.json ]; then
     echo "  title screen"
     "$PY" tools/make_title_hdpack.py "$XCAP" "$OUT"
     cat >> "$OUT/NOTICE.txt" <<'NOTE'
 
-Title screen: the project owner's artwork (hd/title/TITLE.png), keyed per
-screen cell by tools/make_title_hdpack.py.
+Title screen: the project owner's artwork in layers (hd/title/layers/), drawn
+by tools/make_title_hdpack.py.
 NOTE
 fi
 

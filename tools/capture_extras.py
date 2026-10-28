@@ -6,7 +6,8 @@ Writes OUT/title_1200.mem/.png and OUT/title_2400.mem/.png. The intro is
 also stepped every 4th frame (frames 604-2400, chained save states) to list
 every cell the finished screen doesn't have: the letters while they are
 typed, the plate before it appears. OUT/title_seq.json: {"blank": {"tx,ty":
-CHR hex of the cell at frame 700}, "states": [[tx, ty, CHR hex, palette hex]]}.
+CHR hex of the cell at frame 700}, "states": [[tx, ty, CHR hex, palette hex]],
+"final_at": {"tx,ty": first frame the cell shows its finished tile}}.
 
 Doors: Ragnar leaves Burland Castle through its front door around route
 frame 5150; the door swings open over the next 80 frames. Between the
@@ -46,7 +47,7 @@ def main():
             '--screenshot', os.path.join(out, f'title_{f}.png'))
     final = title_cells(os.path.join(out, 'title_2400.mem'))
     prev = os.path.join(tmp, 't600.cs'); run('--frames', 601, '--save-state', f'600:{prev}')
-    seen, blank = set(), {}
+    seen, blank, final_at = set(), {}, {}
     for f in range(604, 2401, 4):
         st, mp = os.path.join(tmp, f't{f}.cs'), os.path.join(tmp, 't.mem')
         run('--load-state', prev, '--frames', f + 1, '--mem-frame', f, '--mem-out', mp, '--save-state', f'{f}:{st}')
@@ -55,7 +56,8 @@ def main():
         if f == 700: blank = {f'{tx},{ty}': v[0] for (tx, ty), v in c.items()}
         for (tx, ty), v in c.items():
             if v != final[(tx, ty)]: seen.add((tx, ty) + v)
-    json.dump({'blank': blank, 'states': sorted(seen)}, open(os.path.join(out, 'title_seq.json'), 'w'))
+            if v[0] == final[(tx, ty)][0] and len(set(bytes.fromhex(v[1]))) > 1: final_at.setdefault(f'{tx},{ty}', f)
+    json.dump({'blank': blank, 'states': sorted(seen), 'final_at': final_at}, open(os.path.join(out, 'title_seq.json'), 'w'))
     st = os.path.join(tmp, 's.cs')
     run('--frames', 5141, '--input', ROUTE, '--save-state', f'5140:{st}')
     cells = [(1, 30), (1, 31), (0, 0), (0, 1)]

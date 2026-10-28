@@ -154,14 +154,17 @@ How the characters are built (`tools/build_hd_pack.sh`):
    The pack sets `<options>spriteCells` (patch 0009) so the art is drawn over
    the whole 8x8 sprite, not clipped to its 8-bit pixels.
 
-- *Title screen* — the owner's painting `hd/title/TITLE.png` (sunset version;
-  made with `tools/export_gaps.py`). `tools/capture_extras.py` captures the
-  intro (blue sky at frame 1200, finished at 2400, and every 4th frame in
-  between: `title_seq.json`) and `tools/make_title_hdpack.py` keys every screen
-  cell by CHR + colours, gated on its nametable column (patch 0010, so the
-  scrolling cloud rows keep their art) and row. The blue-sky phase is the same
-  painting recoloured; letters being typed show the painted letter where the
-  8-bit letter is already drawn.
+- *Title screen* — the owner's painting in layers, `hd/title/layers/`
+  (`layout.json` places them; painted on the guides from
+  `tools/export_title_kit.py`). `tools/make_title_hdpack.py` draws the sky with
+  the castle and the blank plate as still `<background>`s, the two cloud strips
+  as backgrounds that scroll with the game's two cloud bands (`line:Y` + `wrap`,
+  patch 0013), and reveals each painted letter as the game types it (8x8 cells,
+  every other title cell almost transparent). The phase (blue sky / sunset and
+  every fade step) is read from one castle cell and one plate cell
+  (`tileAtPosition`). Without `*_day` layers the blue-sky look is recoloured from
+  the sunset art along a light-to-colour ramp. `tools/capture_extras.py` records
+  the intro every 4th frame (`title_seq.json`, with when each letter is finished).
 - *Castle doors* — the three in-between frames of the big doors opening
   (drawn straight into the nametable, so not map tiles): `hd/field/doors/DOOR1.png`,
   cut by `tools/door_frames.py` into map tiles DR01-DR12 in every palette the
@@ -245,6 +248,10 @@ They are framework bugs, kept here until they can go upstream:
   its packages are listed as well (read-only, not removable; a copy installed in
   the catalog wins). The macOS app's launch script points it at the pack inside
   the app. Selections stay in the catalog's `state.toml`.
+- `0013-hdpack-background-scanline-scroll-wrap.patch` — `<background>` lines may
+  end with `line:Y` (scroll horizontally with the background drawn on scanline
+  Y — its nametable position, so a split-screen band such as the title's
+  parallax clouds is followed exactly) and `wrap` (repeat the image sideways).
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 

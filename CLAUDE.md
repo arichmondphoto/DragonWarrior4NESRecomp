@@ -26,7 +26,7 @@ README.md is the full reference; this file is the working summary.
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
   A full build takes ~25 min; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.10.0. Pack name: "HD text, windows, monsters, maps, characters and title".
+  catalog keys on it). Current: 0.11.0. Pack name: "HD text, windows, monsters, maps, characters and title".
 - The nesmod package limit is 256 MiB; the pack is ~165 MiB — watch its size (`du -sb OUTDIR`). Never store
   recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
@@ -49,7 +49,8 @@ README.md is the full reference; this file is the working summary.
   `hd/field/ids.json`.
 - Walking characters: `hd/sprites/source/<ID>.png` (4x2 sheets), IDs in `hd/sprites/ids.json`.
 - Battle monsters: `hd/monsters/source` + `mapping.json`, extras in `hd/monsters/extra/M###.png`.
-- Title: `hd/title/TITLE.png` (sunset version; blue phase is recoloured at build time).
+- Title: layers in `hd/title/layers/` (sky+castle, plate, lettering, two cloud strips; `layout.json`), painted on
+  the `tools/export_title_kit.py` guides. Blue-sky versions are recoloured at build time unless `*_day.png` exist.
 - New art from OpenAI's image API goes through `tools/openai_sprites.py` with the export scripts
   (`export_chatgpt_sprites.py`, `export_gaps.py`); `.gitignore` has an `!` exception per art folder.
 - All HD packs are authored at **10x** (`<scale>10`).
@@ -59,7 +60,8 @@ README.md is the full reference; this file is the working summary.
   beats an unconditional one; `positionCheckX/Y` are per pixel in screen space.
 - Project patches add: `memoryCheck` on WRAM (0007), `<options>spriteCells` (0009),
   `nametableColumn`/`nametableX` conditions (0010, for scrolling rows like the title clouds),
-  `rgb:`/`rot:` tile transforms + shared decoded blocks (0011), read-only bundled mod packages (0012).
+  `rgb:`/`rot:` tile transforms + shared decoded blocks (0011), read-only bundled mod packages (0012),
+  `<background>` `line:Y` scroll + `wrap` (0013).
 - Map tiles and characters: other palettes are affine recolours of the art (`rgb:` at load time); palettes that are only reorderings of each
   other (colour-cycling animations such as the overworld sea) share one recolour. Seamless smoothing
   is skipped where the painted edges differ (SEAM_MAX). Fades = the same art at lower brightness.

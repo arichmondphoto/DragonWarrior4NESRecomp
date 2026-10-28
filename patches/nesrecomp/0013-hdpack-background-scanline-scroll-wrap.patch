@@ -1,0 +1,68 @@
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 404fa2b..4c10dc6 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -161,6 +161,8 @@ typedef struct HdBg {
+     HdCond  **conds; int *neg; int ncond;  /* ANDed conditions; neg[i]=='!'  */
+     int       active;        /* recomputed per frame */
+     int       offx, offy;    /* scrolling offset computed once per frame */
++    int       line;          /* nesrecomp: >=0 = scroll with this scanline's background (line:Y) */
++    int       wrap;          /* nesrecomp: repeat the image horizontally (wrap) */
+ } HdBg;
+ 
+ static HdBg     *s_bgs = NULL; static int s_bg_count = 0, s_bg_cap = 0;
+@@ -701,8 +703,8 @@ static HdBgImg *load_bg_img(const char *name) {
+ 
+ /* cond_str: the text inside [ ] (may be NULL/empty); rest: after "<background>" */
+ static void process_background(const char *cond_str, char *rest) {
+-    char *tok[10];
+-    int n = split_commas(rest, tok, 10);
++    char *tok[16];
++    int n = split_commas(rest, tok, 16);
+     if (n < 1) return;
+     for (int i = 0; i < n; i++) tok[i] = rstrip(tok[i]);
+ 
+@@ -724,9 +726,17 @@ static void process_background(const char *cond_str, char *rest) {
+     b->left     = (n >= 6) ? atoi(tok[5]) : 0;
+     b->top      = (n >= 7) ? atoi(tok[6]) : 0;
+     b->blend    = 0;
+-    if (n >= 8) {
+-        if      (!strcmp(tok[7], "Add"))      b->blend = 1;
+-        else if (!strcmp(tok[7], "Subtract")) b->blend = 2;
++    b->line     = -1;
++    /* Optional blend mode, then nesrecomp extensions:
++     *   line:Y  scroll horizontally with the background drawn on scanline Y
++     *           (its nametable position, so a split-screen band such as a title's
++     *           parallax clouds is followed exactly), times hScrollRatio;
++     *   wrap    repeat the image horizontally. */
++    for (int i = 7; i < n; i++) {
++        if      (!strcmp(tok[i], "Add"))      b->blend = 1;
++        else if (!strcmp(tok[i], "Subtract")) b->blend = 2;
++        else if (!strncmp(tok[i], "line:", 5)) { b->line = atoi(tok[i] + 5); if (b->line > 239) b->line = 239; }
++        else if (!strcmp(tok[i], "wrap"))     b->wrap = 1;
+     }
+     if (b->priority < 0)  b->priority = 0;
+     if (b->priority > 39) b->priority = 39;
+@@ -1153,6 +1163,14 @@ static void eval_backgrounds_for_frame(void) {
+         if (act) {
+             b->offx = (int)(scrollx * b->hscroll);
+             b->offy = (int)(scrolly * b->vscroll);
++            if (b->line >= 0 && s_pixels) {
++                /* the scroll of that scanline: nametable position of a pixel minus
++                 * its screen position (bg_ntx: column + 32 * nametable X, patch 0010) */
++                const int sx = s_native_w / 2;
++                const HdPixel *p = &s_pixels[b->line * s_native_w + sx];
++                int sc = p->bg_has ? ((((int)(p->bg_ntx & 63) * 8 + p->bg_ox) - sx) & 511) : 0;
++                b->offx = (int)(sc * b->hscroll);
++            }
+             s_actbg[s_nact++] = b;   /* preserves priority order */
+         }
+     }
+@@ -1209,6 +1227,7 @@ static void blend_bg_block(uint32_t *dst, int hd_w, const HdBg *b, int sx, int s
+         uint32_t *out = dst + (long)dy * hd_w;
+         for (int dx = 0; dx < s; dx++) {
+             int px = (b->left + sx + offx) * s + dx;
++            if (b->wrap) { px %= im->w; if (px < 0) px += im->w; }
+             if (px < 0 || px >= im->w) continue;
+             uint32_t v = row[px];
+             if (b->brightness != 255) v = adjust_brightness(v, b->brightness);
