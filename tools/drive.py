@@ -51,5 +51,5 @@ for tok in plan.split():
             m = run([], 90); break
     print(tok, frame, pos(m))
 open(out_route,'w').write('\n'.join(route)+'\n')
-os.replace(state, out_state) if state != out_state else None
+__import__('shutil').move(state, out_state) if state != out_state else None
 print('end frame', frame, pos(m))

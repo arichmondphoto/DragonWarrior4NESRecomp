@@ -20,7 +20,7 @@ and OUT/screen.png (the machine without sprites, 1x) + OUT/screen_sprites.png.
 
 usage: capture_slots.py HOST OUT
 """
-import json, os, subprocess, sys, tempfile
+import json, os, shutil, subprocess, sys, tempfile
 sys.path.insert(0, os.path.dirname(__file__))
 from vramdump import load
 from field_sheet import NES
@@ -104,7 +104,7 @@ def main():
                     col = NES[(pal[0] if v == 0 else pal[4 * p + v]) & 0x3F]
                     px[tx * 8 + c, ty * 8 + r] = ((col >> 16) & 255, (col >> 8) & 255, col & 255)
     img.save(os.path.join(out, 'screen.png'))
-    os.rename(screen_mem, os.path.join(out, 'screen.mem'))
+    shutil.move(screen_mem, os.path.join(out, 'screen.mem'))   # the temp dir may be another filesystem
     json.dump({'cells': cells, 'sprites': sorted(sprites), 'symbols': sorted([list(k), p] for k, p in symbols)},
               open(os.path.join(out, 'slots.json'), 'w'))
     dyn = sum(1 for v in cells.values() if len(v) > 1)
