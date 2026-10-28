@@ -49,8 +49,13 @@ readelf -d "$B/$EXE" | grep -q 'libSDL2' || die "SDL2 was not found, so the game
 VENV="$B/.hd-venv"
 if [ ! -x "$VENV/bin/python" ] || ! "$VENV/bin/python" -c 'import PIL, numpy, scipy' 2>/dev/null; then
     say "Setting up Python for the HD pack"
-    python3 -m venv "$VENV"
-    "$VENV/bin/pip" install --quiet --upgrade pip pillow numpy scipy
+    rm -rf "$VENV"
+    if python3 -c 'import PIL, numpy, scipy' 2>/dev/null; then
+        python3 -m venv --system-site-packages "$VENV"      # this Python already has them
+    else
+        python3 -m venv "$VENV"
+        "$VENV/bin/pip" install --quiet --upgrade pip pillow numpy scipy
+    fi
 fi
 PACK_DIR=""
 if [ "${DW4_NO_HD:-0}" != 1 ]; then
