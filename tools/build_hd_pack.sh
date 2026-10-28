@@ -118,6 +118,24 @@ Endor casino: the poker cards are the project owner's artwork (hd/casino/cards);
 the poker screen's other tiles are smoothly upscaled from your ROM.
 NOTE
 
+# ---- Endor casino: the slot machine (captured by warping to it) ------------
+LCAP="$(dirname "$OUT")/slots-capture"
+lwant="$(shasum "$HOST" rom/DragonWarriorIV.nes routes/ch1_to_first_battles.txt tools/capture_slots.py 2>/dev/null | shasum | cut -d' ' -f1)"
+if [ ! -f "$LCAP/.stamp" ] || [ "$(cat "$LCAP/.stamp")" != "$lwant" ]; then
+    echo "  capturing the Endor casino's slot machine"
+    rm -rf "$LCAP"
+    "$PY" tools/capture_slots.py "$HOST" "$LCAP"
+    echo "$lwant" > "$LCAP/.stamp"
+fi
+echo "  slots"
+"$PY" tools/make_slots_hdpack.py "$LCAP" "$OUT"
+cat >> "$OUT/NOTICE.txt" <<'NOTE'
+
+Endor casino: the slot machine and its reel symbols are the project owner's
+artwork (hd/casino/slots); its lamps and coin digits are smoothly upscaled from
+your ROM.
+NOTE
+
 # ---- walking characters (party, townspeople, animals, ships, ...) ---------
 if ls hd/sprites/source/C*.png >/dev/null 2>&1; then
     [ -f "$FCAP/.stamp" ] || { echo "ERROR: characters need the map capture (hd/field/source art)" >&2; exit 1; }

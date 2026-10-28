@@ -24,3 +24,5 @@ hd/pack/
 !hd/field/doors/*.png
 !hd/title/*.png
 !hd/title/layers/*.png
+!hd/casino/cards/*.png
+!hd/casino/slots/*.png

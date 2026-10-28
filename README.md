@@ -169,6 +169,21 @@ How the characters are built (`tools/build_hd_pack.sh`):
   (drawn straight into the nametable, so not map tiles): `hd/field/doors/DOOR1.png`,
   cut by `tools/door_frames.py` into map tiles DR01-DR12 in every palette the
   closed door uses.
+- *Endor casino* — captured without a playthrough by warping from the route
+  (the exit table at `$05A0` pointed at map 4, submap 1; coins in WRAM `$62AD`).
+  Poker: `tools/capture_casino.py` writes chosen cards into the deck (WRAM
+  `$7600`, rank*4+suit, `$34` = joker) and deals them, so all 53 cards and the
+  back are recorded; `tools/make_casino_hdpack.py` cuts the owner's card sheets
+  `hd/casino/cards/C01-C09.png` into 5x7-tile cards (shared tiles told apart by
+  `tileNearby`). Slot machine: `tools/capture_slots.py` plays three rounds (stand
+  below a machine, step up to face it); `tools/make_slots_hdpack.py` draws the
+  owner's painting `hd/casino/slots/SLOT.png` as a still `<background>` (read from
+  the JACKPOT sign, with the fade steps; its text window is always blanked, since
+  the text tiles are partly transparent) and the seven reel symbols (8x8 sprites
+  in 16x16 groups) from `hd/casino/slots/SYMBOLS.png`; lamps and coin digits are
+  smoothed. `tools/export_casino.py` makes the art package for OpenAI's image
+  API. Without the art only the smoothed tiles are added. The arena needs nothing
+  extra (HD monsters and text).
 - *Night town crowd* — `hd/field/sheets/N01.png` (tiles T118-T127), cut by
   `tools/slice_field_sheets.py`.
 - *More monsters* — `hd/monsters/extra/M###.png` (monsters the atlases didn't cover).

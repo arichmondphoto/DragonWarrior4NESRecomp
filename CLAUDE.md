@@ -51,6 +51,8 @@ README.md is the full reference; this file is the working summary.
 - Battle monsters: `hd/monsters/source` + `mapping.json`, extras in `hd/monsters/extra/M###.png`.
 - Title: layers in `hd/title/layers/` (sky+castle, plate, lettering, two cloud strips; `layout.json`), painted on
   the `tools/export_title_kit.py` guides. Blue-sky versions are recoloured at build time unless `*_day.png` exist.
+- Endor casino: poker cards `hd/casino/cards/C01-C09.png`, slot machine `hd/casino/slots/SLOT.png` +
+  `SYMBOLS.png` (package: `tools/export_casino.py`; captures by warp: `capture_casino.py`, `capture_slots.py`).
 - New art from OpenAI's image API goes through `tools/openai_sprites.py` with the export scripts
   (`export_chatgpt_sprites.py`, `export_gaps.py`); `.gitignore` has an `!` exception per art folder.
 - All HD packs are authored at **10x** (`<scale>10`).
