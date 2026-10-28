@@ -13,7 +13,7 @@ Dragon Warrior IV (USA), NES 2.0 header, 524,304 bytes.
 User brings their own legally-obtained ROM. I will not provide a ROM - don't ask.
 
 ## Build and Play on macOS (Apple Silicon)
-Download latest release, unzip and follow directions in `READ ME FIRST.txt`.
+[Download latest release](https://github.com/arichmondphoto/DragonWarrior4NESRecomp/releases), unzip and follow directions in `READ ME FIRST.txt`.
 
 Building requires the Xcode command line tools and [Homebrew](https://brew.sh).
 ```sh
@@ -45,7 +45,7 @@ Keyboard: arrows = D-pad, **Z** = A, **X** = B, **Return** = Start, `\` = Select
 Esc = menu, F7 = save states, F8 = rewind, Tab = fast-forward, F11 = fullscreen (on a Mac keyboard you may need fn+F7 etc.).
 
 ## Build and Play on Linux (AppImage)
-Download latest release, unzip and follow directions in `READ ME FIRST.txt`.
+[Download latest release](https://github.com/arichmondphoto/DragonWarrior4NESRecomp/releases), unzip and follow directions in `READ ME FIRST.txt`.
 
 Requires Git and Podman or Docker (`sudo pacman -S podman` on Arch/Manjaro).
 ```sh
