@@ -26,6 +26,9 @@ run `./build_macos.sh` again to rebuild and reinstall.
   (kept across rebuilds; anything in the old `build/saves` is copied over once).
 - The app bundles SDL2, the launcher assets and **your ROM** — don't share the app.
 - `DW4_NO_INSTALL=1 ./build_macos.sh` leaves the app in `dist/`; `./play_macos.sh` still runs the unpackaged build.
+- Cheats: the launcher's **Cheats** page takes Game Genie codes (6 or 8 letters), each with an optional name and
+  an on/off switch. They are saved in `cheats.txt` in the same folder and apply when the game starts.
+  Codes that rewrite the game's code run it on the built-in interpreter for that session (same speed in practice).
 
 Keyboard: arrows = D-pad, **Z** = A, **X** = B, **Return** = Start, `\` = Select. Gamepads work out of the box.
 Esc = menu, F7 = save states, F8 = rewind, Tab = fast-forward, F11 = fullscreen (on a Mac keyboard you may need fn+F7 etc.).
@@ -273,6 +276,15 @@ They are framework bugs, kept here until they can go upstream:
   end with `line:Y` (scroll horizontally with the background drawn on scanline
   Y — its nametable position, so a split-screen band such as the title's
   parallax clouds is followed exactly) and `wrap` (repeat the image sideways).
+- `0014-game-genie-cheats.patch` — Game Genie codes (`runner/cyc/cyc_cheats.c`):
+  the enabled codes in `cheats.txt` beside `config.ini` (or `--cheats FILE`) are
+  applied when the game starts, through the framework's ROM read substitution
+  (`cyc_mod.h`; 8-letter codes compare by address with the new
+  `cyc_mod_set_rom_read_override_cmp`, as the real device did on any bank).
+  A code whose address can hold a byte the recompiler turned into C (an opcode
+  or operand) makes the session run on the interpreter, which reads every byte
+  at run time (no visible cost: the PPU dominates). Never applied online. The
+  launcher's Cheats page (recomp-ui patch 0003) edits the file.
 
 `patches/recomp-ui/*.patch` likewise apply to the launcher checkout:
 
@@ -282,6 +294,11 @@ They are framework bugs, kept here until they can go upstream:
 - `0002-launcher-trim-side-borders-setting.patch` — an optional "Trim side
   borders" checkbox in Display settings (`Settings.crop_sides`,
   `GameInfo.has_crop_sides`, appended ABI-additively).
+- `0003-launcher-cheats-page.patch` — a "Cheats" page (`GameInfo.cheats_path`,
+  appended ABI-additively): add a Game Genie code with an optional name, turn
+  codes on and off, delete them; each change is written straight to the text
+  file (`on`/`off`, code, name per line), and the decoded patch is shown.
+  `tools/apply_patches.sh` now also handles patches that add files.
 
 ## Test routes
 | Route | Frames | Covers |

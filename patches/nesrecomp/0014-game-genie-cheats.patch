@@ -1,0 +1,350 @@
+diff --git a/runner/cyc/cyc.cmake b/runner/cyc/cyc.cmake
+index 2dae8b9..fcbcefb 100644
+--- a/runner/cyc/cyc.cmake
++++ b/runner/cyc/cyc.cmake
+@@ -37,6 +37,7 @@ set(NESRECOMP_CYC_SOURCES
+     ${NESRECOMP_CYC_DIR}/cyc_run.c
+     ${NESRECOMP_CYC_DIR}/cyc_ramview.c
+     ${NESRECOMP_CYC_DIR}/cyc_host.c
++    ${NESRECOMP_CYC_DIR}/cyc_cheats.c
+     ${NESRECOMP_CYC_DIR}/cyc_diagnostics.c
+     ${NESRECOMP_CYC_DIR}/cyc_accuracycoin.c
+     ${NESRECOMP_CYC_DIR}/cyc_png.c
+diff --git a/runner/cyc/cyc_cheats.c b/runner/cyc/cyc_cheats.c
+new file mode 100644
+index 0000000..c31cb43
+--- /dev/null
++++ b/runner/cyc/cyc_cheats.c
+@@ -0,0 +1,95 @@
++/* Game Genie codes: see cyc_cheats.h. */
++#include "cyc_cheats.h"
++#include "cyc_mod.h"
++#include "cyc_recomp.h"
++#include "hw_internal.h"
++#include <ctype.h>
++#include <stdio.h>
++#include <string.h>
++
++extern bool cyc_run_native;
++
++static int gg_letter(char c)
++{
++    static const char L[] = "APZLGITYEOXUKSVN";
++    const char *p = strchr(L, toupper((unsigned char)c));
++    return c && p ? (int)(p - L) : -1;
++}
++
++bool cyc_gg_decode(const char *code, uint16_t *addr, uint8_t *value, bool *has_compare, uint8_t *compare)
++{
++    size_t len = code ? strlen(code) : 0;
++    if (len != 6 && len != 8) return false;
++    int n[8];
++    for (size_t i = 0; i < len; i++) if ((n[i] = gg_letter(code[i])) < 0) return false;
++    *addr = (uint16_t)(0x8000 | ((n[3] & 7) << 12) | ((n[5] & 7) << 8) | ((n[4] & 8) << 8) |
++                       ((n[2] & 7) << 4) | ((n[1] & 8) << 4) | (n[4] & 7) | (n[3] & 8));
++    if (len == 6) {
++        *value = (uint8_t)(((n[1] & 7) << 4) | ((n[0] & 8) << 4) | (n[0] & 7) | (n[5] & 8));
++        *has_compare = false; *compare = 0;
++    } else {
++        *value = (uint8_t)(((n[1] & 7) << 4) | ((n[0] & 8) << 4) | (n[0] & 7) | (n[7] & 8));
++        *compare = (uint8_t)(((n[7] & 7) << 4) | ((n[6] & 8) << 4) | (n[6] & 7) | (n[5] & 8));
++        *has_compare = true;
++    }
++    return true;
++}
++
++/* Can a byte at CPU address addr be one the native code folded? Any PRG byte
++ * that some bank arrangement maps there (same offset within a 4 KiB page) and,
++ * for a compare code, that holds the compare value. */
++static bool touches_native_code(uint16_t addr, bool has_compare, uint8_t compare)
++{
++    if (!hw_cart.prg) return true;
++    for (uint32_t off = addr & 0x0FFFu; off < hw_cart.prg_len; off += 0x1000u) {
++        if (has_compare && hw_cart.prg[off] != compare) continue;
++        if (cyc_native_prg_code_byte(off)) return true;
++    }
++    return false;
++}
++
++static bool s_forced_interp;     /* this module turned native code off */
++
++int cyc_cheats_apply_file(const char *path)
++{
++    cyc_mod_clear_rom_read_overrides();
++    if (s_forced_interp) { cyc_run_native = true; s_forced_interp = false; }
++    if (!path || !*path) return 0;
++    FILE *f = fopen(path, "r");
++    if (!f) return 0;
++    char line[512];
++    int applied = 0, code_bytes = 0;
++    while (fgets(line, sizeof line, f)) {
++        char *hash = strchr(line, '#'); if (hash) *hash = 0;
++        char a[32] = "", b[32] = "";
++        int k = sscanf(line, "%31s %31s", a, b);
++        if (k < 1) continue;
++        const char *code = a; bool on = true;
++        if (!strcmp(a, "on") || !strcmp(a, "off") || !strcmp(a, "ON") || !strcmp(a, "OFF")) {
++            if (k < 2) continue;
++            on = toupper((unsigned char)a[1]) == 'N'; code = b;
++        }
++        if (!on) continue;
++        uint16_t addr; uint8_t value, compare; bool has_compare;
++        if (!cyc_gg_decode(code, &addr, &value, &has_compare, &compare)) {
++            fprintf(stderr, "[cheats] ignoring '%s': not a Game Genie code\n", code);
++            continue;
++        }
++        bool ok = has_compare ? cyc_mod_set_rom_read_override_cmp(addr, compare, value)
++                              : cyc_mod_set_rom_read_override(addr, value);
++        if (!ok) { fprintf(stderr, "[cheats] '%s': too many codes\n", code); continue; }
++        bool native = touches_native_code(addr, has_compare, compare);
++        code_bytes += native;
++        if (has_compare)
++            fprintf(stderr, "[cheats] %s: $%04X = %02X if %02X%s\n", code, addr, value, compare, native ? " (game code)" : "");
++        else
++            fprintf(stderr, "[cheats] %s: $%04X = %02X%s\n", code, addr, value, native ? " (game code)" : "");
++        applied++;
++    }
++    fclose(f);
++    if (code_bytes && cyc_run_native) {
++        cyc_run_native = false; s_forced_interp = true;
++        fprintf(stderr, "[cheats] %d code(s) change game code: running on the interpreter\n", code_bytes);
++    }
++    return applied;
++}
+diff --git a/runner/cyc/cyc_cheats.h b/runner/cyc/cyc_cheats.h
+new file mode 100644
+index 0000000..65ecb56
+--- /dev/null
++++ b/runner/cyc/cyc_cheats.h
+@@ -0,0 +1,36 @@
++/* Game Genie codes (cheats.txt), applied through the ROM read overrides of
++ * cyc_mod.h.
++ *
++ * cheats.txt, one code per line ('#' starts a comment):
++ *     on  NNSOAPZU  Start with 255 gold
++ *     off AEEGKLAP  No status window when stopping
++ * "on"/"off", the 6- or 8-letter code, then an optional name. A line with only
++ * a code is on. The launcher's Cheats page writes this file.
++ *
++ * A 6-letter code substitutes the byte read at its address, an 8-letter code
++ * only when the cartridge byte there is its compare value (any bank mapped at
++ * the address, as the real device did). A code whose address can hold a byte
++ * the recompiler turned into C (an opcode, an address operand) cannot work
++ * through the native code, so then the game runs on the interpreter (which
++ * reads every byte at run time) for the session. */
++#ifndef CYC_CHEATS_H
++#define CYC_CHEATS_H
++#include <stdbool.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Decode a 6- or 8-letter code (letters APZLGITYEOXUKSVN, any case).
++ * Returns false when it is not a valid code. */
++bool cyc_gg_decode(const char *code, uint16_t *addr, uint8_t *value, bool *has_compare, uint8_t *compare);
++
++/* Read path and apply its enabled codes (after the cartridge is loaded).
++ * Returns how many codes were applied; a missing file applies none. */
++int cyc_cheats_apply_file(const char *path);
++
++#ifdef __cplusplus
++}
++#endif
++#endif
+diff --git a/runner/cyc/cyc_host.c b/runner/cyc/cyc_host.c
+index 96276e5..f1e8ca6 100644
+--- a/runner/cyc/cyc_host.c
++++ b/runner/cyc/cyc_host.c
+@@ -130,6 +130,10 @@
+  *     --mods-root DIR      read the mod catalog DIR (packages/, state.toml) and
+  *                          activate its selection; headless runs read none
+  *                          without it. The window reads <exe dir>/mods.
++ *   Cheats (cyc_cheats.h):
++ *     --cheats FILE        apply the enabled Game Genie codes in FILE; the
++ *                          window reads cheats.txt beside config.ini (the
++ *                          launcher's Cheats page). Never applied online.
+  *   A game's own options (cyc_host_extras.h) follow its --help lines.
+  *
+  *   Window (SDL builds without headless options): config.ini beside the
+@@ -173,6 +177,7 @@
+ #include "cyc_diagnostics.h"
+ #include "cyc_hooks.h"
+ #include "cyc_mod.h"
++#include "cyc_cheats.h"
+ #include "cyc_ramview.h"
+ #include "cyc_recomp.h"
+ #include "cyc_render.h"
+@@ -1015,6 +1020,7 @@ static int host_main(int argc, char **argv) {
+     const char *ring_out = NULL, *frame_log = NULL, *fds_bios = NULL;
+     const char *fds_import_ips = NULL, *fds_export_ips = NULL, *fds_hle_arg = NULL;
+     const char *present_out = NULL, *load_state = NULL, *mods_root = NULL;
++    const char *cheats_file = NULL;
+     long present_every = 0;
+     int present_w = 0, present_h = 0;
+     int extra_scanlines = -1;
+@@ -1167,6 +1173,7 @@ static int host_main(int argc, char **argv) {
+         }
+         else if (!strcmp(argv[i], "--load-state") && i + 1 < argc) load_state = argv[++i], headless = true;
+         else if (!strcmp(argv[i], "--mods-root") && i + 1 < argc) mods_root = argv[++i];
++        else if (!strcmp(argv[i], "--cheats") && i + 1 < argc) cheats_file = argv[++i];
+         else if ((!strcmp(argv[i], "--virtual-pad") || !strcmp(argv[i], "--exit-after") ||
+                   !strcmp(argv[i], "--config") || !strcmp(argv[i], "--tcp")) && i + 1 < argc) {
+ #if defined(CYC_WITH_SDL)
+@@ -1477,6 +1484,19 @@ session_restart:
+ #ifndef CYC_ORACLE
+     if (zapper_port >= 0) cyc_zapper_attach((unsigned)zapper_port);
+     cyc_diagnostics_note("machine powered on mapper=%u native_prg_hash=%08X actual_prg_hash=%08X", cart_info.mapper, cyc_native_prg_hash, cyc_prg_hash());
++    {   /* Game Genie codes: --cheats, else the window's cheats.txt; never online */
++        const char *cheats_path = cheats_file;
++#if defined(CYC_WITH_SDL)
++        char cheats_default[1100];
++        if (!cheats_path && !headless && cyc_sdl_cheats_path(cheats_default, sizeof cheats_default)) cheats_path = cheats_default;
++#endif
++        bool online = false;
++#ifdef NESRECOMP_NET
++        online = netcfg.enabled;
++#endif
++        int n = cyc_cheats_apply_file(online ? NULL : cheats_path);
++        if (n) cyc_diagnostics_note("cheats: %d code(s) from %s", n, cheats_path);
++    }
+     cyc_run_power_on();
+     fds_save_powered_on();
+     cyc_state_set_host(&HOST_STATE);
+diff --git a/runner/cyc/cyc_host.h b/runner/cyc/cyc_host.h
+index 659f28f..f1260ff 100644
+--- a/runner/cyc/cyc_host.h
++++ b/runner/cyc/cyc_host.h
+@@ -52,6 +52,8 @@ void     cyc_host_disk_select(unsigned side);
+  * and FDS BIOS file (config.ini [FDS] Bios; NULL: none saved). cli_bios is
+  * --fds-bios (NULL: none), which the launcher's BIOS state reflects.
+  * Returns 0 to go on, 1 when the player quit the launcher, 2 on startup failure. */
++/* <dir of config.ini>/cheats.txt (cyc_cheats.h); false if no path. */
++bool cyc_sdl_cheats_path(char *out, size_t n);
+ int cyc_sdl_prelaunch(const char **rom_path, const char *cli_bios, NesFdsHleAsk *saved_hle,
+                       const char **saved_bios);
+ /* A windowed start's fatal error (a missing FDS BIOS) as a message box, so a
+diff --git a/runner/cyc/cyc_mod.c b/runner/cyc/cyc_mod.c
+index 1fc7a7a..09ddfc7 100644
+--- a/runner/cyc/cyc_mod.c
++++ b/runner/cyc/cyc_mod.c
+@@ -39,12 +39,12 @@ bool cyc_mod_set_rom_read_override(uint16_t addr, uint8_t value)
+ {
+     if (addr < 0x8000) return false;
+     for (unsigned i = 0; i < read_override_count; i++) {
+-        if (!read_overrides[i].qualified && read_overrides[i].addr == addr) { read_overrides[i].value = value; return true; }
++        if (!read_overrides[i].qualified && !read_overrides[i].by_compare && read_overrides[i].addr == addr) { read_overrides[i].value = value; return true; }
+     }
+     if (read_override_count >= CYC_MOD_READ_OVERRIDES_MAX) return false;
++    memset(&read_overrides[read_override_count], 0, sizeof read_overrides[0]);
+     read_overrides[read_override_count].addr = addr;
+     read_overrides[read_override_count].value = value;
+-    read_overrides[read_override_count].qualified = 0;
+     read_override_count++;
+     cyc_mod_rom_read_overrides = read_overrides;
+     return true;
+@@ -68,6 +68,21 @@ bool cyc_mod_set_prg_read_override(uint32_t offset, uint8_t compare, uint8_t val
+     return true;
+ }
+ 
++bool cyc_mod_set_rom_read_override_cmp(uint16_t addr, uint8_t compare, uint8_t value)
++{
++    if (addr < 0x8000) return false;
++    for (unsigned i = 0; i < read_override_count; i++) {
++        CycModReadOverride *e = &read_overrides[i];
++        if (!e->qualified && e->by_compare && e->addr == addr && e->compare == compare) { e->value = value; return true; }
++    }
++    if (read_override_count >= CYC_MOD_READ_OVERRIDES_MAX) return false;
++    CycModReadOverride *entry = &read_overrides[read_override_count++];
++    memset(entry, 0, sizeof *entry);
++    entry->addr = addr; entry->compare = compare; entry->by_compare = 1; entry->value = value;
++    cyc_mod_rom_read_overrides = read_overrides;
++    return true;
++}
++
+ void cyc_mod_clear_rom_read_overrides(void)
+ {
+     read_override_count = 0;
+diff --git a/runner/cyc/cyc_mod.h b/runner/cyc/cyc_mod.h
+index eeaaac7..b01fa83 100644
+--- a/runner/cyc/cyc_mod.h
++++ b/runner/cyc/cyc_mod.h
+@@ -80,6 +80,7 @@ typedef struct {
+     uint16_t addr;   /* $8000-$FFFF */
+     uint8_t  value;
+     uint8_t  compare, qualified;
++    uint8_t  by_compare;   /* unqualified: substitute only when the ROM byte is `compare` (8-letter Game Genie) */
+     uint32_t prg_offset;
+ } CycModReadOverride;
+ extern const CycModReadOverride *cyc_mod_rom_read_overrides;
+@@ -92,6 +93,10 @@ bool cyc_mod_set_rom_read_override(uint16_t addr, uint8_t value);
+  * May be registered before loading a ROM (launcher activation); when a ROM is
+  * already loaded, an out-of-range or mismatching request is refused. */
+ bool cyc_mod_set_prg_read_override(uint32_t offset, uint8_t compare, uint8_t value);
++/* A Game Genie 8-letter code: at CPU address addr (any bank mapped there),
++ * substitute value only when the cartridge byte read is `compare`. Several
++ * may share an address with different compares. */
++bool cyc_mod_set_rom_read_override_cmp(uint16_t addr, uint8_t compare, uint8_t value);
+ void cyc_mod_clear_rom_read_overrides(void);
+ 
+ /* Optional trusted content tools. Obtaining writable PRG disables generated
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index f688ee9..f24d05a 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -182,6 +182,17 @@ static void exe_path(char *out, size_t n, const char *name)
+     else snprintf(out, n, "%s", name);
+ }
+ 
++/* cheats.txt beside the settings file in use (--config may move it). */
++bool cyc_sdl_cheats_path(char *out, size_t n)
++{
++    snprintf(out, n, "%s", s_set_path[0] ? s_set_path : cyc_settings_default_path());
++    char *cut = strrchr(out, '/'), *bcut = strrchr(out, '\\');
++    if (bcut > cut) cut = bcut;
++    if (cut) snprintf(cut + 1, n - (size_t)(cut + 1 - out), "cheats.txt");
++    else snprintf(out, n, "cheats.txt");
++    return out[0] != 0;
++}
++
+ int cyc_sdl_prelaunch(const char **rom_path, const char *cli_bios, NesFdsHleAsk *saved_hle,
+                       const char **saved_bios)
+ {
+diff --git a/runner/cyc/cyc_ui_launcher.c b/runner/cyc/cyc_ui_launcher.c
+index 50124d0..ef48acc 100644
+--- a/runner/cyc/cyc_ui_launcher.c
++++ b/runner/cyc/cyc_ui_launcher.c
+@@ -272,6 +272,19 @@ int cyc_ui_launcher(CycSettings *settings, const char *settings_path, const CycH
+     if (cut) snprintf(cut + 1, sizeof(rom_cache) - (size_t)(cut + 1 - rom_cache), "rom.cfg");
+     else snprintf(rom_cache, sizeof(rom_cache), "rom.cfg");
+     gi.rom_cache_path = rom_cache;
++#ifdef RECOMP_LAUNCHER_HAS_CHEATS
++    /* Game Genie codes (cyc_cheats.h): the Cheats page edits cheats.txt beside
++     * config.ini, which the host reads when the game starts. */
++    static char cheats_file[1100];
++    snprintf(cheats_file, sizeof(cheats_file), "%s", rom_cache);
++    {
++        char *c = strrchr(cheats_file, '/'), *bc = strrchr(cheats_file, '\\');
++        if (bc > c) c = bc;
++        if (c) snprintf(c + 1, sizeof(cheats_file) - (size_t)(c + 1 - cheats_file), "cheats.txt");
++        else snprintf(cheats_file, sizeof(cheats_file), "cheats.txt");
++    }
++    gi.cheats_path = cheats_file;
++#endif
+     gi.settings_bindings = 1;         /* every binding is the host's (config.ini) */
+     /* The Mods screen (a game built with mods; recomp-ui's RECOMP_UI_ENABLE_MODS). */
+     gi.mods = (const RecompLauncherCModProvider *)cyc_diagnostics_provider(mods);
+diff --git a/runner/cyc/hw_machine.c b/runner/cyc/hw_machine.c
+index 0b69bd6..fe4fd8c 100644
+--- a/runner/cyc/hw_machine.c
++++ b/runner/cyc/hw_machine.c
+@@ -215,7 +215,7 @@ static inline uint8_t hw_rom_read_override(uint16_t addr, uint8_t value)
+         if (t[i].qualified) {
+             uint32_t offset = hw_cart.prg_off[(addr >> 12) & 7] + (addr & 0xFFFu);
+             if (offset < hw_cart.prg_len && offset == t[i].prg_offset && value == t[i].compare) return t[i].value;
+-        } else if (t[i].addr == addr) return t[i].value;
++        } else if (t[i].addr == addr && (!t[i].by_compare || value == t[i].compare)) return t[i].value;
+     }
+     return value;
+ }

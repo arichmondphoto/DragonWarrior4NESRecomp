@@ -65,7 +65,8 @@ README.md is the full reference; this file is the working summary.
 - Project patches add: `memoryCheck` on WRAM (0007), `<options>spriteCells` (0009),
   `nametableColumn`/`nametableX` conditions (0010, for scrolling rows like the title clouds),
   `rgb:`/`rot:` tile transforms + shared decoded blocks (0011), read-only bundled mod packages (0012),
-  `<background>` `line:Y` scroll + `wrap` (0013).
+  `<background>` `line:Y` scroll + `wrap` (0013), Game Genie cheats (0014, `cyc_cheats.c`; launcher Cheats
+  page = recomp-ui 0003; `cheats.txt` beside config.ini, `--cheats FILE` headless).
 - Map tiles and characters: other palettes are affine recolours of the art (`rgb:` at load time); palettes that are only reorderings of each
   other (colour-cycling animations such as the overworld sea) share one recolour. Seamless smoothing
   is skipped where the painted edges differ (SEAM_MAX). Fades = the same art at lower brightness.

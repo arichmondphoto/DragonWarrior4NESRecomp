@@ -1,0 +1,306 @@
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index 1ab6a5f..9b2fc0f 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -5506,6 +5506,207 @@ void draw_credits(LauncherModel* m, const LauncherTheme& th) {
+     end_panel();
+ }
+ 
++/* ---- Cheats page (GameInfo.cheats_path) --------------------------------
++ * Game Genie codes kept in a plain text file the host reads at game start:
++ * one per line, "on"/"off", the code, then an optional name. Every change is
++ * written back at once, so there is nothing to apply or lose. */
++struct CheatEntry { bool on; std::string code, name; };
++static std::vector<CheatEntry> g_cheats;
++static std::string g_cheats_path_loaded;
++static char g_cheat_code_buf[16];
++static char g_cheat_name_buf[96];
++static std::string g_cheat_status;
++static bool g_cheat_status_error = false;
++
++static int cheat_gg_letter(char c) {
++    static const char L[] = "APZLGITYEOXUKSVN";
++    const char* p = c ? strchr(L, toupper((unsigned char)c)) : nullptr;
++    return p ? (int)(p - L) : -1;
++}
++
++/* The device's own scrambling: address, value and (8 letters) compare. */
++static bool cheat_gg_decode(const std::string& code, unsigned* addr, unsigned* value,
++                            bool* has_cmp, unsigned* cmp) {
++    if (code.size() != 6 && code.size() != 8) return false;
++    int n[8];
++    for (size_t i = 0; i < code.size(); i++)
++        if ((n[i] = cheat_gg_letter(code[i])) < 0) return false;
++    *addr = 0x8000u | ((n[3] & 7) << 12) | ((n[5] & 7) << 8) | ((n[4] & 8) << 8) |
++            ((n[2] & 7) << 4) | ((n[1] & 8) << 4) | (n[4] & 7) | (n[3] & 8);
++    const int last = code.size() == 8 ? 7 : 5;
++    *value = ((n[1] & 7) << 4) | ((n[0] & 8) << 4) | (n[0] & 7) | (n[last] & 8);
++    *has_cmp = code.size() == 8;
++    *cmp = *has_cmp ? (((n[7] & 7) << 4) | ((n[6] & 8) << 4) | (n[6] & 7) | (n[5] & 8)) : 0;
++    return true;
++}
++
++static void cheats_load(const char* path) {
++    g_cheats.clear();
++    g_cheats_path_loaded = path ? path : "";
++    FILE* f = path ? fopen(path, "r") : nullptr;
++    if (!f) return;
++    char line[512];
++    while (fgets(line, sizeof line, f)) {
++        if (char* h = strchr(line, '#')) *h = 0;
++        char a[32] = "", b[32] = "";
++        int used = 0;
++        if (sscanf(line, "%31s%n", a, &used) < 1) continue;
++        CheatEntry e{true, a, ""};
++        const char* rest = line + used;
++        std::string first = a;
++        for (auto& ch : first) ch = (char)tolower((unsigned char)ch);
++        if (first == "on" || first == "off") {
++            int used2 = 0;
++            if (sscanf(rest, "%31s%n", b, &used2) < 1) continue;
++            e.on = first == "on"; e.code = b; rest += used2;
++        }
++        for (auto& ch : e.code) ch = (char)toupper((unsigned char)ch);
++        while (*rest == ' ' || *rest == '\t') rest++;
++        e.name = rest;
++        while (!e.name.empty() && (e.name.back() == '\n' || e.name.back() == '\r' ||
++                                   e.name.back() == ' ' || e.name.back() == '\t'))
++            e.name.pop_back();
++        g_cheats.push_back(e);
++    }
++    fclose(f);
++}
++
++static bool cheats_save(const char* path) {
++    FILE* f = path ? fopen(path, "w") : nullptr;
++    if (!f) {
++        g_cheat_status = "Could not save the cheats file.";
++        g_cheat_status_error = true;
++        return false;
++    }
++    fputs("# Game Genie codes, edited by the launcher's Cheats page.\n"
++          "# One per line: on/off, the 6- or 8-letter code, then an optional name.\n", f);
++    for (const auto& e : g_cheats)
++        fprintf(f, "%-3s %-8s %s\n", e.on ? "on" : "off", e.code.c_str(), e.name.c_str());
++    fclose(f);
++    return true;
++}
++
++static int cheat_code_filter(ImGuiInputTextCallbackData* d) {
++    return cheat_gg_letter((char)d->EventChar) < 0 ? 1 : 0;   /* only Game Genie letters */
++}
++
++void draw_cheats(LauncherModel* m, const LauncherTheme& th) {
++    if (!m->cheats_path) return;
++    if (g_cheats_path_loaded != m->cheats_path) cheats_load(m->cheats_path);
++    if (!begin_panel("cheats_page", 0, false)) {
++        end_panel();
++        return;
++    }
++    eyebrow("CHEATS");
++    ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
++    ImGui::PushTextWrapPos();
++    ImGui::TextWrapped("%s", ui_text(
++        "Game Genie codes. Codes that are on apply when the game starts; "
++        "change them here and start the game again. Cheats are never used "
++        "in online play. Some codes can glitch or soft-lock the game, so "
++        "keep a backup of your save."));
++    ImGui::PopTextWrapPos();
++    ImGui::PopStyleColor();
++    ImGui::Dummy(ImVec2(0, px(8)));
++
++    /* add a code */
++    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
++    ImGui::TextUnformatted(ui_text("ADD A CODE"));
++    ImGui::PopStyleColor();
++    bool submit = false;
++    ImGui::SetNextItemWidth(px(150));
++    if (ImGui::InputTextWithHint("##cheat_code", "Code", g_cheat_code_buf, 9,
++                                 ImGuiInputTextFlags_CharsUppercase |
++                                 ImGuiInputTextFlags_CallbackCharFilter |
++                                 ImGuiInputTextFlags_EnterReturnsTrue,
++                                 cheat_code_filter))
++        submit = true;
++    ImGui::SameLine();
++    ImGui::SetNextItemWidth(px(320));
++    if (ImGui::InputTextWithHint("##cheat_name", "Name (optional)", g_cheat_name_buf,
++                                 sizeof g_cheat_name_buf, ImGuiInputTextFlags_EnterReturnsTrue))
++        submit = true;
++    ImGui::SameLine();
++    if (ImGui::Button(ui_text("Add"), ImVec2(px(90), 0))) submit = true;
++    if (submit) {
++        std::string code = g_cheat_code_buf;
++        unsigned a, v, c; bool hc;
++        if (!cheat_gg_decode(code, &a, &v, &hc, &c)) {
++            g_cheat_status = "A Game Genie code has 6 or 8 letters from A E G I K L N O P S T U V X Y Z.";
++            g_cheat_status_error = true;
++        } else {
++            bool dup = false;
++            for (const auto& e : g_cheats) dup |= e.code == code;
++            if (dup) {
++                g_cheat_status = "That code is already in the list.";
++                g_cheat_status_error = true;
++            } else {
++                g_cheats.push_back({true, code, g_cheat_name_buf});
++                if (cheats_save(m->cheats_path)) {
++                    g_cheat_status = "Added " + code + ".";
++                    g_cheat_status_error = false;
++                }
++                g_cheat_code_buf[0] = 0; g_cheat_name_buf[0] = 0;
++            }
++        }
++    }
++    if (!g_cheat_status.empty())
++        ImGui::TextColored(col(g_cheat_status_error ? th.warn : th.text_muted), "%s",
++                           g_cheat_status.c_str());
++    ImGui::Dummy(ImVec2(0, px(8)));
++
++    /* the list */
++    ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
++    ImGui::TextUnformatted(ui_text("CODES"));
++    ImGui::PopStyleColor();
++    if (g_cheats.empty()) {
++        ImGui::TextColored(col(th.text_muted), "%s", ui_text("No codes yet."));
++    } else if (ImGui::BeginTable("cheats_table", 5,
++                                 ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
++        ImGui::TableSetupColumn("On", ImGuiTableColumnFlags_WidthFixed, px(40));
++        ImGui::TableSetupColumn("Code", ImGuiTableColumnFlags_WidthFixed, px(120));
++        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
++        ImGui::TableSetupColumn("Patch", ImGuiTableColumnFlags_WidthFixed, px(170));
++        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, px(90));
++        int remove = -1;
++        bool changed = false;
++        for (int i = 0; i < (int)g_cheats.size(); i++) {
++            CheatEntry& e = g_cheats[i];
++            ImGui::PushID(i);
++            ImGui::TableNextRow();
++            ImGui::TableNextColumn();
++            if (ImGui::Checkbox("##on", &e.on)) changed = true;
++            ImGui::TableNextColumn();
++            ImGui::AlignTextToFramePadding();
++            ImGui::TextUnformatted(e.code.c_str());
++            ImGui::TableNextColumn();
++            ImGui::AlignTextToFramePadding();
++            ImGui::TextUnformatted(e.name.empty() ? "-" : e.name.c_str());
++            ImGui::TableNextColumn();
++            ImGui::AlignTextToFramePadding();
++            unsigned a, v, c; bool hc;
++            if (cheat_gg_decode(e.code, &a, &v, &hc, &c)) {
++                if (hc) ImGui::TextColored(col(th.text_muted), "$%04X = %02X if %02X", a, v, c);
++                else    ImGui::TextColored(col(th.text_muted), "$%04X = %02X", a, v);
++            } else {
++                ImGui::TextColored(col(th.warn), "%s", ui_text("not a code"));
++            }
++            ImGui::TableNextColumn();
++            if (ImGui::Button(ui_text("Delete"), ImVec2(px(84), 0))) remove = i;
++            ImGui::PopID();
++        }
++        ImGui::EndTable();
++        if (remove >= 0) {
++            g_cheat_status = "Deleted " + g_cheats[remove].code + ".";
++            g_cheat_status_error = false;
++            g_cheats.erase(g_cheats.begin() + remove);
++            changed = true;
++        }
++        if (changed) cheats_save(m->cheats_path);
++    }
++    end_panel();
++}
++
+ /* Draw a bind row's LABEL and leave the cursor at `label_col_w` from the start
+  * of this table cell, ready for the bind chip.
+  *
+@@ -14123,6 +14324,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
+         if (m->view == LNG_VIEW_DASHBOARD) {
+             const int count = 1 + (m->mods ? 1 : 0) +
+                               (m->has_assist_tools ? 1 : 0) +
++                              (m->cheats_path ? 1 : 0) +
+                               ((m->credits_text && m->credits_text[0]) ? 1 : 0);
+             const float w = px(110.0f);
+             const float total = w * count + gap * (count - 1);
+@@ -14139,6 +14341,11 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
+                 if (ImGui::Button(ui_text("Assist Tools"), ImVec2(w, px(34))))
+                     launcher_model_set_view(m, LNG_VIEW_ASSIST_TOOLS);
+             }
++            if (m->cheats_path) {
++                ImGui::SameLine(0, gap);
++                if (ImGui::Button(ui_text("Cheats"), ImVec2(w, px(34))))
++                    launcher_model_set_view(m, LNG_VIEW_CHEATS);
++            }
+             if (m->credits_text && m->credits_text[0]) {
+                 ImGui::SameLine(0, gap);
+                 if (ImGui::Button(ui_text("Credits"), ImVec2(w, px(34))))
+@@ -14220,6 +14427,7 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
+         case LNG_VIEW_MODS:       draw_mods(m, th);                 break;
+         case LNG_VIEW_ASSIST_TOOLS: draw_assist_tools(m, th);        break;
+         case LNG_VIEW_CREDITS:      draw_credits(m, th);             break;
++        case LNG_VIEW_CHEATS:       draw_cheats(m, th);              break;
+         case LNG_VIEW_LOBBY:        draw_lobby(m, th);               break;
+     }
+     end_container();
+diff --git a/src/common/launcher_debug.c b/src/common/launcher_debug.c
+index 149992f..f55df8e 100644
+--- a/src/common/launcher_debug.c
++++ b/src/common/launcher_debug.c
+@@ -203,6 +203,7 @@ static bool launcher_debug_step_impl(LauncherPlatform* p, LauncherModel* m) {
+         else if (strcmp(v, "controller") == 0) launcher_model_set_view(m, LNG_VIEW_CONTROLLER);
+         else if (strcmp(v, "assist_tools") == 0) launcher_model_set_view(m, LNG_VIEW_ASSIST_TOOLS);
+         else if (strcmp(v, "credits") == 0) launcher_model_set_view(m, LNG_VIEW_CREDITS);
++        else if (strcmp(v, "cheats") == 0) launcher_model_set_view(m, LNG_VIEW_CHEATS);
+         /* The LAN-vs-online fork. Reachable only by clicking NETPLAY on the
+          * dashboard, which made it the one netplay page a screenshot script
+          * could not open. */
+diff --git a/src/common/launcher_model.c b/src/common/launcher_model.c
+index 76a72d0..4af8f5e 100644
+--- a/src/common/launcher_model.c
++++ b/src/common/launcher_model.c
+@@ -564,6 +564,7 @@ void launcher_model_init(LauncherModel* m,
+             game->assist_direct_pad_bind_action <= m->assist_binding_count
+                 ? game->assist_direct_pad_bind_action - 1 : -1;
+         m->credits_text         = game->credits_text;
++        m->cheats_path          = game->cheats_path;
+         m->assist_fast_forward_min = game->assist_fast_forward_min > 0
+             ? game->assist_fast_forward_min : 2;
+         m->assist_fast_forward_max = game->assist_fast_forward_max >=
+diff --git a/src/common/launcher_model.h b/src/common/launcher_model.h
+index 0c7ae6d..7b111a5 100644
+--- a/src/common/launcher_model.h
++++ b/src/common/launcher_model.h
+@@ -59,6 +59,8 @@ typedef enum {
+      * skipped entirely when this client is already signed in or when the
+      * server offers no logins -- see draw_netplay_mode_page. */
+     LNG_VIEW_NETPLAY_SIGNIN,
++    /* Game Genie codes (GameInfo.cheats_path). */
++    LNG_VIEW_CHEATS,
+     /* Keep last. launcher_model_set_view validates against this rather than
+      * against the last real view, which is what silently swallowed the two
+      * views above when they were first added. */
+@@ -419,6 +421,7 @@ typedef struct {
+     int assist_binding_count;
+     int assist_direct_pad_bind_action;
+     const char* credits_text;
++    const char* cheats_path;
+     int assist_fast_forward_min;
+     int assist_fast_forward_max;
+     /* Resolved defaults for the assist bindings, seeded from
+diff --git a/src/recomp_launcher.h b/src/recomp_launcher.h
+index 72aff24..f13a291 100644
+--- a/src/recomp_launcher.h
++++ b/src/recomp_launcher.h
+@@ -2422,7 +2422,16 @@ typedef struct RecompLauncherCGameInfo {
+     /* 1 shows a "Trim side borders" checkbox in Display settings, driving
+      * Settings.crop_sides. Appended for ABI stability; 0 hides it. */
+     int                has_crop_sides;
++
++    /* Optional Game Genie cheats page. Non-NULL: a top-level "Cheats" page
++     * lists, adds, toggles and deletes codes, saved straight to this text
++     * file (one per line: "on"/"off", the 6- or 8-letter code, an optional
++     * name; '#' comments). The host reads the same file when the game
++     * starts. Borrowed for the launcher's lifetime. Appended for ABI
++     * stability. */
++    const char*        cheats_path;
+ } RecompLauncherCGameInfo;
++#define RECOMP_LAUNCHER_HAS_CHEATS 1
+ 
+ /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */
+ #define RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG 1
