@@ -32,6 +32,12 @@ brightness (the pack's per-tile brightness), so the HD art fades with the
 screen instead of flashing back to 8-bit. Real palettes win over a fade
 step that happens to look the same.
 
+Screen edges: the pack carries `<options>edgePaletteFallback` (nesrecomp patch
+0018). While the map scrolls the game draws each new row of tiles at the
+top/bottom edge one step before their colours, so those tiles match no entry;
+the player then looks them up with the screen's other palettes and draws
+their HD art instead of the 8-bit strip.
+
 Seamless ground: art for tiles that repeat seamlessly in the original
 (grass, water, floors...) gets a low-frequency colour correction so its
 opposite edges meet without a visible seam.
@@ -241,6 +247,10 @@ def main():
     head = [l for l in lines if l.startswith(('<ver>', '<scale>'))]
     imgl = [l for l in lines if l.startswith('<img>')]
     rest = [l for l in lines if not l.startswith(('<ver>', '<scale>', '<img>'))]
+    # the map scrolls: let the player fix the tile rows drawn one step before
+    # their colours at the top/bottom edge (nesrecomp patch 0018)
+    if not any(l.startswith('<options>') and 'edgePaletteFallback' in l for l in rest):
+        rest = ['<options>edgePaletteFallback'] + rest
     out = head + imgl + rest + [f'# HD map tiles ({len(items) - len(missing)} tiles): owner art keyed per 8x8 quarter + exact palette'] + conds + tiles
     open(hires, 'w').write('\n'.join(out) + '\n')
     print(f'{len(items) - len(missing)} map tiles ({seamless} made seamless, {nights} palette recolours), '

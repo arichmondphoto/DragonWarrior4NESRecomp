@@ -1,0 +1,80 @@
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index d9b2566..8208cab 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -103,6 +103,19 @@ static int        s_overscan[4] = {0,0,0,0}; /* top,right,bottom,left (parsed; c
+ static int        s_has_overscan = 0;
+ static int        s_disable_orig = 0;  /* <options>disableOriginalTiles */
+ static int        s_sprite_cells = 0;  /* <options>spriteCells: sprite HD art covers the whole 8x8 cell */
++/* <options>edgePaletteFallback: a game that scrolls its map draws each new row
++ * of tiles at the top/bottom edge of the picture one step before their
++ * colours (the attribute table is coarser than the tiles), in the lines a TV's
++ * overscan hid. Those tiles are the right tiles in another of the screen's
++ * palettes, so no pack entry matches and the 8-bit strip would show. With this
++ * option an unmatched background tile in the top 16 / bottom 24 lines is
++ * looked up again with each other background palette in use this frame. */
++static int        s_edge_fallback = 0;
++#define HD_EDGE_TOP 16
++#define HD_EDGE_BOTTOM 24
++#define HD_EDGE_PALS 8
++static uint32_t   s_edge_pal[HD_EDGE_PALS];   /* p0<<24|p1<<16|p2<<8|p3, most used first */
++static int        s_edge_npal = 0;
+ 
+ /* ── <condition> engine (mirrors Mesen HdPackConditions.h) ─────────────────── */
+ 
+@@ -813,7 +826,8 @@ static void parse_line(char *line) {
+     else if (!strncmp(L, "<tile>", 6))       process_tile(cond_str, L + 6);
+     else if (!strncmp(L, "<background>", 12)) process_background(cond_str, L + 12);
+     else if (!strncmp(L, "<options>", 9))    { if (strstr(L + 9, "disableOriginalTiles")) s_disable_orig = 1;
+-                                              if (strstr(L + 9, "spriteCells")) s_sprite_cells = 1; }
++                                              if (strstr(L + 9, "spriteCells")) s_sprite_cells = 1;
++                                              if (strstr(L + 9, "edgePaletteFallback")) s_edge_fallback = 1; }
+     else if (!strncmp(L, "<overscan>", 10)) {
+         char buf[64]; char *tok[4];
+         snprintf(buf, sizeof(buf), "%s", L + 10);
+@@ -1338,6 +1352,17 @@ static void upscale_rows(const uint32_t *native_fb, int native_w, uint32_t *hd_b
+                                                  p->bg_p0, p->bg_p1, p->bg_p2, p->bg_p3,
+                                                  sx, sy, p)
+                                    : NULL;
++            if (s_edge_fallback && p->bg_has && (!bt || bt->fully_transparent) &&
++                (sy < HD_EDGE_TOP || sy >= 240 - HD_EDGE_BOTTOM)) {
++                uint32_t own = ((uint32_t)p->bg_p0 << 24) | ((uint32_t)p->bg_p1 << 16) | ((uint32_t)p->bg_p2 << 8) | p->bg_p3;
++                for (int i = 0; i < s_edge_npal; i++) {
++                    uint32_t q = s_edge_pal[i];
++                    if (q == own) continue;
++                    HdTile *alt = match_layer(0, p->bg_index, p->bg_t16, (uint8_t)(q >> 24), (uint8_t)(q >> 16),
++                                              (uint8_t)(q >> 8), (uint8_t)q, sx, sy, p);
++                    if (alt && !alt->fully_transparent) { bt = alt; break; }
++                }
++            }
+             if (bt && !bt->fully_transparent) {
+                 blit_over(dst, hd_w, bt, p->bg_ox, p->bg_oy, 0, 0, s);
+             } else if (p->bg_has) {
+@@ -1397,6 +1422,27 @@ void hdpack_upscale(const uint32_t *native_fb, int native_w, uint32_t *hd_buf) {
+     if (s_opt_hide_orig < 0) s_opt_hide_orig = getenv("NESRECOMP_HDPACK_HIDE_ORIGINALS") ? 1 : 0;
+ 
+     eval_backgrounds_for_frame();
++    if (s_edge_fallback) {
++        /* the background palettes in use between the edge strips, most used first */
++        uint32_t pal[HD_EDGE_PALS]; int cnt[HD_EDGE_PALS]; int n = 0;
++        for (int y = HD_EDGE_TOP; y < 240 - HD_EDGE_BOTTOM; y += 4)
++            for (int x = 2; x < native_w; x += 4) {
++                const HdPixel *p = &s_pixels[y * native_w + x];
++                if (!p->bg_has) continue;
++                uint32_t q = ((uint32_t)p->bg_p0 << 24) | ((uint32_t)p->bg_p1 << 16) | ((uint32_t)p->bg_p2 << 8) | p->bg_p3;
++                int i = 0;
++                while (i < n && pal[i] != q) i++;
++                if (i < n) cnt[i]++;
++                else if (n < HD_EDGE_PALS) { pal[n] = q; cnt[n++] = 1; }
++            }
++        for (int i = 1; i < n; i++)
++            for (int j = i; j > 0 && cnt[j] > cnt[j - 1]; j--) {
++                uint32_t tp = pal[j]; pal[j] = pal[j - 1]; pal[j - 1] = tp;
++                int tc = cnt[j]; cnt[j] = cnt[j - 1]; cnt[j - 1] = tc;
++            }
++        for (int i = 0; i < n; i++) s_edge_pal[i] = pal[i];
++        s_edge_npal = n;
++    }
+     /* Conditions that are constant for the frame (memory, tile at a position,
+      * frame range) are settled here once, so the bands below only read them. */
+     for (int i = 0; i < s_cond_count; i++)

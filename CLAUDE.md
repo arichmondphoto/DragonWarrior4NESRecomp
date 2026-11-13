@@ -35,7 +35,7 @@ README.md is the full reference; this file is the working summary.
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
   A full build takes ~25 min; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.12.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
+  catalog keys on it). Current: 0.13.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
 - The nesmod package limit is 256 MiB; the pack is ~165 MiB — watch its size (`du -sb OUTDIR`). Never store
   recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
@@ -78,6 +78,12 @@ README.md is the full reference; this file is the working summary.
   page = recomp-ui 0003; `cheats.txt` beside config.ini, `--cheats FILE` headless), faster multi-threaded
   compositing (0016: opaque-layer skipping, invisible-tile skip, bands on all cores; `NESRECOMP_HDPACK_THREADS`).
   The title is the heaviest screen: keep its layer count low and use fully opaque blocks where possible.
+  `<options>edgePaletteFallback` (0018): unmatched BG tiles in the top 16 / bottom 24 lines are retried with the
+  frame's other BG palettes (the map's scroll seam: right tiles, stale attribute colours).
+- Fades: map tiles and characters step each colour down by $10 with black = $0F; **battle monsters fade in
+  with black = $3F** (`make_monster_hdpack.py` writes a copy of every entry per step).
+- Checking coverage: debug render + 8-bit screenshot per frame, count magenta cells where the 8-bit cell is
+  not flat (black-on-black and blank cells under sprites are false alarms). See FUTURE.md.
 - Map tiles and characters: other palettes are affine recolours of the art (`rgb:` at load time); palettes that are only reorderings of each
   other (colour-cycling animations such as the overworld sea) share one recolour. Seamless smoothing
   is skipped where the painted edges differ (SEAM_MAX). Fades = the same art at lower brightness.
@@ -94,6 +100,7 @@ README.md is the full reference; this file is the working summary.
 - Keep HD save-state struct layouts unchanged (`cyc_hdpack_state.inc`): add fields only in padding.
 
 ## Conventions
+- `FUTURE.md` is the to-do list (what is left and the agreed approach): update it when work is decided or done.
 - Commit messages end with the attribution lines given in the session; push to `main`.
 - Checkpoint often (commit + update the project's STATUS doc); sessions can hit limits mid-task.
 - Widescreen is deferred; no Scenario.

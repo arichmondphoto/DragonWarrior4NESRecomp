@@ -330,6 +330,12 @@ They are framework bugs, kept here until they can go upstream:
   `NESRECOMP_STATE_DIR` moves the save-state slots out of the app bundle
   (a downloaded app is read-only). The macOS launch script sets both
   (`saves/DragonWarriorIV.*` in the data folder).
+- `0018-hdpack-edge-palette-fallback.patch` — `<options>edgePaletteFallback`:
+  while the map scrolls, the game draws each new row of tiles at the top/bottom
+  edge one step before their colours (the lines a TV's overscan hid), so those
+  tiles matched no pack entry and showed as an 8-bit strip. An unmatched
+  background tile in the top 16 / bottom 24 lines is now looked up again with
+  the frame's other background palettes and its HD art drawn.
 - `0017-packaged-app-data-dir.patch` — `NESRECOMP_DATA_DIR` moves config.ini,
   mods/, saves/, rom.cfg and cheats.txt from beside the program (read-only
   inside an AppImage) to a data folder; the Linux AppImage's `AppRun` sets it.

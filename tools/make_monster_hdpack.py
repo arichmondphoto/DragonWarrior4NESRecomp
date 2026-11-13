@@ -25,6 +25,13 @@ Repeated pieces inside one monster:
   * a sprite tile drawn mirrored as well as plain gets one entry per flip,
     gated on the built-in hmirror / vmirror conditions.
 
+Fade-in: when a battle starts the game brings the monsters up from black in
+steps (each colour $10, $20, $30 darker; anything darker than that, and
+black itself, is $3F). Every entry gets a copy per step with the faded
+colours and the art drawn at the matching brightness (and its tileNearby
+gates with the neighbour's faded colours), so the HD monster fades in too
+instead of the 8-bit one showing until the last step.
+
 Monster images are appended after any existing <img> entries (e.g. the text
 pack) in OUTDIR/hires.txt.
 
@@ -41,6 +48,51 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MON = os.path.join(HERE, 'hd', 'monsters')
 OFFSETS = sorted(((dr, dc) for dr in range(-4, 5) for dc in range(-4, 5) if (dr, dc) != (0, 0)),
                  key=lambda o: (abs(o[0]) + abs(o[1]), o))
+
+FADE_BLACK = 0x3F
+def fade_colour(c, k):
+    c &= 0x3F
+    return FADE_BLACK if (c & 0x0F) >= 0x0D or c < 0x10 * k else c - 0x10 * k
+
+def fade_pal(hexpal, k):
+    """'BBC1C2C3' (BG: backdrop first) or 'FFC1C2C3' (sprite) -> the same at fade step k."""
+    b = bytes.fromhex(hexpal)
+    return (b[:1] + bytes(fade_colour(c, k) for c in b[1:])).hex().upper()
+
+def lum(hexpal):
+    from field_sheet import NES
+    t = 0.0
+    for c in bytes.fromhex(hexpal)[1:]:
+        v = NES[c & 0x3F]; t += 0.299 * ((v >> 16) & 255) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255)
+    return t
+
+def fade_entries(conds, tiles, steps=(1, 2, 3)):
+    """Fade-step copies of one monster's entries (see the module text)."""
+    cdef = {}
+    for c in conds:
+        name, kind, rest = c[len('<condition>'):].split(',', 2)
+        if kind == 'tileNearby': cdef[name] = rest.rsplit(',', 1)        # 'dx,dy,CHR', 'PAL'
+    out_c, out_t, seen = [], [], set()
+    for k in steps:
+        for t in tiles:
+            gate, body = ('', t)
+            if t.startswith('['): gate, body = t[1:].split(']', 1)
+            f = body[len('<tile>'):].split(',')            # img, CHR, PAL, x, y, brightness, default
+            pk = fade_pal(f[2], k); l0 = lum(f[2])
+            if all(c == FADE_BLACK for c in bytes.fromhex(pk)[1:]) or l0 <= 0: continue
+            names = []
+            for g in (gate.split('&') if gate else []):
+                neg = g.startswith('!'); n = g[1:] if neg else g
+                if n in cdef:
+                    n2 = f'{n}_f{k}'
+                    if n2 not in seen:
+                        seen.add(n2); out_c.append(f'<condition>{n2},tileNearby,{cdef[n][0]},{fade_pal(cdef[n][1], k)}')
+                    n = n2
+                names.append(('!' if neg else '') + n)
+            br = round(min(1.0, lum(pk) / l0), 3)
+            e = (f'[{"&".join(names)}]' if names else '') + f'<tile>{f[0]},{f[1]},{pk},{f[3]},{f[4]},{br:g},{f[6]}'
+            if e not in seen: seen.add(e); out_t.append(e)
+    return out_c, out_t
 
 def fit(sprite, nes_img, S):
     """Canvas over the monster's pixel box at S px per native px."""
@@ -95,6 +147,7 @@ def main():
     img_index = sum(1 for l in lines if l.startswith('<img>'))
     os.makedirs(os.path.join(a.outdir, 'monsters'), exist_ok=True)
     conds, tiles, report = [], [], {}
+    fade_conds, fade_tiles = [], []
     jobs = [(int(k), v, f'{v:03d}') for k, v in sorted(mapping['map'].items(), key=lambda kv: kv[1])]
     jobs += [(int(k), os.path.basename(v), v) for k, v in mapping.get('captures', {}).items() if not k.startswith('_')]
     # monsters the sheet has no sprite for: separate pictures, hd/monsters/extra/M<id>.png
@@ -113,7 +166,7 @@ def main():
             conds.append(f'<condition>{name},memoryCheckConstant,{addr},==,{int(val, 0):X}')
         gates[int(k)] = name
     for s, mid, stem in jobs:
-        first_tile = len(tiles)
+        first_tile = len(tiles); first_cond = len(conds)
         m = monster(os.path.join(a.capture, stem + '.mem'), os.path.join(a.capture, stem + '.png'))
         if not m: report[mid] = 'no monster pieces in capture'; continue
         if isinstance(s, str):
@@ -202,6 +255,8 @@ def main():
             for i in range(first_tile, len(tiles)):
                 t = tiles[i]
                 tiles[i] = f'[{g}&{t[1:]}' if t.startswith('[') else f'[{g}]{t}'
+        fc, ft = fade_entries(conds[first_cond:], tiles[first_tile:])
+        fade_conds += fc; fade_tiles += ft
         rel = f'monsters/{os.path.basename(stem)}.png'
         rows = max(1, (packer.k + packer.cols - 1) // packer.cols)
         packer.img.crop((0, 0, packer.img.width, rows * T)).save(os.path.join(a.outdir, rel), optimize=True)
@@ -212,9 +267,12 @@ def main():
     head = [l for l in lines if l.startswith(('<ver>', '<scale>'))]
     imgs = [l for l in lines if l.startswith('<img>')]
     rest = [l for l in lines if not l.startswith(('<ver>', '<scale>', '<img>'))]
-    out = head + imgs + rest + [f'# HD battle monsters ({len(report)}): owner art keyed by CHR bytes + exact palette'] + conds + tiles
+    # Later lines are looked at first: the fade copies go before the real
+    # entries, so a monster whose own colours equal another's fade step wins.
+    out = (head + imgs + rest + [f'# HD battle monsters ({len(report)}): owner art keyed by CHR bytes + exact palette']
+           + conds + fade_conds + ['# fade-in steps'] + fade_tiles + ['# monsters'] + tiles)
     open(hires, 'w').write('\n'.join(out) + '\n')
-    print(f'{len(report)} monsters, {len(tiles)} tile entries ({len(conds)} neighbour conditions) -> {hires}')
+    print(f'{len(report)} monsters, {len(tiles)} tile entries + {len(fade_tiles)} fade steps ({len(conds) + len(fade_conds)} neighbour conditions) -> {hires}')
     if a.report: json.dump({str(k): v for k, v in sorted(report.items(), key=lambda kv: str(kv[0]))}, open(a.report, 'w'), indent=1)
 
 if __name__ == '__main__':
