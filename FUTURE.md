@@ -5,7 +5,7 @@ missing, how we know, and the approach we agreed on. Move an item to "Done"
 (with the commit) when it ships. Day-to-day state and game facts stay in the
 project's STATUS doc; this file is only the plan.
 
-Last reviewed: 2026-11-13 (colour gaps fixed and the sweep widened, HD pack 0.14.0).
+Last reviewed: 2026-11-13 (sweep findings fixed or explained, overscan trim, HD pack 0.15.0).
 
 ## How we check the HD pack
 
@@ -69,17 +69,18 @@ New checks:
 - **Battles** (197 monsters, each played on for 320 frames, 21 samples):
   21 flagged. 10 were screen flashes, where the whole 8-bit screen is one flat
   colour (the check now ignores those). What's real:
-  - battles where another monster joins (frame ~+258): the text window and
-    battle frame in palettes whose black is `$3F` (`3F303F3F` and similar;
-    monsters 68, 71, 95, 131, 138, 164, 172, 177, 180). The window entries need
-    the same `$3F`-black copies the monsters got in 0.13.0 (item 1 below);
+  - ~~battles where another monster joins~~: a false alarm. The cells were
+    blank tiles on the line where the game switches the battle backdrop's
+    colour mid-screen; a blank tile looks the same either way. The check no
+    longer counts blank tiles. One real crumb: a single cell of monster 138's
+    spiked ball for a few frames late in its fade-in;
   - the Impostor's Transform (monster 153): the smoke-cloud sprites;
   - the Chapter 3 shop scene (173, known).
-- **Walking characters** (108 types in 11 runs, 16 samples each): 8 runs
-  clean. In runs 0, 3 and 6 the town's outer floor tile shows a character's
-  sprite tiles and the hero is drawn in an unmatched palette. Most likely a
-  side effect of the table patch overwriting tile memory, not something
-  players see, but not yet proven (item 3).
+- **Walking characters** (108 types, 16 samples each): **all clean.** Three
+  batches of 10 (the party heroes among them) overwrote the town's tile
+  memory, garbling it even in 8-bit: an artefact of loading many big types
+  into town people's slots. The check now re-runs such a batch one type at a
+  time; every type alone is clean.
 
 The map capture now also finds **13 animation-frame tiles with no art**:
 T127-T128 (Endor), T129-T133 (the fountain in Izmit and Konenber), T134
@@ -88,33 +89,10 @@ build prints them with W036-W044 under "no art yet for".
 
 **Still not covered by the sweep:** vehicles (ship, balloon, wagon), spells
 the party casts (the Chapter 1 route's party casts none), damage-floor
-flashes (the red flash seen once in the Final Cave, map 53:2, needs a
-capture that walks onto the floor), event scenes (cutscenes, the ending),
+flashes on other maps than the Final Cave (fixed generically, see Done), event scenes (cutscenes, the ending),
 the Enix logo and title-to-game screens, the casino's slot win.
 
 ## Next up
-
-### 1. Text window and battle frame when a monster joins
-- **Why:** the battle sweep (second pass) shows them in 8-bit for one frame
-  step while a newly called monster fades in: those palettes use `$3F` as
-  black, like the monsters' own fade-in.
-- **How:** give the window/text entries `$3F`-black copies of their palettes,
-  as `tools/make_monster_hdpack.py` does for monsters (`fade_entries`), and
-  re-run `hd_coverage.py battles --only 68 --only 177`.
-
-### 2. Damage-floor flash
-- **Why:** one sweep view of the Final Cave (map 53:2) showed every floor
-  tile in all-red `0F161616` while the hero walked; standing still, it never
-  happens.
-- **How:** confirm with a walk over a damage floor (palette log), then either
-  add the flash palette as a colour variant for the maps that have those
-  floors, or leave it (in 8-bit the flash is nearly flat red anyway).
-
-### 3. Verify the character sweep's odd runs
-- **Why:** 3 of 11 `chars` runs show tile memory that looks overwritten.
-- **How:** compare those runs' 8-bit screenshots with the plain town; if the
-  table patch causes it, carry fewer types per run there. Then use the clean
-  runs to measure item 5's shared sprite pieces.
 
 ### 4. Art for what is missing
 Known today:
@@ -144,7 +122,7 @@ Known today:
   wrong character's piece, or the 8-bit one, can show.
 - **How:** look at each "redo" sheet with `tools/review_sheet.py` and either
   re-fit or regenerate it. For the shared pieces, first measure how many are
-  ever on screen together (item 3's character sweep); then widen the
+  ever on screen together (`hd_coverage.py chars`, now clean); then widen the
   neighbour search in `tools/make_sprite_hdpack.py` or gate on the character
   slot (memoryCheck) for the ones that are.
 
@@ -231,6 +209,16 @@ Known today:
   maths before anything else is built.
 
 ## Done
+
+- **2026-11-13 — Overscan trim, damage-floor flash, sweep false alarms.**
+  The "Trim side borders" setting is now **Trim borders (overscan)** and
+  also hides the top 8 and bottom 16 lines, where the game draws the next
+  map row with half-updated colours (nesrecomp patch 0020, recomp-ui 0004;
+  240x216 picture). Each step on a damage floor turns every background
+  colour red for 3 frames; the map art is now drawn tinted red then instead
+  of dropping to 8-bit (HD pack 0.15.0). The "window when a monster joins"
+  and "odd character runs" findings were false alarms; `hd_coverage.py` now
+  skips both.
 
 - **2026-11-13 — Colour gaps, map 21's crowd, wider sweep.** HD pack 0.14.0.
   The map capture now lets the hero stand 2 seconds after each map loads and
