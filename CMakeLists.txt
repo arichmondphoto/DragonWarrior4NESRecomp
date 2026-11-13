@@ -16,4 +16,7 @@ nesrecomp_add_cycle_game(DragonWarrior4
     GAME_CONFIG "${CMAKE_SOURCE_DIR}/game.toml"
     # Mods runtime with the shared Mesen HD pack provider (off until a pack is
     # installed and enabled in the launcher's Mods screen).
-    MODS HD_PACKS GAME_ID "dragon-warrior-4")
+    MODS HD_PACKS GAME_ID "dragon-warrior-4"
+    # Map edges drawn from the game's map at the full 256x240 picture
+    # (src/dw4_edges.c; needs nesrecomp patch 0021).
+    HOST_EXTRAS "${CMAKE_SOURCE_DIR}/src/dw4_edges.c")

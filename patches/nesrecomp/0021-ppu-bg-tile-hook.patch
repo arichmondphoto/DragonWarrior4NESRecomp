@@ -1,0 +1,106 @@
+diff --git a/runner/cyc/cyc_core.h b/runner/cyc/cyc_core.h
+index 0f93684..8a3b8a9 100644
+--- a/runner/cyc/cyc_core.h
++++ b/runner/cyc/cyc_core.h
+@@ -129,6 +129,21 @@ const uint8_t *cyc_ppu_palette(void);
+ const uint8_t *cyc_ppu_oam(void);
+ const uint8_t *cyc_chr_ram(size_t *len);
+ 
++/* A game's say in what the background shows (presentation; the machine's
++ * memories are untouched). The hook is asked for every background tile the
++ * PPU fetches while rendering: `line` is the screen line it is for (0-239),
++ * `x` the screen x of its first pixel (it may start left of 0), `v` the PPU
++ * address it came from and `tile` the tile number read. Return -1 to keep it,
++ * or tile | palette << 8 to draw that tile with that palette (0-3) instead.
++ * Games use it to repair what a TV's overscan hid: map rows written late at
++ * the edges of a scrolling screen. NULL removes it. */
++typedef int (*CycBgTileHook)(void *ctx, int line, int x, uint16_t v, uint8_t tile);
++void cyc_ppu_set_bg_tile_hook(CycBgTileHook fn, void *ctx);
++/* Show the background and sprites in the leftmost 8 pixels even where the
++ * game masks them (PPUMASK bits 1-2), e.g. once the hook keeps that column
++ * correct. Presentation only: sprite 0 hits keep the game's own setting. */
++void cyc_ppu_set_show_left(bool on);
++
+ /* What CPU RAM holds at power-on. The console leaves no defined state; the
+  * default is the pattern AccuracyCoin's power-on page reports from the
+  * reference console. Zeros/ones match what other emulators power up with, so
+diff --git a/runner/cyc/cyc_hdpack.c b/runner/cyc/cyc_hdpack.c
+index 473867b..68dfcf3 100644
+--- a/runner/cyc/cyc_hdpack.c
++++ b/runner/cyc/cyc_hdpack.c
+@@ -106,7 +106,8 @@ void cyc_hdpack_pixel(unsigned bg_color,unsigned bg_palette,int sprite,unsigned
+     HdRecordedPixel *p=&pipeline.color[0];memset(p,0,sizeof(*p));
+     p->bg_index=p->sp_index=-1;p->bg_pal[0]=ppu.palette[0];
+     const HdFetchedTile *bg=&pipeline.bg[15-ppu.fine_x];
+-    if(ppu.show_bg && (ppu.dot>8 || ppu.show_bg8) && bg->valid) {
++    extern bool hw_ppu_show_left;   /* cyc_ppu_set_show_left */
++    if(ppu.show_bg && (ppu.dot>8 || ppu.show_bg8 || hw_ppu_show_left) && bg->valid) {
+         p->flags=1;p->bg_index=bg->index;memcpy(p->bg_tile,bg->bytes,16);
+         p->bg_x=bg->x;p->bg_y=bg->row;p->bg_ntx=bg->ntx;p->bg_color=(uint8_t)bg_color;
+         for(unsigned j=1;j<4;j++)p->bg_pal[j]=ppu.palette[bg_palette*4+j];
+diff --git a/runner/cyc/hw_ppu.c b/runner/cyc/hw_ppu.c
+index e868779..77c2064 100644
+--- a/runner/cyc/hw_ppu.c
++++ b/runner/cyc/hw_ppu.c
+@@ -293,18 +293,41 @@ static void bg_fetch_tail(void)
+ }
+ 
+ /* Second half of a fetch dot: the value read is taken into its register. */
++/* cyc_ppu_set_bg_tile_hook / cyc_ppu_set_show_left (cyc_core.h). Kept out of
++ * the PPU struct so save states keep their layout; the pending palette only
++ * lives between a tile's nametable and attribute fetches. */
++static CycBgTileHook s_bg_hook;
++static void *s_bg_hook_ctx;
++static int s_bg_hook_pal = -1;
++bool hw_ppu_show_left;          /* also read by cyc_hdpack.c */
++void cyc_ppu_set_bg_tile_hook(CycBgTileHook fn, void *ctx) { s_bg_hook = fn; s_bg_hook_ctx = ctx; s_bg_hook_pal = -1; }
++void cyc_ppu_set_show_left(bool on) { hw_ppu_show_left = on; }
++
+ static void bg_commit(void)
+ {
+     if (ppu.commit & COMMIT_NT) {
+         ppu.par_chr &= 0x100F;
+-        if (ppu.dot < 256 || ppu.dot > 320) ppu.par_chr |= (uint16_t)((uint8_t)ppu.vbus << 4);
++        if (ppu.dot < 256 || ppu.dot > 320) {
++            uint8_t tile = (uint8_t)ppu.vbus;
++            s_bg_hook_pal = -1;
++            if (s_bg_hook && ppu.dot <= 336) {
++                /* dots 321-336 fetch the first two tiles of the next line */
++                int line = ppu.dot > 320 ? (ppu.scanline == hw_prerender_line() ? 0 : ppu.scanline + 1) : ppu.scanline;
++                int k = ppu.dot > 320 ? (ppu.dot - 321) / 8 : (ppu.dot - 1) / 8 + 2;
++                if (line < 240) {
++                    int r = s_bg_hook(s_bg_hook_ctx, line, 8 * k - (int)ppu.fine_x, ppu.v, tile);
++                    if (r >= 0) { tile = (uint8_t)r; s_bg_hook_pal = (r >> 8) & 3; }
++                }
++            }
++            ppu.par_chr |= (uint16_t)(tile << 4);
++        }
+         else ppu.par_chr |= (uint16_t)(ppu.load_tile << 4);
+     }
+     if (ppu.commit & COMMIT_AT) {
+         uint8_t a = ppu.fetch_data;
+         if ((ppu.v & 3) >= 2) a >>= 2;
+         if (((ppu.v >> 5) & 3) >= 2) a >>= 4;
+-        ppu.attribute = a & 3;
++        ppu.attribute = s_bg_hook_pal >= 0 ? (uint8_t)s_bg_hook_pal : (uint8_t)(a & 3);
+     }
+     if (ppu.commit & COMMIT_LO) ppu.lo_plane = ppu.fetch_data;
+     if (ppu.commit & COMMIT_HI) {
+@@ -756,7 +779,7 @@ static void compute_pixel(void)
+ #ifdef NESRECOMP_CYCLE_HDPACK
+     unsigned hd_bg_color=0,hd_bg_palette=0,hd_sprite_color=0,hd_active=0;int hd_sprite=-1;
+ #endif
+-    if (ppu.show_bg && (ppu.dot > 8 || ppu.show_bg8)) {
++    if (ppu.show_bg && (ppu.dot > 8 || ppu.show_bg8 || hw_ppu_show_left)) {
+         unsigned fx = ppu.fine_x;
+ #if NESRECOMP_PPU_HLE
+         color = (uint8_t)((ppu.bg_pixels >> (30 - 2 * fx)) & 3);
+@@ -772,7 +795,7 @@ static void compute_pixel(void)
+     }
+     hw_frame_bg[ppu.scanline * 256 + ppu.dot - 1] = color != 0;
+     uint8_t background_addr=(uint8_t)(pal<<2|color);
+-    if (ppu.show_spr && (ppu.dot > 8 || ppu.show_spr8) && !sprite_units_idle()) {
++    if (ppu.show_spr && (ppu.dot > 8 || ppu.show_spr8 || hw_ppu_show_left) && !sprite_units_idle()) {
+         int i;
+         uint8_t sc = 0;
+ #if NESRECOMP_PPU_HLE
