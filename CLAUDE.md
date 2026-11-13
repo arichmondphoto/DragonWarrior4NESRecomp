@@ -33,10 +33,10 @@ README.md is the full reference; this file is the working summary.
   packs): `tools/apply_patches.sh && cmake --build build-hd`.
 - HD pack: `tools/build_hd_pack.sh HOST OUTDIR [PYTHON] [JOBS]` (e.g. `build-hd/DragonWarrior4 out/build7/pack python3 2`).
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
-  A full build takes ~25 min; peak RAM ~1.1 GB per host process with the pack.
+  A full build takes ~45 min on 2 cores; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.13.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
-- The nesmod package limit is 256 MiB; the pack is ~165 MiB — watch its size (`du -sb OUTDIR`). Never store
+  catalog keys on it). Current: 0.14.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
+- The nesmod package limit is 256 MiB; the pack is ~187 MiB — watch its size (`du -sb OUTDIR`). Never store
   recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
 ## Headless testing
@@ -82,8 +82,10 @@ README.md is the full reference; this file is the working summary.
   frame's other BG palettes (the map's scroll seam: right tiles, stale attribute colours).
 - Fades: map tiles and characters step each colour down by $10 with black = $0F; **battle monsters fade in
   with black = $3F** (`make_monster_hdpack.py` writes a copy of every entry per step).
+- `capture_field.py` also keeps palettes held over 2 s (`.pals`), animated-tile dumps (`anim/`) and extra
+  viewpoints (`view/`); host options `--palette-log`, `--mem-every` (patch 0019). `--only MAP[:SUB]` for checks.
 - Checking coverage: debug render + 8-bit screenshot per frame, count magenta cells where the 8-bit cell is
-  not flat (black-on-black and blank cells under sprites are false alarms). See FUTURE.md.
+  not flat (black-on-black and blank cells under sprites are false alarms). Modes: maps (`--times N`), monsters, battles, dusk, chars, report. See FUTURE.md.
 - Map tiles and characters: other palettes are affine recolours of the art (`rgb:` at load time); palettes that are only reorderings of each
   other (colour-cycling animations such as the overworld sea) share one recolour. Seamless smoothing
   is skipped where the painted edges differ (SEAM_MAX). Fades = the same art at lower brightness.

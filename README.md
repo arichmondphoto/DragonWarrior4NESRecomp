@@ -141,6 +141,12 @@ How the map tiles are built (`tools/build_hd_pack.sh`):
 1. `tools/capture_field.py` loads every map (279 areas + the overworld) by
    rewriting the exit table at `$05A0` one step from Burland Castle's exit, and
    dumps each map's metatiles (`$7600`), sub-palettes (`$76C0`), CHR and palette.
+   It then lets the hero stand for 2 seconds and keeps what changes: every
+   background palette held 8+ frames (cycling lava, `MM_SS.pals`, via the host's
+   `--palette-log`), later dumps whose background tiles are new (animated tiles
+   such as the Monbaraba crowd and fountains, `anim/`, via `--mem-every`), and
+   by day up to 3 more spots on maps larger than a screen (colours that change
+   by area, `view/`). Patch 0019 adds both host options.
 2. `tools/field_sheet.py` lists every unique map tile and each palette it is
    drawn with (`field_tiles.json`; without `--json-only` it also draws the
    numbered artwork sheets).
@@ -336,6 +342,9 @@ They are framework bugs, kept here until they can go upstream:
   tiles matched no pack entry and showed as an 8-bit strip. An unmatched
   background tile in the top 16 / bottom 24 lines is now looked up again with
   the frame's other background palettes and its HD art drawn.
+- `0019-host-palette-log.patch` — headless host options for the map capture:
+  `--palette-log FILE` (each frame's 32 palette bytes) and `--mem-every N`
+  (memory dumps every N frames after `--mem-frame`, as `FILE.<frame>`).
 - `0017-packaged-app-data-dir.patch` — `NESRECOMP_DATA_DIR` moves config.ini,
   mods/, saves/, rom.cfg and cheats.txt from beside the program (read-only
   inside an AppImage) to a data folder; the Linux AppImage's `AppRun` sets it.

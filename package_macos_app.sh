@@ -55,7 +55,7 @@ fi
 
 VERSION="1.0.$(git rev-list --count HEAD 2>/dev/null || echo 0)"
 HD_ID="dragon-warrior-4.hd-text"
-HD_VERSION="0.13.0"     # bump whenever the pack's content changes (the Mods catalog keys on it)
+HD_VERSION="0.14.0"     # bump whenever the pack's content changes (the Mods catalog keys on it)
 SAVE_NAME="DragonWarriorIV"   # battery save / save states: saves/DragonWarriorIV.*, whatever the ROM file is called
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
