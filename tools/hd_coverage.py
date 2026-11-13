@@ -73,6 +73,8 @@ def analyze(dbg_png, shot_png, mem_path, pic_out):
         box = cy[2 * y:2 * y + 16, 2 * x:2 * x + 16]
         covered[y:y + 8, x:x + 8] = True
         if box.size == 0 or box.mean() < 0.15: continue
+        nb = n[2 * y:2 * y + 16, 2 * x:2 * x + 16]
+        if (nb.max(axis=(0, 1)) - nb.min(axis=(0, 1))).max() < 8: continue  # one flat colour in 8-bit (a screen flash)
         q = a & 3; cols = bytes(pal[16 + 4 * q + 1:16 + 4 * q + 4])
         if all((c & 0x0F) >= 0x0D for c in cols): continue           # drawn in black: nothing to see
         chr_ = bytes(ch[16 * t:16 * t + 16])

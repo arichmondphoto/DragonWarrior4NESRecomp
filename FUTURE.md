@@ -5,7 +5,7 @@ missing, how we know, and the approach we agreed on. Move an item to "Done"
 (with the commit) when it ships. Day-to-day state and game facts stay in the
 project's STATUS doc; this file is only the plan.
 
-Last reviewed: 2026-11-13 (whole-game coverage sweep, HD pack 0.13.0).
+Last reviewed: 2026-11-13 (colour gaps fixed and the sweep widened, HD pack 0.14.0).
 
 ## How we check the HD pack
 
@@ -25,7 +25,13 @@ Two traps when reading the result:
 
     tools/hd_coverage.py HOST MODS OUT maps       # every submap, day + night, up to 3 extra viewpoints
     tools/hd_coverage.py HOST MODS OUT monsters   # every monster ID, settled and mid fade-in
+    tools/hd_coverage.py HOST MODS OUT battles    # each monster's battle played on, sampled every --every frames
+    tools/hd_coverage.py HOST MODS OUT dusk       # the overworld at the four nightfall steps
+    tools/hd_coverage.py HOST MODS OUT chars      # every walking character type (table patch), walking about
     tools/hd_coverage.py HOST MODS OUT report     # OUT/report.md, report.json, sheet_*.jpg
+
+`maps --times N` samples each view N times (animated tiles). Sampled views
+report the union of their samples' missing pieces and the worst frame.
 
 (HOST = the headless build, MODS = a mod root with the pack installed and
 on.) It also names each missing piece by its tile bytes and colours, so the
@@ -51,38 +57,64 @@ included. What is left, grouped by cause:
 | Map 18 (a town) | one sparkle in the fountain | not in the map capture (water animation frame) |
 | Chapter 3 shop scene (forcing "monster" 173) | the big picture of Torneko behind the counter | a special screen; needs art |
 
-**Not covered by the sweep yet:** walking characters other than the ones
-on each map at load (party members, vehicles: ship, balloon, wagon), the
-overworld's dusk steps (W036-W044 are night-only overworld tiles), spell and
-attack effects, event scenes (cutscenes, the ending), the Enix logo and
-title-to-game screens, the casino's slot win.
+### Second pass (2026-11-13, pack 0.14.0)
+
+After items 1-3 below. The maps from the table above, sampled 3 times per
+view: **maps 21, 40, 53, 62, 66 and 69 are clean.** Still in 8-bit there: the
+map 18 fountain sparkle and the map 67 pillar base, both animation frames the
+capture now finds but which have no art yet (item 4).
+
+New checks:
+- **Overworld nightfall** (4 palette steps, 26 samples each): clean.
+- **Battles** (197 monsters, each played on for 320 frames, 21 samples):
+  21 flagged. 10 were screen flashes, where the whole 8-bit screen is one flat
+  colour (the check now ignores those). What's real:
+  - battles where another monster joins (frame ~+258): the text window and
+    battle frame in palettes whose black is `$3F` (`3F303F3F` and similar;
+    monsters 68, 71, 95, 131, 138, 164, 172, 177, 180). The window entries need
+    the same `$3F`-black copies the monsters got in 0.13.0 (item 1 below);
+  - the Impostor's Transform (monster 153): the smoke-cloud sprites;
+  - the Chapter 3 shop scene (173, known).
+- **Walking characters** (108 types in 11 runs, 16 samples each): 8 runs
+  clean. In runs 0, 3 and 6 the town's outer floor tile shows a character's
+  sprite tiles and the hero is drawn in an unmatched palette. Most likely a
+  side effect of the table patch overwriting tile memory, not something
+  players see, but not yet proven (item 3).
+
+The map capture now also finds **13 animation-frame tiles with no art**:
+T127-T128 (Endor), T129-T133 (the fountain in Izmit and Konenber), T134
+(Konenber's pillar base), D358-D361 (Birdsong Tower), D362 (Loch Tower). The
+build prints them with W036-W044 under "no art yet for".
+
+**Still not covered by the sweep:** vehicles (ship, balloon, wagon), spells
+the party casts (the Chapter 1 route's party casts none), damage-floor
+flashes (the red flash seen once in the Final Cave, map 53:2, needs a
+capture that walks onto the floor), event scenes (cutscenes, the ending),
+the Enix logo and title-to-game screens, the casino's slot win.
 
 ## Next up
 
-### 1. Fix the colour gaps (no new art)
-- **Why:** most of the sweep's findings are tiles that have art but appear in
-  colours the build never captured (maps 40, 53, 62, 69).
-- **How:** in `tools/capture_field.py`, keep sampling each map for a few
-  seconds after it loads and record every background palette it shows
-  (cycling lava, flashes, sky effects), not just the one at the capture
-  frame; `make_field_hdpack.py` then makes the recolours for all of them
-  (it already shares one recolour between palettes that are reorderings of
-  each other). Re-run the sweep on those maps to confirm.
+### 1. Text window and battle frame when a monster joins
+- **Why:** the battle sweep (second pass) shows them in 8-bit for one frame
+  step while a newly called monster fades in: those palettes use `$3F` as
+  black, like the monsters' own fade-in.
+- **How:** give the window/text entries `$3F`-black copies of their palettes,
+  as `tools/make_monster_hdpack.py` does for monsters (`fade_entries`), and
+  re-run `hd_coverage.py battles --only 68 --only 177`.
 
-### 2. Map 21's crowd
-- **Why:** captured tiles in the right colours still don't match (see table).
-- **How:** dump the cells with `hd_coverage.py --only 21:3`, compare each
-  cell's neighbours with the `tileNearby` conditions the night-crowd sheet
-  (`hd/field/sheets/N01`) generated, and loosen or extend them.
+### 2. Damage-floor flash
+- **Why:** one sweep view of the Final Cave (map 53:2) showed every floor
+  tile in all-red `0F161616` while the hero walked; standing still, it never
+  happens.
+- **How:** confirm with a walk over a damage floor (palette log), then either
+  add the flash palette as a colour variant for the maps that have those
+  floors, or leave it (in 8-bit the flash is nearly flat red anyway).
 
-### 3. Widen the sweep
-- Walking characters and vehicles: a mode using `tools/capture_types.py`'s
-  table patch (needs the pack to load with a patched ROM:
-  `NESRECOMP_ALLOW_PRG_MISMATCH`), or warps with each party member leading.
-- The overworld at each dusk step (`capture_field.py`'s nightfall walk).
-- Spell effects: forced battles where the party casts (a battle input script).
-- Animation frames: sample each map over several seconds (fountains, pillars,
-  flames), the same change as item 1.
+### 3. Verify the character sweep's odd runs
+- **Why:** 3 of 11 `chars` runs show tile memory that looks overwritten.
+- **How:** compare those runs' 8-bit screenshots with the plain town; if the
+  table patch causes it, carry fewer types per run there. Then use the clean
+  runs to measure item 5's shared sprite pieces.
 
 ### 4. Art for what is missing
 Known today:
@@ -90,12 +122,13 @@ Known today:
 - "(" and ")" on the name-entry screen; the "-" there is drawn like "=" (check
   the glyph);
 - 9 overworld tiles, W036-W044 (the build prints "no art yet for");
+- 13 animation-frame map tiles found by the 0.14.0 capture: T127-T134 (Endor;
+  the Izmit/Konenber fountain, which is map 18's sparkle; Konenber's pillar
+  base, map 67), D358-D362 (Birdsong Tower, Loch Tower);
+- the Impostor's Transform smoke (battle sprite);
 - 4 characters in Necrosaro's Lair, C069-C072;
-- from the sweep: the Chapter 3 shop scene (Torneko behind the counter), the
-  map 66 golden statue, the map 67 pillar base and the map 18 fountain
-  sparkle (the last three may only need capturing, see item 1).
-
-Plus whatever the widened sweep (item 3) finds.
+- from the sweep: the Chapter 3 shop scene (Torneko behind the counter).
+  (The map 66 golden statue only needed capturing: fixed in 0.14.0.)
 - **How:** the same route as before. Export a package for OpenAI's image API
   (`tools/export_gaps.py`, `tools/openai_sprites.py`), the owner generates and
   returns the art, it is committed under `hd/` and the pack rebuilt. Text
@@ -198,6 +231,16 @@ Plus whatever the widened sweep (item 3) finds.
   maths before anything else is built.
 
 ## Done
+
+- **2026-11-13 — Colour gaps, map 21's crowd, wider sweep.** HD pack 0.14.0.
+  The map capture now lets the hero stand 2 seconds after each map loads and
+  keeps every palette held 8+ frames (cycling lava), every later moment
+  whose tile pictures are new (animated tiles: the Monbaraba crowd swaps
+  poses every few frames, so day and night had each seen only one pose), and
+  by day up to 3 more spots on large maps (colours that change by area: map
+  40's lava corner, the sky castle). nesrecomp patch 0019 (`--palette-log`,
+  `--mem-every`). `hd_coverage.py` gained `battles`, `dusk`, `chars` and
+  `maps --times`. Results: "Second pass" above.
 
 - **2026-11-13 — Whole-game coverage sweep.** `tools/hd_coverage.py` (maps by
   warp, monsters by forced battle, merged report). Results above.
