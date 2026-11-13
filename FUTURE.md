@@ -54,7 +54,7 @@ Plus whatever item 1 finds.
   returns the art, it is committed under `hd/` and the pack rebuilt. Text
   glyphs and the logo can be smoothed from the ROM instead (as the poker
   screen's digits are) if painted art isn't wanted.
-- **Watch:** the pack is 185 MiB of the 256 MiB package limit.
+- **Watch:** the pack is 188 MiB of the 256 MiB package limit.
 
 ### 3. Character art that doesn't line up
 - **Why:** the sprite builder's fit report says "redo" for C007, C011, C043,
