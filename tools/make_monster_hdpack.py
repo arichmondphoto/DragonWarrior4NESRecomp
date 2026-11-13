@@ -78,6 +78,7 @@ def fade_entries(conds, tiles, steps=(1, 2, 3)):
             gate, body = ('', t)
             if t.startswith('['): gate, body = t[1:].split(']', 1)
             f = body[len('<tile>'):].split(',')            # img, CHR, PAL, x, y, brightness, default
+            if not any(bytes.fromhex(f[1])): continue      # a blank tile: at a fade step it would match every empty cell
             pk = fade_pal(f[2], k); l0 = lum(f[2])
             if all(c == FADE_BLACK for c in bytes.fromhex(pk)[1:]) or l0 <= 0: continue
             names = []
