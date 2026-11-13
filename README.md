@@ -275,7 +275,8 @@ They are framework bugs, kept here until they can go upstream:
 - `0004-cyc-trim-side-borders.patch` — Dragon Warrior IV (like many NES games)
   masks the leftmost 8 pixels, leaving a black bar. New setting **Trim side
   borders** (in-game menu > Display; `CropSides` in config.ini; on by default)
-  trims 8 pixels from both sides so the picture stays centred (240x240).
+  trims 8 pixels from both sides so the picture stays centred. Patch 0020
+  extends it to the top and bottom (now **Trim borders (overscan)**, 240x216).
 - `0005-cyc-launcher-trim-side-borders.patch` — also offers that setting in the
   launcher's Display settings (needs recomp-ui patch 0002).
 
@@ -342,6 +343,13 @@ They are framework bugs, kept here until they can go upstream:
   tiles matched no pack entry and showed as an 8-bit strip. An unmatched
   background tile in the top 16 / bottom 24 lines is now looked up again with
   the frame's other background palettes and its HD art drawn.
+- `0020-cyc-trim-overscan-rows.patch` — the same setting also trims the lines
+  a TV's overscan hid: 8 at the top and 16 at the bottom of the 240-line
+  picture. While the map scrolls vertically the game draws the next row of
+  tiles there with half-updated colours (flickering 8-bit tiles, and in HD
+  the strip patch 0018 patches over). The window is 240x216 native pixels;
+  the Zapper aim and crosshair follow the offset. Labelled "Trim borders
+  (overscan)" in the in-game menu (recomp-ui patch 0004 for the launcher).
 - `0019-host-palette-log.patch` — headless host options for the map capture:
   `--palette-log FILE` (each frame's 32 palette bytes) and `--mem-every N`
   (memory dumps every N frames after `--mem-frame`, as `FILE.<frame>`).
@@ -368,6 +376,8 @@ They are framework bugs, kept here until they can go upstream:
 - `0002-launcher-trim-side-borders-setting.patch` — an optional "Trim side
   borders" checkbox in Display settings (`Settings.crop_sides`,
   `GameInfo.has_crop_sides`, appended ABI-additively).
+- `0004-launcher-trim-borders-label.patch` — renames the launcher's row to
+  "Trim borders (overscan)" (nesrecomp patch 0020).
 - `0003-launcher-cheats-page.patch` — a "Cheats" page (`GameInfo.cheats_path`,
   appended ABI-additively): add a Game Genie code with an optional name, turn
   codes on and off, delete them; each change is written straight to the text

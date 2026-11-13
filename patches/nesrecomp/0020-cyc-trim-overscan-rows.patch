@@ -1,0 +1,94 @@
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index fc053d1..0c7d373 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -467,12 +467,18 @@ static int picture_divisor(int w, int h)
+ static int s_tex_div = 1;
+ static int base_w(void) { return s_tex_w / s_tex_div; }
+ static int base_h(void) { return s_tex_h / s_tex_div; }
+-static int logical_h(void) { return base_h() + (s_bar ? BAR_ROWS : 0); }
+ /* Trim Side Borders: many games clear PPUMASK's left-column bits, so the
+  * first 8 pixels are always backdrop. Trim 8 native pixels from both sides of
+- * a stock-width picture to hide that bar and keep the picture centred. */
++ * a stock-width picture to hide that bar and keep the picture centred.
++ * The same setting trims the lines a TV's overscan hid: games draw the next
++ * row of a vertically scrolling map there with half-updated colours (8 lines
++ * at the top, 16 at the bottom of a 240-line picture). */
+ static int crop_px(void) { return s_set.crop_sides && base_w() == 256 ? 8 : 0; }
++static int crop_top(void) { return s_set.crop_sides && base_h() == 240 ? 8 : 0; }
++static int crop_bottom(void) { return s_set.crop_sides && base_h() == 240 ? 16 : 0; }
+ static int view_w(void) { return base_w() - 2 * crop_px(); }
++static int view_h(void) { return base_h() - crop_top() - crop_bottom(); }
++static int logical_h(void) { return view_h() + (s_bar ? BAR_ROWS : 0); }
+ 
+ static void apply_picture_scale(void)
+ {
+@@ -1036,6 +1042,7 @@ static void zapper_window_point(int wx, int wy, int *x, int *y, int *px, int *py
+     float lx, ly;
+     SDL_RenderWindowToLogical(s_ren, wx, wy, &lx, &ly);
+     lx += (float)crop_px();
++    ly += (float)crop_top();
+     int w, h;
+     picture(&w, &h);
+     int k = picture_divisor(w, h); w /= k; h /= k;
+@@ -1166,7 +1173,7 @@ static void bar_text(int x, int y, const char *s)
+ 
+ static void draw_drive_bar(bool loading)
+ {
+-    int y0 = s_tex_h;
++    int y0 = view_h();
+     SDL_Rect bar = { 0, y0, s_tex_w, BAR_ROWS };
+     SDL_SetRenderDrawColor(s_ren, 24, 24, 32, 255);
+     SDL_RenderFillRect(s_ren, &bar);
+@@ -1282,9 +1289,9 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
+     SDL_UpdateTexture(s_tex, NULL, pic, w * 4);
+     SDL_SetRenderDrawColor(s_ren, 0, 0, 0, 255);
+     SDL_RenderClear(s_ren);
+-    int crop = crop_px();
+-    SDL_Rect src = { crop * s_tex_div, 0, w - 2 * crop * s_tex_div, h };
+-    SDL_Rect dst = { 0, 0, w / s_tex_div - 2 * crop, h / s_tex_div };
++    int crop = crop_px(), top = crop_top(), bottom = crop_bottom();
++    SDL_Rect src = { crop * s_tex_div, top * s_tex_div, w - 2 * crop * s_tex_div, h - (top + bottom) * s_tex_div };
++    SDL_Rect dst = { 0, 0, w / s_tex_div - 2 * crop, h / s_tex_div - top - bottom };
+     SDL_RenderCopy(s_ren, s_tex, &src, &dst);
+     CycZapperState gun;
+     cyc_zapper_state(&gun);
+@@ -1292,7 +1299,7 @@ static void show(bool loading, const char *toast_title, const char *toast_body)
+     if (gun.port && !s_zapper_override) aim_x = s_aim_x, aim_y = s_aim_y;
+     else if (gun.port && gun.x >= 0) aim_x = gun.x + picture_native_origin(w / s_tex_div), aim_y = gun.y;
+     if (gun.port && s_set.zapper_crosshair && aim_x >= 0 && aim_x < w / s_tex_div && !menu_open()) {
+-        int x = aim_x - crop, y = aim_y;
++        int x = aim_x - crop, y = aim_y - top;
+         SDL_SetRenderDrawColor(s_ren, 0, 0, 0, 255);
+         SDL_Rect back = {x - 5, y - 1, 11, 3}; SDL_RenderFillRect(s_ren, &back);
+         back.x = x - 1; back.y = y - 5; back.w = 3; back.h = 11; SDL_RenderFillRect(s_ren, &back);
+diff --git a/runner/cyc/cyc_settings.h b/runner/cyc/cyc_settings.h
+index d659f68..d7e4e06 100644
+--- a/runner/cyc/cyc_settings.h
++++ b/runner/cyc/cyc_settings.h
+@@ -41,7 +41,9 @@ typedef struct CycSettings {
+     int  fullscreen;        /* 0 off, 1 borderless, 2 exclusive */
+     int  integer_scale;     /* bool */
+     int  crop_sides;        /* bool: trim 8 px from both sides of a 256-wide picture,
+-                               hiding the left column many games mask (PPUMASK) */
++                               hiding the left column many games mask (PPUMASK),
++                               and 8 / 16 lines from the top / bottom of a
++                               240-line one (the TV overscan) */
+     int  linear_filter;     /* bool */
+     int  vsync;             /* bool: sync presents to the display refresh */
+     int  audio_enabled;     /* bool */
+diff --git a/runner/cyc/cyc_ui_menu.c b/runner/cyc/cyc_ui_menu.c
+index 2d7d80a..2823400 100644
+--- a/runner/cyc/cyc_ui_menu.c
++++ b/runner/cyc/cyc_ui_menu.c
+@@ -498,8 +498,8 @@ RecompRuntimeUi *cyc_ui_menu_create(const CycUiHost *host)
+         /* Game-defined additions follow the host's controls. */
+         for (size_t i = 0; i < x->menu_item_count; ++i)
+             if (s_item_count < sizeof(s_items) / sizeof(s_items[0])) s_items[s_item_count++] = x->menu_items[i];
+-    add("cyc.crop_sides", "Display", "Trim side borders",
+-        "Hide the black bar at the left edge of the picture.",
++    add("cyc.crop_sides", "Display", "Trim borders (overscan)",
++        "Hide the edges a TV hid: the black bar at the left and the flickering rows at the top and bottom.",
+         RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL);
+     add_mod_rows();
+     CycZapperState gun;

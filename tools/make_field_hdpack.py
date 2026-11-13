@@ -62,6 +62,8 @@ def tileable(px):
         return seam <= inner * 1.5 + 0.05
     return axis(g), axis(g.T)
 
+FLASH = bytes([0x0F, 0x16, 0x16, 0x16])         # the damage-floor flash, every sub-palette
+FLASH_XF = ',rgb:1.30/8/0.30/0/0.25/0'        # art tinted red: grey stone -> about $16
 SEAM_MAX = 30   # mean edge-band colour difference (0-255) above which an axis is left alone
 
 def make_seamless(img, h, v):
@@ -189,6 +191,13 @@ def main():
                 versions.append(dict(id=f'{r["id"]}~{k}', item=iid, chr=t, pal=fp, img=idx, xf=xf, bright=round(br, 3),
                                      uses=uses / (10 * k), real=False))
 
+        # Damage-floor flash: each step on a damage floor turns every background
+        # colour red ($16 in all four sub-palettes) for 3 frames. The art is
+        # shown tinted red (rgb: at load time, nothing stored) instead of 8-bit.
+        if main_idx is None: main_idx = add_img(base_img, aid)
+        versions.append(dict(id=f'{iid}~flash', item=iid, chr=t, pal=FLASH, img=main_idx, xf=FLASH_XF, bright=1.0,
+                             uses=0.01, real=False))
+
     # a fade step that equals a real palette of the same tile is that palette
     real_keys = {(v['chr'], v['pal']) for v in versions if v['real']}
     seen = set(); kept = []
@@ -202,6 +211,7 @@ def main():
     owners = collections.defaultdict(list)           # (chr, pal) -> [(version, q)]
     for v in versions:
         for q in range(4):
+            if v['pal'] == FLASH and not any(v['chr'][16 * q:16 * q + 16]): continue   # blank: every map's void shares this key
             owners[(v['chr'][16 * q:16 * q + 16].hex().upper(), v['pal'].hex().upper())].append((v, q))
 
     conds, names = [], {}

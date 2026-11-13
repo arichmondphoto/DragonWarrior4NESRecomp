@@ -97,6 +97,10 @@ def analyze(dbg_png, shot_png, mem_path, pic_out):
                 else: res['unknown_bg'] += 1                                           # scrolled off the 8 px grid
                 continue
             t, s = hit
+            if not any(ch[0x1000 + 16 * t:0x1000 + 16 * t + 16]):
+                # a blank tile shows only the backdrop, the same in 8-bit and HD; the cell
+                # looks uneven only where the game changes the backdrop colour mid-screen
+                res['bg'] -= 1; continue
             res['bg_keys'].append([bytes(ch[0x1000 + 16 * t:0x1000 + 16 * t + 16]).hex().upper(),
                                    bytes([pal[0]] + [pal[s * 4 + k] for k in (1, 2, 3)]).hex().upper(), int(c) * 8, int(r) * 8])
     if res['bg'] > 0 or res['sp'] > 0:
@@ -274,16 +278,50 @@ class Sweep:
             if raw & 0x80 or fold(raw) in seen: continue
             seen.add(fold(raw)); carriers.append((4 + i, fold(raw)))
         rom = open(ROM, 'rb').read()
+        env = {'NESRECOMP_ALLOW_PRG_MISMATCH': '1'}
         jobs = [list(range(NTYPES))[k:k + len(carriers)] for k in range(0, NTYPES, len(carriers))]
-        def one(n):
+        def tiles_at(rom_path, tag):
+            """The town's background tile memory and attribute-free picture at the first sample."""
+            f = os.path.join(self.tmp, f'{tag}.mem')
+            subprocess.run([self.a.host, rom_path, '--load-state', self._state_file(st), '--frames', str(s0 + 1), '--no-save',
+                            '--input', idle, '--mods-root', self.a.mods, '--mem-frame', str(s0), '--mem-out', f],
+                           check=True, capture_output=True, env=dict(self.env, **env))
+            m = load(f); os.remove(f); return bytes(m['chr_ram'][0x1000:0x2000])
+        plain_bg = tiles_at(ROM, 'plain_bg')
+        def patched_rom(types, tag):
             patched = bytearray(rom)
-            for (slot, entry), t in zip(carriers, jobs[n]):
+            for (slot, entry), t in zip(carriers, types):
                 patched[TABLE + 24 * entry: TABLE + 24 * entry + 24] = rom[TABLE + 24 * t: TABLE + 24 * t + 24]
-            p = os.path.join(self.tmp, f'types{n}.nes'); open(p, 'wb').write(patched)
+            p = os.path.join(self.tmp, f'{tag}.nes'); open(p, 'wb').write(patched); return p
+        def one(n):
+            # Some types (the party heroes) load tiles a town person's slot can't
+            # hold and overwrite the town's own: the screen is garbled even in
+            # 8-bit, which no player sees. Such a batch is re-run one type at a
+            # time; a type that still garbles the town is skipped.
             name = f'types_{n:02d}'
-            r = self.view(st, end, name, out, {'mode': 'chars', 'name': name, 'types': jobs[n]}, start=s0, every=ev,
-                          rom=p, env={'NESRECOMP_ALLOW_PRG_MISMATCH': '1'}, inp=idle)
-            os.remove(p); return r
+            js = os.path.join(out, name + '.json')
+            if os.path.exists(js): return json.load(open(js))
+            p = patched_rom(jobs[n], f'types{n}')
+            if tiles_at(p, f'chk{n}') == plain_bg:
+                r = self.view(st, end, name, out, {'mode': 'chars', 'name': name, 'types': jobs[n]}, start=s0, every=ev,
+                              rom=p, env=env, inp=idle)
+                os.remove(p); return r
+            os.remove(p)
+            res = {'mode': 'chars', 'name': name, 'types': jobs[n], 'bg': 0, 'sp': 0, 'unknown_bg': 0,
+                   'bg_keys': [], 'sp_keys': [], 'skipped': [], 'split': True}
+            for t in jobs[n]:
+                p = patched_rom([t], f'type{t}')
+                if tiles_at(p, f'chk_t{t}') != plain_bg:
+                    res['skipped'].append(t); os.remove(p); continue
+                one_dir = os.path.join(out, 'single'); os.makedirs(one_dir, exist_ok=True)   # (not merged twice by report)
+                r = self.view(st, end, f'{name}_t{t:03d}', one_dir, {'mode': 'chars', 'name': f'{name}_t{t:03d}', 'types': [t]},
+                              start=s0, every=ev, rom=p, env=env, inp=idle)
+                os.remove(p)
+                if 'error' in r: res.setdefault('error', r['error']); continue
+                res['bg'] = max(res['bg'], r['bg']); res['sp'] = max(res['sp'], r['sp'])
+                res['bg_keys'] += r['bg_keys']; res['sp_keys'] += r['sp_keys']; res['unknown_bg'] += r['unknown_bg']
+            json.dump(res, open(js, 'w'))
+            return res
         self.run(list(range(len(jobs))), one, 'character runs')
 
     def _state_file(self, st):

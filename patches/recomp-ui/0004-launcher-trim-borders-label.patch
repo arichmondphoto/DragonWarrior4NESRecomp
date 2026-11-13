@@ -1,0 +1,30 @@
+From: DragonWarrior4NESRecomp
+Subject: launcher: "Trim borders (overscan)" label
+
+The host's CropSides setting now also trims the top 8 and bottom 16 lines
+(nesrecomp patch 0020); the launcher row is renamed to match.
+---
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index 9b2fc0f..9df6a3f 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -3981,8 +3981,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+             bool is = m->s.integer_scale != 0;
+             if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
+         }
+-        if (m->has_crop_sides) {      // NES: hide the masked left column
+-            row_label_right("Trim side borders", th, cb);
++        if (m->has_crop_sides) {      // NES: hide the masked left column and the overscan rows
++            row_label_right("Trim borders (overscan)", th, cb);
+             bool cs = m->s.crop_sides != 0;
+             if (ImGui::Checkbox("##cropsides", &cs)) launcher_model_toggle_crop_sides(m);
+         }
+@@ -4086,7 +4086,7 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+         if (ImGui::Checkbox("##intscale", &is)) launcher_model_toggle_integer_scale(m);
+     }
+     if (m->has_crop_sides) {
+-        row_label_right("Trim side borders", th, cb);
++        row_label_right("Trim borders (overscan)", th, cb);
+         bool cs = m->s.crop_sides != 0;
+         if (ImGui::Checkbox("##cropsides", &cs)) launcher_model_toggle_crop_sides(m);
+     }
