@@ -221,7 +221,7 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('host'); ap.add_argument('mods'); ap.add_argument('out')
     ap.add_argument('mode', choices=('maps', 'monsters', 'report'))
     ap.add_argument('--jobs', type=int, default=2); ap.add_argument('--views', type=int, default=3)
-    ap.add_argument('--fade-at', type=int, default=0, help='monsters: frames after the encounter of the fade-in frame to check')
+    ap.add_argument('--fade-at', type=int, default=104, help='monsters: frames after the encounter of the fade-in frame to check (fade runs ~+96..+112)')
     ap.add_argument('--only', action='append', default=[], help='maps: MAP or MAP:SUB (repeatable)')
     a = ap.parse_args()
     a.only = {(int(s.split(':')[0]), int(s.split(':')[1]) if ':' in s else None) for s in a.only}
