@@ -89,7 +89,10 @@ def render(tiles, cols, S):
 
 def collect(cap):
     shapes, order = {}, []          # tiles -> {'cat', 'variants': {cols: set(maps)}}
-    for path in sorted(glob.glob(os.path.join(cap, '*.mem')), key=lambda p: (not p.endswith('world.mem'), p)):
+    # MM_SS[_n].mem per map, plus (capture_field.py) anim/: later moments of
+    # maps whose tiles animate, and view/: other places on large maps
+    mems = [f for d in ('', 'anim', 'view') for f in glob.glob(os.path.join(cap, d, '*.mem'))]
+    for path in sorted(mems, key=lambda p: (not p.endswith('world.mem'), p)):
         m = load(path); w, ch, pal, ram = m['wram'], m['chr_ram'], m['palette'], m['ram']
         if max(pal[:16]) == min(pal[:16]): continue                      # screen still faded out
         world = ram[0x28] == 0
@@ -99,6 +102,14 @@ def collect(cap):
         if 'world_dusk' in path: where += ' (nightfall)'
         defs = [(bytes(w[0x1600 + 4 * i:0x1604 + 4 * i]), w[0x16C0 + i] & 3) for i in range(32)]
         if world: defs += [(bytes(w[0x1680 + 4 * i:0x1684 + 4 * i]), 0) for i in range(16)]
+        # other background palettes the map held for a while after the capture
+        # frame (colour cycling such as lava, flashes, sky effects):
+        # capture_field.py writes them to MM_SS.pals
+        extra = []
+        pp = path[:-4] + '.pals'
+        if os.path.exists(pp):
+            extra = [bytes.fromhex(l.strip()) for l in open(pp) if len(l.strip()) == 32]
+            extra = [x for x in extra if x[:16] != bytes(pal[:16])]
         for t, p in defs:
             if any(x < 0x8D for x in t): continue                         # unused slot
             tiles = b''.join(bytes(ch[0x1000 + 16 * x:0x1010 + 16 * x]) for x in t)
@@ -114,10 +125,14 @@ def collect(cap):
                 # overworld water animates by swapping colours 2 and 3 of
                 # sub-palette 0 every few frames: list the other phase too
                 shapes[tiles]['variants'].setdefault(bytes([cols[0], cols[1], cols[3], cols[2]]), set()).add(where)
+            for x in extra:
+                c2 = bytes([x[0], x[4 * p + 1], x[4 * p + 2], x[4 * p + 3]])
+                if c2 == cols or all(c2[v] & 0x3F in BLACK for v in used): continue
+                shapes[tiles]['variants'].setdefault(c2, set()).add(where)
     # Second pass: colours actually on screen. Some maps recolour parts of a
     # tileset (palette overrides), so add on-screen colours of known tiles.
     # (Unknown on-screen shapes are half-drawn rows at the scroll seam.)
-    for path in sorted(glob.glob(os.path.join(cap, '*.mem'))):
+    for path in sorted(mems):
         m = load(path); ci, ch, pal, ram = m['ciram'], m['chr_ram'], m['palette'], m['ram']
         if max(pal[:16]) == min(pal[:16]): continue
         world = ram[0x28] == 0

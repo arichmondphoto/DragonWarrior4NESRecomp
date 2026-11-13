@@ -1,0 +1,65 @@
+diff --git a/runner/cyc/cyc_host.c b/runner/cyc/cyc_host.c
+index 487e60b..759dfe2 100644
+--- a/runner/cyc/cyc_host.c
++++ b/runner/cyc/cyc_host.c
+@@ -47,6 +47,12 @@
+  *                          it as game.toml [game] cycle_capture_file)
+  *     --ram-view-list FILE the program's compiled RAM views and their state at exit
+  *     --screenshot FILE    save the last frame as PNG
++ *     --palette-log FILE   append each frame's number and its 32 palette bytes
++ *                          (hex) to FILE, one line per frame (tools: which
++ *                          colours a screen cycles or flashes through)
++ *     --mem-every N        with --mem-frame/--mem-out, also write the memories
++ *                          every N frames after it until the run ends, as
++ *                          FILE.<frame> (tools: tiles that animate)
+  *     --shot-every N       also save every Nth frame, as FILE with the frame
+  *                          number before its extension (shot.png -> shot_00120.png)
+  *     --wav-out FILE       record the audio output (48 kHz mono)
+@@ -1011,6 +1017,8 @@ static int host_main(int argc, char **argv) {
+     const char *save_file=NULL, *datach_save=NULL, *barcode=NULL;
+     long barcode_frame=0; unsigned barcode_speed=1000;
+     long mem_frame = -1, shot_every = 0;
++    FILE *palette_log = NULL;
++    long mem_every = 0;
+ #ifndef CYC_ORACLE
+     const char *miss_log = NULL, *capture_log = NULL, *view_list = NULL;
+ #endif
+@@ -1099,6 +1107,11 @@ static int host_main(int argc, char **argv) {
+         else if (!strcmp(argv[i], "--trace-out") && i + 1 < argc) trace_out = argv[++i], headless = true;
+         else if (!strcmp(argv[i], "--screenshot") && i + 1 < argc) screenshot = argv[++i], headless = true;
+         else if (!strcmp(argv[i], "--shot-every") && i + 1 < argc) shot_every = atol(argv[++i]), headless = true;
++        else if (!strcmp(argv[i], "--mem-every") && i + 1 < argc) mem_every = atol(argv[++i]);
++        else if (!strcmp(argv[i], "--palette-log") && i + 1 < argc) {
++            palette_log = fopen(argv[++i], "w"); headless = true;
++            if (!palette_log) { fprintf(stderr, "cannot write %s\n", argv[i]); return 1; }
++        }
+         else if (!strcmp(argv[i], "--state-frame") && i + 1 < argc) state_frame = atol(argv[++i]), headless = true;
+         else if (!strcmp(argv[i], "--state-out") && i + 1 < argc) state_out = argv[++i], headless = true;
+         else if (!strcmp(argv[i], "--wav-out") && i + 1 < argc) wav_out = argv[++i], headless = true;
+@@ -1723,11 +1736,26 @@ session_restart:
+         if (present_out && present_every > 0 && frame % present_every == 0)
+             write_presentation(present_out, frame, emulated_ms(frame + 1), true);
+ #endif
++        if (palette_log) {
++            const uint8_t *pal = cyc_ppu_palette();
++            fprintf(palette_log, "%ld ", frame);
++            for (int k = 0; k < 32; k++) fprintf(palette_log, "%02X", pal[k]);
++            fputc('\n', palette_log);
++        }
+         if (screenshot && shot_every > 0 && frame % shot_every == 0) {
+             char path[1024];
+             numbered_path(path, sizeof path, screenshot, frame);
+             if (!cyc_write_png(path, cyc_frame_argb(), 256, 240)) fprintf(stderr, "cannot write %s\n", path);
+         }
++        if (mem_out && mem_every > 0 && mem_frame >= 0 && frame > mem_frame && (frame - mem_frame) % mem_every == 0) {
++            char path[1024];
++            snprintf(path, sizeof path, "%s.%ld", mem_out, frame);
++            FILE *mf = fopen(path, "w");
++            if (mf) {
++                cyc_mem_state_dump(mf);
++                fclose(mf);
++            }
++        }
+         if (mem_out && frame == mem_frame) {
+             FILE *mf = fopen(mem_out, "w");
+             if (mf) {

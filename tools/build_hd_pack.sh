@@ -63,7 +63,7 @@ done
 FCAP="$(dirname "$OUT")/field-capture"
 if ls hd/field/source/*.png >/dev/null 2>&1; then
     FSTAMP="$FCAP/.stamp"
-    fwant="$(shasum "$HOST" rom/DragonWarriorIV.nes routes/ch1_to_first_battles.txt tools/capture_field.py 2>/dev/null | shasum | cut -d' ' -f1)"
+    fwant="$(shasum "$HOST" rom/DragonWarriorIV.nes routes/ch1_to_first_battles.txt tools/capture_field.py tools/field_sheet.py 2>/dev/null | shasum | cut -d' ' -f1)"
     if [ ! -f "$FSTAMP" ] || [ "$(cat "$FSTAMP")" != "$fwant" ]; then
         echo "  capturing every map from the game (warping into each of 279 areas, day and night; several minutes)"
         rm -rf "$FCAP"

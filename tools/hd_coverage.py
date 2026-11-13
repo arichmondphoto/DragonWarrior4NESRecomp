@@ -29,7 +29,7 @@ import numpy as np
 from PIL import Image
 sys.path.insert(0, os.path.dirname(__file__))
 from vramdump import load, tile_pixels
-from capture_field import ROM, ROUTE, EXIT_FRAME, submaps, size
+from capture_field import ROM, ROUTE, EXIT_FRAME, submaps, size, viewpoints
 
 ENC_FRAME = 8718                       # tools/render_monsters_hd.py: the encounter's slots are filled
 NMONSTERS = 197
@@ -141,16 +141,11 @@ class Sweep:
         for mp in range(73):
             for sub in range(len(submaps(mp))):
                 if self.a.only and (mp, sub) not in self.a.only and (mp, None) not in self.a.only: continue
-                w, h = size(mp, sub); pts = [(w // 2, h // 2)]
-                # more viewpoints for maps larger than a screen (16 x 15 map cells), spread over the map
-                xs = [x for x in range(8, max(w - 7, 9), 15)]; ys = [y for y in range(7, max(h - 6, 8), 14)]
-                grid = [(x, y) for y in ys for x in xs if abs(x - w // 2) > 6 or abs(y - h // 2) > 6]
-                if grid and self.a.views:
-                    step = max(1, -(-len(grid) // self.a.views))
-                    pts += grid[step // 2::step][:self.a.views]
+                # the middle, plus viewpoints spread over maps larger than a screen
+                pts = viewpoints(mp, sub, self.a.views)
                 for k, (x, y) in enumerate(pts):
-                    jobs.append((mp, sub, k, min(x, 120), min(y, 120), False))
-                jobs.append((mp, sub, 0, min(w // 2, 120), min(h // 2, 120), True))
+                    jobs.append((mp, sub, k, x, y, False))
+                jobs.append((mp, sub, 0, pts[0][0], pts[0][1], True))
         def one(job):
             mp, sub, k, x, y, night = job
             b = bytearray(st)
