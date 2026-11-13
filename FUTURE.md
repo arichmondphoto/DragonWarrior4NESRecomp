@@ -106,7 +106,49 @@ Plus whatever item 1 finds.
 - Capture a slot-machine win (lamp and palette blinks) and check it in HD.
 - A setting to trim the top and bottom edges like the side trim, for players
   who want the TV-style picture; the edge fix below makes it optional.
-- Widescreen (deferred by decision).
+- Widescreen: see item 8.
+
+### 8. Widescreen (deferred by decision; this is the suggested method)
+- **What the engine gives us:** nesrecomp already has wide picture modes
+  (`cyc_video.h`: 16:9 = 426 px wide, 21:9 = 560, or fit the window) and a
+  per-game "compositor" hook (`cyc_render.h`): the game keeps drawing its
+  256x240 picture, and our code paints the extra columns left and right, or
+  returns "pillarbox this screen". Nothing feeds back into the game, so it
+  cannot break gameplay or saves. The HD pack path knows nothing about it yet.
+- **Why the game can't just show more:** the console's off-screen tile memory
+  only holds stale columns; the game writes each new column just before it
+  scrolls in. But the game keeps the whole decoded map in memory (WRAM `$7800`
+  map cells, `$7600` the 32 map tiles' four 8x8 pieces, `$76C0` their
+  palettes - the data `capture_field.py` and the scratch `maprender.py`
+  already read), so the margins can be drawn from the map itself.
+- **Method, in phases (each one is usable on its own):**
+  1. *8-bit wide maps.* A compositor for towns, dungeons and the overworld:
+     from the camera position and the map in WRAM, draw the extra map columns
+     each side with the game's own tiles and palettes (night and fades come
+     free: they are just the current palette). Past the map's edge use the
+     map's border tile; the overworld wraps. Every other screen (title, battles,
+     menus-only screens, casino, name entry) is pillarboxed and centred;
+     battles are on black, so their side bars are invisible.
+  2. *HD in the margins.* A project patch so the compositor hands the HD
+     presenter the margin as tile cells (the 8x8 tile's bytes + palette), the
+     same record the presenter gets for on-screen tiles. The pack then matches
+     them with the entries it already has: no new art for maps.
+  3. *People in the margins.* The game only makes sprites for characters near
+     the screen. Read the map's character table and draw the ones standing in
+     the margins (position, type, facing, walk frame) with the pack's character
+     art; find out whether they keep moving off-screen or freeze until they
+     come near.
+  4. *Wide art for fixed screens (optional).* The title's layers painted wider;
+     a framed or wider battle backdrop. Needs new art from the owner.
+- **Known hard parts:** map-change effects (fades are fine; any wipe or
+  shake would need the margins to follow); doors, chests and other tiles the
+  game changes on screen must be read from the live map, not the ROM; windows
+  and text stay in the middle 256 columns; rewind and save states are
+  unaffected (the compositor only reads). More pixels per frame: at 16:9 the HD
+  frame is 4260x2400, about 1.7x the compositing work of today.
+- **First step when we start:** phase 1 for one town, headless, compared
+  against `maprender.py`'s picture of the same map. That proves the camera
+  maths before anything else is built.
 
 ## Done
 
