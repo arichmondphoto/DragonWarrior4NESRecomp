@@ -162,8 +162,8 @@ Known today:
 
 ### 9. Smaller ideas
 - Capture a slot-machine win (lamp and palette blinks) and check it in HD.
-- A setting to trim the top and bottom edges like the side trim, for players
-  who want the TV-style picture; the edge fix below makes it optional.
+- Gottside (the 64x64 sky world) is decoded for the edge repair but was never
+  reached in a test: check its edges when a route gets there.
 - Widescreen: see item 10.
 
 ### 10. Widescreen (deferred by decision; this is the suggested method)
@@ -209,6 +209,14 @@ Known today:
   maths before anything else is built.
 
 ## Done
+
+- **2026-11-13 — Full 256x240 picture without edge artifacts.** The game now
+  shows the raw picture by default; the rows a TV's overscan hid (written late
+  by the game, in stale colours) and the masked left column are drawn from the
+  map: towns and dungeons from WRAM, the overworlds decoded from the ROM
+  (`src/dw4_edges.c`, nesrecomp patch 0021). "Trim borders (overscan)" stays
+  as an option, now off by default. Checked in 8-bit and HD on the reference
+  route and in the Underworld.
 
 - **2026-11-13 — Overscan trim, damage-floor flash, sweep false alarms.**
   The "Trim side borders" setting is now **Trim borders (overscan)** and

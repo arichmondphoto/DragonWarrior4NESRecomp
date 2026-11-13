@@ -11,6 +11,8 @@ README.md is the full reference; this file is the working summary.
 - `rom/DragonWarriorIV.nes` — not in git (CRC32 `506E259D` without header).
 - `game.toml`, `seeds.txt`, `captures.txt` — recompiler config / dispatch seeds.
 - `hd/` — the owner's committed art and its metadata (see "Art" below).
+- `src/dw4_edges.c` — the project's host extra (HOST_EXTRAS): map edges drawn from the map at 256x240
+  (nesrecomp patch 0021's background hook). README "Map edges at the full 256x240 picture" has the method.
 - `tools/` — every capture/build script for the HD pack (Python, stdlib + numpy/Pillow/scipy).
 - `routes/` — input scripts (`FRAME BUTTON` / `FRAME -` lines); `ch1_to_first_battles.txt` is the
   reference route most captures replay.
@@ -80,7 +82,10 @@ README.md is the full reference; this file is the working summary.
   The title is the heaviest screen: keep its layer count low and use fully opaque blocks where possible.
   `<options>edgePaletteFallback` (0018): unmatched BG tiles in the top 16 / bottom 24 lines are retried with the
   frame's other BG palettes (the map's scroll seam: right tiles, stale attribute colours). The player can also
-  hide those lines: CropSides ("Trim borders (overscan)") trims 8 px each side plus 8 top / 16 bottom (0020).
+  hide those lines: CropSides ("Trim borders (overscan)") trims 8 px each side plus 8 top / 16 bottom (0020);
+  off by default since the edges are repaired (src/dw4_edges.c, patch 0021; `--no-edge-repair`, `DW4_EDGES_DEBUG=1`).
+  RAM: map W/H `$3F`/`$40`, hero cell `$44`/`$45` (towns) or `$42`/`$43` (overworld, `$28`=0), border cell `$0520`;
+  overworld rows are decoded from ROM bank `$0B` (pointers `$A590` main, `$AB65` Gottside, `$AE89` Underworld).
 - Damage-floor flash: every BG sub-palette becomes `0F161616` for 3 frames per step; `make_field_hdpack.py`
   adds one red-tinted (`rgb:`) entry per map tile quarter for it (blank quarters skipped: the void shares them).
 - Fades: map tiles and characters step each colour down by $10 with black = $0F; **battle monsters fade in

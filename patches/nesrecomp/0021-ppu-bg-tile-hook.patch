@@ -38,8 +38,21 @@ index 473867b..68dfcf3 100644
          p->flags=1;p->bg_index=bg->index;memcpy(p->bg_tile,bg->bytes,16);
          p->bg_x=bg->x;p->bg_y=bg->row;p->bg_ntx=bg->ntx;p->bg_color=(uint8_t)bg_color;
          for(unsigned j=1;j<4;j++)p->bg_pal[j]=ppu.palette[bg_palette*4+j];
+diff --git a/runner/cyc/cyc_settings.c b/runner/cyc/cyc_settings.c
+index d013558..fcf4147 100644
+--- a/runner/cyc/cyc_settings.c
++++ b/runner/cyc/cyc_settings.c
+@@ -18,7 +18,7 @@ void cyc_settings_default(CycSettings *s)
+     s->window_scale = 3;
+     s->fullscreen = 0;
+     s->integer_scale = 1;
+-    s->crop_sides = 1;
++    s->crop_sides = 0;   /* the full 256x240 picture (games may repair their edges: cyc_ppu_set_bg_tile_hook) */
+     s->linear_filter = 0;
+     s->vsync = 0;
+     s->audio_enabled = 1;
 diff --git a/runner/cyc/hw_ppu.c b/runner/cyc/hw_ppu.c
-index e868779..77c2064 100644
+index e868779..adeca23 100644
 --- a/runner/cyc/hw_ppu.c
 +++ b/runner/cyc/hw_ppu.c
 @@ -293,18 +293,41 @@ static void bg_fetch_tail(void)
@@ -104,3 +117,14 @@ index e868779..77c2064 100644
          int i;
          uint8_t sc = 0;
  #if NESRECOMP_PPU_HLE
+@@ -787,8 +810,9 @@ static void compute_pixel(void)
+             if (sc) break;
+         }
+ #endif
++        /* (the game's own left-column masks, not cyc_ppu_set_show_left's) */
+         if (i == 0 && ppu.can_s0hit && ppu.cur_has_s0 && ppu.show_bg && ppu.show_spr && color && sc &&
+-            (ppu.show_spr8 || ppu.dot > 8) && ppu.dot < 256) {
++            (ppu.show_spr8 || ppu.dot > 8) && (ppu.show_bg8 || ppu.dot > 8) && ppu.dot < 256) {
+             ppu.s0hit_pending1 = 1;
+             ppu.can_s0hit = 0;
+         }

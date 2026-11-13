@@ -251,6 +251,39 @@ How the characters are built (`tools/build_hd_pack.sh`):
 - Tiles are matched by their 16 CHR-RAM bytes and exact palettes.
   Bump `HD_VERSION` in `package_macos_app.sh` when the pack's content changes.
 
+## Map edges at the full 256x240 picture
+
+The game shows the full 256x240 picture by default ("Trim borders
+(overscan)" off). On a scrolling map the NES can't keep the edges right: the
+nametable holds exactly 240 lines, so the row leaving one edge is the same
+memory row the game fills for the other edge, and the game writes the
+incoming row ~10 frames after it starts showing (its colours 4 frames later)
+and masks the left 8 pixels. A TV's overscan hid all of that.
+`src/dw4_edges.c` (the project's `HOST_EXTRAS`, using nesrecomp patch 0021)
+draws those edges from the map itself:
+
+- towns, castles, shrines, dungeons: the map in WRAM (`$7800` cells, width
+  `$3F`, height `$40`, hero cell `$44`/`$45`, border cell `$0520`, metatiles
+  `$7600`/`$76C0`);
+- overworld-style maps (`$28` = 0; hero cell `$42`/`$43`): the main world
+  (256x256), Gottside (64x64) and the Underworld (62x54) are decoded from the
+  ROM at start (bank `$0B`, row pointers `$A590`/`$AB65`/`$AE89`, run-length
+  rows; Data Crystal's DW4 ROM map). Sea is drawn with one of the 16 shoreline
+  metatiles at `$7680`, picked by which of its N/E/S/W neighbours (1/2/4/8)
+  are not sea.
+
+Each frame it matches the nametable against the map around the hero (where
+map cell 0,0 sits in the ring; no match = not a map screen = nothing done),
+learns from the correctly drawn middle of the screen how each map value is
+drawn (rooms and roofs shown or hidden, animation frames such as lava), and
+then replaces the tiles fetched for the top/bottom 16 lines and left/right 16
+pixels with what their map cell shows, keeping the game's own drawing when it
+is one of that cell's known looks. Windows and text are never touched; the
+left 8 pixels are unmasked on map screens. Checked over the reference route:
+no pixel changes inside the edge bands, none on the title, battles or menus.
+`--no-edge-repair` (headless and window) turns it off for comparison;
+`DW4_EDGES_DEBUG=1` logs when it locks on.
+
 ## Framework patches
 `patches/nesrecomp/*.patch` are fixes to the pinned nesrecomp checkout, applied
 by `tools/apply_patches.sh` (run automatically by `build_macos.sh`). It restores the files the
@@ -350,6 +383,13 @@ They are framework bugs, kept here until they can go upstream:
   the strip patch 0018 patches over). The window is 240x216 native pixels;
   the Zapper aim and crosshair follow the offset. Labelled "Trim borders
   (overscan)" in the in-game menu (recomp-ui patch 0004 for the launcher).
+  Optional since patch 0021 (off by default).
+- `0021-ppu-bg-tile-hook.patch` — `cyc_ppu_set_bg_tile_hook`: a game may
+  replace the tile number and palette of any background tile the PPU fetches
+  (asked with the screen line, x, PPU address and tile; presentation only,
+  kept out of save states), and `cyc_ppu_set_show_left` shows the leftmost 8
+  pixels the game masks (the HD path follows; sprite-0 hits keep the game's
+  own masks). CropSides now defaults to off. Used by `src/dw4_edges.c`.
 - `0019-host-palette-log.patch` — headless host options for the map capture:
   `--palette-log FILE` (each frame's 32 palette bytes) and `--mem-every N`
   (memory dumps every N frames after `--mem-frame`, as `FILE.<frame>`).
