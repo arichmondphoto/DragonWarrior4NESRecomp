@@ -15,13 +15,26 @@ screens is one line of the report.
             up to --views more viewpoints spread over it (by day)
   monsters  every monster ID as a forced battle (tools/render_monsters_hd.py):
             the settled picture, and one frame of its fade-in
+  battles   every monster ID as a forced battle played on by the route's own
+            battle input for --span frames, sampled every --every frames:
+            attacks, damage blinks, spells and the battle's end
+  dusk      the overworld while night falls (the four palette steps of
+            tools/capture_field.py's nightfall walk), sampled over time
+  chars     every walking character type (tools/capture_types.py's table
+            patch: the pack is loaded with patched ROMs) in a town, sampled
+            while they walk about
   report    merge the results: OUT/report.json, OUT/report.md and contact
             sheets OUT/sheet_*.jpg of the views with something missing
+
+maps --times N samples each view N times, --every frames apart (animated
+tiles: fountains, flames, the map 21 crowd). A sampled view's result is the
+union of its samples' missing pieces; its picture is the worst sample.
 
 Results are per view in OUT/<mode>/*.json (+ a side-by-side picture when
 something is missing), so a stopped sweep resumes where it was.
 
-usage: hd_coverage.py HOST MODS OUT maps|monsters|report [--jobs 2] [--views 3] [--only MAP[:SUB]]
+usage: hd_coverage.py HOST MODS OUT maps|monsters|battles|dusk|chars|report [--jobs 2] [--views 3]
+           [--only MAP[:SUB]] [--times 1] [--every 12] [--span 480]
 """
 import argparse, collections, glob, json, os, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -111,25 +124,55 @@ class Sweep:
                         '--mem-frame', str(frame), '--mem-out', dump, '--save-state', f'{frame}:{st}'], check=True, capture_output=True)
         return open(st, 'rb').read(), load(dump)
 
-    def view(self, state, end, name, out_dir, info, keep_input=True):
-        """Run `state` to frame `end`, analyze it, write OUT/<mode>/<name>.json."""
+    def view(self, state, end, name, out_dir, info, keep_input=True, start=None, every=0, rom=ROM, env=None, inp=None):
+        """Run `state` to frame `end`, analyze it, write OUT/<mode>/<name>.json.
+        With `start` and `every`: analyze every `every`th frame from `start` to `end`
+        and merge (missing pieces: union; counts and picture: the worst frame)."""
         js = os.path.join(out_dir, name + '.json')
         if os.path.exists(js): return json.load(open(js))
         p = os.path.join(self.tmp, name + '.cs'); open(p, 'wb').write(state)
         stem = os.path.join(self.tmp, name); root = self.roots.get()
-        args = [self.a.host, ROM, '--load-state', p, '--frames', str(end + 1), '--no-save', '--mods-root', root,
-                '--present-out', stem + '_d.png', '--screenshot', stem + '_n.png', '--mem-frame', str(end), '--mem-out', stem + '.mem']
-        if keep_input: args += ['--input', ROUTE]
-        r = subprocess.run(args, capture_output=True, text=True, env=self.env)
+        frames = [end] if not every else list(range(start, end + 1, every))
+        args = [self.a.host, rom, '--load-state', p, '--frames', str(end + 1), '--no-save', '--mods-root', root,
+                '--present-out', stem + '_d.png', '--screenshot', stem + '_n.png', '--mem-frame', str(frames[0]), '--mem-out', stem + '.mem']
+        if every: args += ['--present-every', str(every), '--shot-every', str(every), '--mem-every', str(every)]
+        if inp or keep_input: args += ['--input', inp or ROUTE]
+        r = subprocess.run(args, capture_output=True, text=True, env=dict(self.env, **(env or {})))
         self.roots.put(root); os.remove(p)
-        if r.returncode or not os.path.exists(stem + '_d.png'):
+        def files(f):
+            if not every: return stem + '_d.png', stem + '_n.png', stem + '.mem'
+            return (f'{stem}_d_{f:05d}.png', f'{stem}_n_{f:05d}.png', stem + '.mem' if f == frames[0] else f'{stem}.mem.{f}')
+        if r.returncode or not all(os.path.exists(x) for x in files(frames[-1])):
             res = dict(info, error=(r.stdout + r.stderr).strip()[-200:])
         else:
-            res = dict(info, **analyze(stem + '_d.png', stem + '_n.png', stem + '.mem', os.path.join(out_dir, name + '.jpg')))
-            m = load(stem + '.mem'); res['loaded'] = [m['ram'][0x63], m['ram'][0x64]]
-            res['dark'] = max(m['palette'][:16]) == min(m['palette'][:16])
-        for x in ('_d.png', '_n.png', '.mem'):
-            if os.path.exists(stem + x): os.remove(stem + x)
+            res, worst = None, -1
+            for f in frames:
+                d, n, mem = files(f)
+                if not os.path.exists(d): continue
+                pic = os.path.join(self.tmp, f'{name}_{f}.jpg')
+                one = analyze(d, n, mem, pic)
+                m = load(mem); one['loaded'] = [m['ram'][0x63], m['ram'][0x64]]
+                one['dark'] = max(m['palette'][:16]) == min(m['palette'][:16])
+                score = one['bg'] + 8 * one['sp']
+                if res is None: res = dict(info, **one, samples=0, bad_frames=[])
+                else:
+                    seen = {(k[0], k[1]) for k in res['bg_keys']}
+                    res['bg_keys'] += [k for k in one['bg_keys'] if (k[0], k[1]) not in seen]
+                    seen = {(k[0], k[1]) for k in res['sp_keys']}
+                    res['sp_keys'] += [k for k in one['sp_keys'] if (k[0], k[1]) not in seen]
+                    res['unknown_bg'] += one['unknown_bg']
+                res['samples'] += 1
+                if score > 0: res['bad_frames'].append(f)
+                if score > worst:
+                    worst = score; res.update(bg=one['bg'], sp=one['sp'], frame=f, loaded=one['loaded'], dark=one['dark'])
+                    if os.path.exists(pic): os.replace(pic, os.path.join(out_dir, name + '.jpg'))
+                if os.path.exists(pic): os.remove(pic)
+            if not every: res.pop('samples'); res.pop('bad_frames')
+        for f in frames:
+            for x in files(f):
+                if os.path.exists(x): os.remove(x)
+        for x in glob.glob(glob.escape(stem) + '_[dn]*.png') + glob.glob(glob.escape(stem + '.mem') + '*'):
+            os.remove(x)
         json.dump(res, open(js, 'w'))
         return res
 
@@ -153,10 +196,15 @@ class Sweep:
             if night: b[wat + 0x2ED] = 0x80
             name = f'{mp:02d}_{sub:02d}_{k}{"n" if night else ""}'
             info = {'mode': 'maps', 'name': name, 'map': mp, 'sub': sub, 'x': x, 'y': y, 'night': night}
-            res = self.view(bytes(b), EXIT_FRAME + 200, name, out, info)
+            ev, t = self.a.every, self.a.times
+            def at(end, info):
+                if t <= 1: return self.view(bytes(b), end, name, out, info)
+                s0 = -(-end // ev) * ev                               # samples fall on multiples of --every
+                return self.view(bytes(b), s0 + ev * (t - 1), name, out, info, start=s0, every=ev)
+            res = at(EXIT_FRAME + 200, info)
             if res.get('dark') and 'retry' not in res:                # still fading in: give it longer
                 os.remove(os.path.join(out, name + '.json'))
-                res = self.view(bytes(b), EXIT_FRAME + 450, name, out, dict(info, retry=True))
+                res = at(EXIT_FRAME + 456, dict(info, retry=True))
             return res
         self.run(jobs, one, 'views')
 
@@ -170,6 +218,76 @@ class Sweep:
             name = f'm{i:03d}_{"final" if end == ENC_FRAME + 182 else "fade"}'
             return self.view(bytes(b), end, name, out, {'mode': 'monsters', 'name': name, 'monster': i}, keep_input=False)
         self.run(jobs, one, 'battle frames')
+
+    def battles(self):
+        """Each monster in a forced battle, played on with the route's battle input, sampled over time."""
+        out = os.path.join(self.a.out, 'battles'); os.makedirs(out, exist_ok=True)
+        st, m = self.base(ENC_FRAME); off = st.find(m['wram'])
+        ev = self.a.every; start = -(-(ENC_FRAME + 120) // ev) * ev       # after the fade-in (monsters check that)
+        def one(i):
+            b = bytearray(st); b[off + 0xE45:off + 0xE49] = bytes([i, 255, 255, 255])
+            name = f'b{i:03d}'
+            return self.view(bytes(b), start + ev * (self.a.span // ev), name, out, {'mode': 'battles', 'name': name, 'monster': i},
+                             start=start, every=ev)
+        ids = sorted({m for m, _ in self.a.only}) if self.a.only else range(NMONSTERS)
+        self.run(list(ids), one, 'battles')
+
+    def dusk(self):
+        """The overworld while night falls: capture_field.py's nightfall walk at each clock step."""
+        out = os.path.join(self.a.out, 'dusk'); os.makedirs(out, exist_ok=True)
+        st, m = self.base(7200); wat = st.find(bytes(m['wram'][:0x400]))
+        ev = self.a.every
+        def one(job):
+            n, clock = job
+            b = bytearray(st); b[wat + 0x2ED] = clock
+            name = f'dusk{n}'
+            s0 = -(-7212 // ev) * ev
+            return self.view(bytes(b), s0 + ev * (500 // ev), name, out, {'mode': 'dusk', 'name': name, 'clock': clock},
+                             start=s0, every=ev)
+        self.run([(1, 0x77), (2, 0x7B), (3, 0x7F), (4, 0x83)], one, 'nightfall walks')
+
+    def chars(self):
+        """Every walking character type, by capture_types.py's table patch, in a town, while they walk about."""
+        from capture_types import TABLE, NTYPES, TOWN, fold
+        out = os.path.join(self.a.out, 'chars'); os.makedirs(out, exist_ok=True)
+        st, m = self.base(EXIT_FRAME)
+        ram_at = st.find(bytes(m['ram'][0x500:0x600])) - 0x500
+        w, h = size(*TOWN); b = bytearray(st)
+        for e in (0x5A0, 0x5A7): b[ram_at + e + 2: ram_at + e + 7] = bytes([TOWN[0], TOWN[1], w // 2, h // 2, 0x82])
+        st = bytes(b)
+        ev = self.a.every; s0 = -(-(EXIT_FRAME + 160) // ev) * ev; end = s0 + ev * (self.a.span // ev)
+        idle = os.path.join(self.tmp, 'idle.in')
+        open(idle, 'w').write(''.join(l for l in open(ROUTE) if l.strip() and int(l.split()[0]) <= EXIT_FRAME + 1) + f'{EXIT_FRAME + 1} -\n')
+        # which of the town's person slots load a full type of their own (capture_types.py)
+        mem = os.path.join(self.tmp, 'plain_types.mem')
+        subprocess.run([self.a.host, ROM, '--load-state', self._state_file(st), '--frames', str(EXIT_FRAME + 161), '--no-save',
+                        '--input', idle, '--mods-root', self.a.mods, '--mem-frame', str(EXIT_FRAME + 160), '--mem-out', mem],
+                       check=True, capture_output=True)
+        wr = load(mem)['wram']; lst = []
+        for i in range(16):
+            if wr[0xE5E + i] == 0xFF: break
+            lst.append(wr[0xE5E + i])
+        carriers, seen = [], set()
+        for i, raw in enumerate(lst):
+            if raw & 0x80 or fold(raw) in seen: continue
+            seen.add(fold(raw)); carriers.append((4 + i, fold(raw)))
+        rom = open(ROM, 'rb').read()
+        jobs = [list(range(NTYPES))[k:k + len(carriers)] for k in range(0, NTYPES, len(carriers))]
+        def one(n):
+            patched = bytearray(rom)
+            for (slot, entry), t in zip(carriers, jobs[n]):
+                patched[TABLE + 24 * entry: TABLE + 24 * entry + 24] = rom[TABLE + 24 * t: TABLE + 24 * t + 24]
+            p = os.path.join(self.tmp, f'types{n}.nes'); open(p, 'wb').write(patched)
+            name = f'types_{n:02d}'
+            r = self.view(st, end, name, out, {'mode': 'chars', 'name': name, 'types': jobs[n]}, start=s0, every=ev,
+                          rom=p, env={'NESRECOMP_ALLOW_PRG_MISMATCH': '1'}, inp=idle)
+            os.remove(p); return r
+        self.run(list(range(len(jobs))), one, 'character runs')
+
+    def _state_file(self, st):
+        p = os.path.join(self.tmp, f'st{len(st)}_{hash(st) & 0xFFFFFF:06x}.cs')
+        if not os.path.exists(p): open(p, 'wb').write(st)
+        return p
 
     def run(self, jobs, one, what):
         done = [0]
@@ -214,16 +332,19 @@ def report(out):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('host'); ap.add_argument('mods'); ap.add_argument('out')
-    ap.add_argument('mode', choices=('maps', 'monsters', 'report'))
+    ap.add_argument('mode', choices=('maps', 'monsters', 'battles', 'dusk', 'chars', 'report'))
     ap.add_argument('--jobs', type=int, default=2); ap.add_argument('--views', type=int, default=3)
     ap.add_argument('--fade-at', type=int, default=104, help='monsters: frames after the encounter of the fade-in frame to check (fade runs ~+96..+112)')
-    ap.add_argument('--only', action='append', default=[], help='maps: MAP or MAP:SUB (repeatable)')
+    ap.add_argument('--only', action='append', default=[], help='maps: MAP or MAP:SUB; battles: monster ID (repeatable)')
+    ap.add_argument('--times', type=int, default=1, help='maps: samples per view, --every frames apart')
+    ap.add_argument('--every', type=int, default=12, help='frames between samples (maps --times, battles, dusk, chars)')
+    ap.add_argument('--span', type=int, default=480, help='battles, chars: frames sampled')
     a = ap.parse_args()
     a.only = {(int(s.split(':')[0]), int(s.split(':')[1]) if ':' in s else None) for s in a.only}
     os.makedirs(a.out, exist_ok=True)
     if a.mode == 'report': return report(a.out)
     s = Sweep(a)
-    s.maps() if a.mode == 'maps' else s.monsters()
+    getattr(s, a.mode)()
 
 if __name__ == '__main__':
     main()
