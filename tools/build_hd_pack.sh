@@ -44,6 +44,14 @@ cat >> "$OUT/NOTICE.txt" <<'NOTE'
 Battle monsters: the project owner's artwork (hd/monsters/source), fitted
 and sliced onto the game's own monster tiles by tools/make_monster_hdpack.py.
 NOTE
+if ls hd/battle_effects/FX*.png >/dev/null 2>&1; then
+    "$PY" tools/make_effects_hdpack.py hd/battle_effects "$OUT"
+    cat >> "$OUT/NOTICE.txt" <<'NOTE'
+
+Battle effects (the Transform smoke): the project owner's artwork
+(hd/battle_effects), cut into the game's sprites by tools/make_effects_hdpack.py.
+NOTE
+fi
 
 # ---- title screen and castle door animation (captured from the route) ----
 XCAP="$(dirname "$OUT")/extra-capture"

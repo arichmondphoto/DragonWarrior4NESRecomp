@@ -21,6 +21,7 @@ hd/pack/
 !hd/sprites/source/*.png
 !hd/field/sheets/*.png
 !hd/monsters/extra/*.png
+!hd/battle_effects/*.png
 !hd/field/doors/*.png
 !hd/title/*.png
 !hd/title/layers/*.png

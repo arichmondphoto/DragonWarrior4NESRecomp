@@ -201,10 +201,8 @@
   "191": "necro/necro_7"
  },
  "no_art": {
-  "_about": "Game monster IDs with no art: 173 (its forced battle shows a shop). The others once listed here have separate pictures in hd/monsters/extra/.",
-  "ids": [
-   173
-  ]
+  "_about": "Game monster IDs with no art: none. 173 (its forced battle shows the Chapter 3 shop) has hd/monsters/extra/M173.png like the others.",
+  "ids": []
  },
  "when": {
   "_about": "Sheet sprites drawn only while a game byte has a value (ADDR==VALUE). Necrosaro's forms share most tiles, so each is gated on his form counter $6E7E (reset to 0 at battle start, bank 18 $8092; incremented by bank 17 $9212/$9238).",

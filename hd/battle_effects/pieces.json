@@ -1,0 +1,373 @@
+{
+"FX01": [
+{
+"origin": [
+64,
+384
+],
+"scale": 16,
+"size": [
+16,
+16
+],
+"tiles": [
+{
+"x": 0,
+"y": 0,
+"chr": "0000010205193D2F0000010306162332",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 0,
+"chr": "0000C0E0F0F0C83C000080002020B0F0",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 0,
+"y": 8,
+"chr": "331D0406030000003E1E070703000000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 8,
+"chr": "78E4F820C0000000C45C38E0C0000000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+}
+]
+},
+{
+"origin": [
+352,
+384
+],
+"scale": 8,
+"size": [
+32,
+32
+],
+"tiles": [
+{
+"x": 0,
+"y": 0,
+"chr": "00000000000000000000000000000000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 0,
+"chr": "00000003070F0FEF0000000204080888",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 16,
+"y": 0,
+"chr": "000000E0F0F8F8FC0000000000000000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 24,
+"y": 0,
+"chr": "00000000000000000000000000000000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 0,
+"y": 8,
+"chr": "03070B0B090C060302040C0C0E0F0703",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 8,
+"chr": "EFF7FBF8E1F95DBD1C1E0F0F1F3FE7C3",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 16,
+"y": 8,
+"chr": "FDFFFFFDFDFCFEFF0416FC8606070381",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 24,
+"y": 8,
+"chr": "C0E0F0F0F0F020E0000000000010E0E0",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 0,
+"y": 16,
+"chr": "00010102050B0B0900010103060C0C0E",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 16,
+"chr": "B80FDFEFEFE7F3F8C7FFF07030383C1F",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 16,
+"y": 16,
+"chr": "FE7C9FCFDFFFFFEFC1F3E77870102030",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 24,
+"y": 16,
+"chr": "C000C0E0F0F0E0E0C080800000001010",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 0,
+"y": 24,
+"chr": "0C060300000000000F07030000000000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 24,
+"chr": "C73BEF000000000038FCEF0000000000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 16,
+"y": 24,
+"chr": "B773D80F0000000078FCDF0F00000000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 24,
+"y": 24,
+"chr": "D02060C00000000030E0E0C000000000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+}
+]
+},
+{
+"origin": [
+640,
+384
+],
+"scale": 8,
+"size": [
+32,
+32
+],
+"tiles": [
+{
+"x": 0,
+"y": 0,
+"chr": "0205052543ABADBE0306063E7CDCDEC7",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 0,
+"chr": "F0F8B8BD9DC5F41A000060617B3F0FFD",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 16,
+"y": 0,
+"chr": "5CBEBE5E65B9C57960C0C1A19BC7FFFF",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 24,
+"y": 0,
+"chr": "003C7EBF7F6F72BC002040C080908DC3",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 0,
+"y": 8,
+"chr": "DB6E301E2F5FAFAFE7713F1F3160D8D8",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 8,
+"chr": "E01F2F5F5F57D7CBFFFFF0E0E0EC6C77",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 16,
+"y": 8,
+"chr": "8A6F979B8EBD7D7D7D98EE657376C6C6",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 24,
+"y": 8,
+"chr": "C27C80E6FFF7D7D7FEFC7CFC08183838",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 0,
+"y": 16,
+"chr": "B7DF633F102F5FBFCEE07C3F1F3060C0",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 16,
+"chr": "A79F2F5FDB5C4FAE787FF0E0E4E3F071",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 16,
+"y": 16,
+"chr": "5D3E87CCDFD5AF17E6F7FB73707B5EEC",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 24,
+"y": 16,
+"chr": "C96698F000FCBFBF3F9EF8F0FC826060",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 0,
+"y": 24,
+"chr": "BFB7AFCF576F301FC0CCD8F86E703F1F",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 8,
+"y": 24,
+"chr": "A1D2EDEBCBAD46837F3F1E1C2C6EC783",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 16,
+"y": 24,
+"chr": "C5F5F5FEEBF910E0FE2E0E0F1B19F0E0",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+},
+{
+"x": 24,
+"y": 24,
+"chr": "DEE6FDFB669CF000391903079EFCF000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+}
+]
+},
+{
+"origin": [
+928,
+384
+],
+"scale": 32,
+"size": [
+8,
+8
+],
+"tiles": [
+{
+"x": 0,
+"y": 0,
+"chr": "00182C565E641C0000103068627C1C00",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+}
+]
+},
+{
+"origin": [
+1216,
+384
+],
+"scale": 32,
+"size": [
+8,
+8
+],
+"tiles": [
+{
+"x": 0,
+"y": 0,
+"chr": "00001834281800000000102834180000",
+"pal": "FF303C2C",
+"hflip": false,
+"vflip": false
+}
+]
+}
+]
+}
