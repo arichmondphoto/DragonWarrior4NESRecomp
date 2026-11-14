@@ -12,6 +12,8 @@ are skipped (their key would match every empty sprite).
 usage: make_effects_hdpack.py ART_DIR OUTDIR [--scale 10]
 """
 import argparse, glob, json, os
+import numpy as np
+from scipy import ndimage
 from PIL import Image
 
 SHEET_W, SHEET_H, CELL = 1536, 1024, 256
@@ -54,7 +56,19 @@ def main():
             left = (cx + frames[i - 1]['origin'][0] + frames[i - 1]['size'][0] * frames[i - 1]['scale'] // 2) // 2 if i else 0
             right = (cx + frames[i + 1]['origin'][0] + frames[i + 1]['size'][0] * frames[i + 1]['scale'] // 2) // 2 if i + 1 < len(frames) else SHEET_W
             part = art.crop((left, 0, right, SHEET_H))
-            al = part.getchannel('A').point(lambda v: v if v >= 24 else 0); part.putalpha(al)
+            # the painted frames overlap: keep only the shapes centred on this
+            # frame's place (connected pieces whose centre is inside its box)
+            a8 = np.asarray(part.getchannel('A')).copy(); a8[a8 < 24] = 0
+            lab, nl = ndimage.label(a8 > 0)
+            x0, x1, y0, y1 = ox - left - 24, ox - left + w * k + 24, oy - 24, oy + h * k + 24
+            # a neighbour's cloud cut by the window's side edge is not ours
+            # (ours may reach the edge too, but is centred on this frame)
+            cut = set(np.unique(lab[:, 0])) | set(np.unique(lab[:, -1]))
+            mid = ox - left + w * k / 2
+            keep = [j + 1 for j, (cy, cx) in enumerate(ndimage.center_of_mass(a8 > 0, lab, range(1, nl + 1)))
+                    if x0 <= cx <= x1 and y0 <= cy <= y1 and (j + 1 not in cut or abs(cx - mid) <= w * k * 0.3)]
+            a8[~np.isin(lab, keep)] = 0
+            al = Image.fromarray(a8); part.putalpha(al)
             bb = al.getbbox()
             if not bb: continue
             part = part.crop(bb)
