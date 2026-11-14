@@ -50,3 +50,20 @@ def smooth_mask(bits, S=32, roundness=0.9, weight=0.0, mode='zero'):
     o = PAD * 4 * up                                 # crop the context away
     big = big.crop((o, o, o + 32 * up, o + 32 * up))
     return big.resize((S, S), Image.LANCZOS)
+
+def smooth_cell(grid, x0, y0, S=32, roundness=0.9):
+    """One 8x8 cell of a whole-screen grid of colour indices (0 = clear),
+    smoothed with its real neighbours as context (letters and logos drawn
+    across several tiles stay joined). Returns (alpha L image S x S, index
+    image L S x S: each HD pixel's colour index from Scale2x x2, nearest)."""
+    h, w = len(grid), len(grid[0])
+    at = lambda y, x: grid[y][x] if 0 <= y < h and 0 <= x < w else 0
+    idx = [[at(y0 + y, x0 + x) for x in range(-PAD, 8 + PAD)] for y in range(-PAD, 8 + PAD)]
+    g = scale2x(scale2x(idx)); n = len(g)
+    up = max(8, -(-S * 3 // 32)); o = PAD * 4
+    im = Image.new('L', (n, n)); im.putdata([255 if v else 0 for row in g for v in row])
+    big = im.resize((n * up, n * up), Image.NEAREST).filter(ImageFilter.GaussianBlur(radius=roundness * up))
+    big = big.point(lambda v: 255 if v >= 128 else 0).crop((o * up, o * up, (o + 32) * up, (o + 32) * up))
+    ci = Image.new('L', (n, n)); ci.putdata([v for row in g for v in row])
+    ci = ci.crop((o, o, o + 32, o + 32))
+    return big.resize((S, S), Image.LANCZOS), ci.resize((S, S), Image.NEAREST)

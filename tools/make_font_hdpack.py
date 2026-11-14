@@ -12,14 +12,23 @@ Styles:
   font              glyphs re-rendered from a TrueType/OpenType font (--font);
                     window pieces are still smoothed from the original tiles.
 
+Other text screens (the copyright screen and "PRESENTED BY" at power-on use
+their own lettering in the same tile numbers): --screen DUMP adds every
+non-blank background tile shown in that dump, smoothed, keyed by its shapes;
+--sprites DUMP does the same for the sprites shown (pattern table $1000, as
+the ENIX logo on the "PRESENTED BY" screen uses: its letter "e" is drawn in
+by a sprite animation, so pass one dump per animation step).
+
 usage: make_font_hdpack.py DUMP OUTDIR [--style smooth|font] [--font PATH]
                            [--roundness 0.9] [--scale 10] [--preview PNG]
+                           [--screen DUMP ...] [--sprites DUMP ...]
 """
 import argparse, os, sys
 from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, os.path.dirname(__file__))
 from vramdump import load, tile_pixels
-from smooth_pixels import smooth_mask
+from field_sheet import NES
+from smooth_pixels import smooth_mask, smooth_cell
 
 # CHR-RAM tile ($1xxx pattern table) -> character, verified against the
 # name-entry grid and enlarged tile sheets.
@@ -34,6 +43,7 @@ GLYPHS.update({
     0x16A: '’', 0x16B: '’',            # apostrophe / closing quote
     0x16C: '.’',                            # period + closing quote in one cell
     0x16D: '?', 0x16E: '!', 0x16F: '-',
+    0x175: '(', 0x176: ')',            # name-entry screen
     0x170: '*', 0x171: ':', 0x172: '…',
     0x177: ',', 0x178: '.',
 })
@@ -104,6 +114,82 @@ def smooth_tile(chr_ram, t, S, roundness, mode):
     out = Image.new('RGBA', (S, S), (255, 255, 255, 0)); out.putalpha(m)
     return out
 
+def screen_cells(screens, sprite_dumps, S, roundness):
+    """[(CHR data, exact key, any-palette key, art RGBA, white RGBA)] for every
+    non-blank BG cell of the `screens` dumps (both nametables) and every
+    sprite of the `sprite_dumps` (pattern table $1000), smoothed in context."""
+    out, done = [], set()
+    def rgb(c): v = NES[c & 0x3F]; return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+    def cell_art(grid, x0, y0, cols):
+        alpha, ci = smooth_cell(grid, x0, y0, S, roundness)
+        cip = ci.load(); ap = alpha.load()
+        counts = [0] * 4
+        for yy in range(8):
+            for xx in range(8): counts[grid[y0 + yy][x0 + xx] if 0 <= y0 + yy < len(grid) and 0 <= x0 + xx < 256 else 0] += 1
+        main = max(range(1, 4), key=lambda k: counts[k])
+        art = Image.new('RGBA', (S, S)); px = art.load()
+        for yy in range(S):
+            for xx in range(S):
+                k = cip[xx, yy] or main
+                px[xx, yy] = cols[k] + (ap[xx, yy],)
+        white = Image.new('RGBA', (S, S), (255, 255, 255, 0)); white.putalpha(alpha)
+        return art, white
+    for sd in screens:
+        m = load(sd); ch, ci, pal = m['chr_ram'], m['ciram'], m['palette']
+        for nt in (0, 0x400):
+            grid = [[0] * 256 for _ in range(240)]
+            for r in range(30):
+                for c in range(32):
+                    px = tile_pixels(ch, 0x100 + ci[nt + r * 32 + c])
+                    for yy in range(8): grid[r * 8 + yy][c * 8:c * 8 + 8] = px[yy]
+            for r in range(30):
+                for c in range(32):
+                    t = 0x100 + ci[nt + r * 32 + c]; data = bytes(ch[16 * t:16 * t + 16])
+                    if not any(data) or data in done: continue
+                    done.add(data)
+                    at = ci[nt + 0x3C0 + (r // 4) * 8 + c // 4]
+                    sub = (at >> (((r % 4) // 2) * 4 + ((c % 4) // 2) * 2)) & 3
+                    p = [pal[0]] + [pal[sub * 4 + k] for k in (1, 2, 3)]
+                    art, white = cell_art(grid, c * 8, r * 8, [rgb(x) for x in p])
+                    out.append((data, bytes(p).hex().upper(), '0F303030', art, white))
+    # each sprite tile once: from the dump where its colours are brightest (not
+    # mid-fade), the latest such (the logo is complete there: best context)
+    best = {}
+    for order, sd in enumerate(sprite_dumps):
+        m = load(sd); ch, oam, pal = m['chr_ram'], m['oam'], m['palette']
+        for k in range(0, 256, 4):
+            y, t, at, x = oam[k:k + 4]
+            if y >= 0xEF: continue
+            data = bytes(ch[16 * (0x100 + t):16 * (0x100 + t) + 16])
+            if not any(data): continue
+            so = 0x10 + (at & 3) * 4
+            lit = sum(c & 0x30 for c in pal[so + 1:so + 4] if (c & 0x0F) < 0x0D)
+            if data not in best or (lit, order) >= best[data][:2]: best[data] = (lit, order, sd)
+    grids = {}
+    for data, (_, _, sd) in best.items():
+        m = load(sd); ch, oam, pal = m['chr_ram'], m['oam'], m['palette']
+        if sd not in grids:
+            grid = [[0] * 256 for _ in range(240)]
+            for k in range(252, -4, -4):                 # OAM order: lower entries on top
+                y, t, at, x = oam[k:k + 4]
+                if y >= 0xEF: continue
+                px = tile_pixels(ch, 0x100 + t); hf, vf = at & 0x40, at & 0x80
+                for yy in range(8):
+                    for xx in range(8):
+                        v = px[7 - yy if vf else yy][7 - xx if hf else xx]
+                        if v and y + 1 + yy < 240 and x + xx < 256: grid[y + 1 + yy][x + xx] = v
+            grids[sd] = grid
+        for k in range(0, 256, 4):
+            y, t, at, x = oam[k:k + 4]
+            if y >= 0xEF or bytes(ch[16 * (0x100 + t):16 * (0x100 + t) + 16]) != data: continue
+            so = 0x10 + (at & 3) * 4; p = [0] + [pal[so + j] for j in (1, 2, 3)]
+            art, white = cell_art(grids[sd], x, y + 1, [(0, 0, 0)] + [rgb(c) for c in p[1:]])
+            if at & 0x40: art, white = art.transpose(Image.FLIP_LEFT_RIGHT), white.transpose(Image.FLIP_LEFT_RIGHT)
+            if at & 0x80: art, white = art.transpose(Image.FLIP_TOP_BOTTOM), white.transpose(Image.FLIP_TOP_BOTTOM)
+            out.append((data, 'FF' + bytes(p[1:]).hex().upper(), 'FF303030', art, white))
+            break
+    return out
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('dump'); ap.add_argument('outdir')
@@ -112,6 +198,8 @@ def main():
     ap.add_argument('--roundness', type=float, default=0.9)
     ap.add_argument('--scale', type=int, default=10)  # project standard: 10x
     ap.add_argument('--preview')
+    ap.add_argument('--screen', action='append', default=[], help='a dump of another text screen (repeatable)')
+    ap.add_argument('--sprites', action='append', default=[], help='a dump whose sprites to add (pattern table $1000; repeatable)')
     a = ap.parse_args()
     S = 8 * a.scale
     m = load(a.dump); chr_ram, pal = m['chr_ram'], m['palette']
@@ -124,6 +212,9 @@ def main():
             return smooth_tile(chr_ram, t, S, a.roundness, 'zero')
         return render_glyph(font, GLYPHS[t], S, t, sx)
     tiles = sorted(GLYPHS) + sorted(UI_TILES)
+    # other text screens: each cell smoothed with the whole screen as context
+    # (their letters and the logo span several tiles), in its own colours
+    extra = screen_cells(a.screen, a.sprites, S, a.roundness)
     cols = 16; rows = (len(tiles) + cols - 1) // cols
     sheet = Image.new('RGBA', (cols * S, rows * S), (0, 0, 0, 0))
     lines = ['<ver>106', f'<scale>{a.scale}', '<img>text.png',
@@ -138,6 +229,17 @@ def main():
         x, y = (n % cols) * S, (n // cols) * S; n += 1
         sheet.alpha_composite(art(t), (x, y))
         lines.append(f'<tile>0,{data.hex().upper()},{bg_pal},{x},{y},1,Y')
+    # each with two entries: its exact palette (art in the screen's colours)
+    # and any palette (white art, tinted while drawing: fades)
+    for data, key, any_key, art_rgba, white in extra:
+        if (data, key[:2] == 'FF') in seen or (key[:2] != 'FF' and data in seen): continue
+        seen.add((data, key[:2] == 'FF'))
+        for im, k, d in ((art_rgba, key, 'N'), (white, any_key, 'Y')):
+            if n >= cols * rows:                          # grow the sheet
+                rows += 4; big = Image.new('RGBA', (cols * S, rows * S), (0, 0, 0, 0)); big.alpha_composite(sheet); sheet = big
+            x, y = (n % cols) * S, (n // cols) * S; n += 1
+            sheet.alpha_composite(im, (x, y))
+            lines.append(f'<tile>0,{data.hex().upper()},{k},{x},{y},1,{d}')
     sheet = sheet.crop((0, 0, cols * S, ((n + cols - 1) // cols) * S))
     os.makedirs(a.outdir, exist_ok=True)
     for old in ('font.png',):

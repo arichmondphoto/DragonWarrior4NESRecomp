@@ -1,27 +1,31 @@
 """Package the graphics the HD pack still lacks, for OpenAI's image API
 (tools/openai_sprites.py, one sub-folder per kind, each with its own
-style image and rules):
+style image and rules). What is missing is read from the build's reports
+and captures, so the package always holds what is left:
 
-  monsters/     the battle monsters with no art (hd/monsters/mapping.json
-                no_art), one 1024x1024 picture each
-  effects/      shadows, sparkles and other map effects (the optional
-                characters of tools/export_chatgpt_sprites.py)
-  night_tiles/  the night-only map tiles (Endor's crowd, Monbaraba's
-                audience), one sheet; style = the owner's map atlases
-  doors/        the castle doors' opening animation (Burland Castle), the
-                three in-between frames drawn between the owner's closed
-                and open door art
-  title/        the title screen (1280x1200)
+  map_tiles/       map tiles with no art (field-report.json "missing"), on
+                   sheets of 24; new IDs are added to hd/field/ids.json
+  characters/      walking characters with no hd/sprites/source art
+                   (C069-C072 = one big demon, one sheet)
+  battle/          battle pictures with no art: the shop scene's merchant
+                   (capture 173) and the Impostor's "Double" after Transform
+                   (needs --host: one forced battle)
+  battle_effects/  battle sprite effects: the Transform smoke cloud (3
+                   stages) and the sparkles around the Double (--host)
 
-usage: export_gaps.py BUILD_DIR OUT
+Earlier rounds (all done now, still available with --only): monsters,
+effects, night_tiles, doors, title.
+
+usage: export_gaps.py BUILD_DIR OUT [--host HOST] [--only KIND,...]
   BUILD_DIR: a tools/build_hd_pack.sh output's parent (monster-capture,
-  field-capture, sprite-capture), e.g. build/hd
+  field-capture, sprite-capture, *-report.json), e.g. out/build7
 """
-import collections, glob, json, os, shutil, subprocess, sys, tempfile
+import argparse, collections, glob, hashlib, json, os, shutil, subprocess, sys, tempfile
 import numpy as np
 from PIL import Image, ImageDraw
 sys.path.insert(0, os.path.dirname(__file__))
 from monster_tiles import monster
+from vramdump import tile_pixels
 from export_chatgpt_tiles import art_tiles, render_sheet, tile_image, W as TW, H as TH
 from vramdump import load
 from field_sheet import NES
@@ -193,38 +197,265 @@ def title(build, out):
     monster_style().save(os.path.join(d, 'style_reference.png'))
     return 1
 
+# ---------------------------------------------------------------- map tiles (round 2)
+MAP_PROMPT = """Redraw Image 1 as high-resolution, hand-painted map tiles matching the style of the HD tiles in Image 2.
+Image 1 holds {n} square map tiles from a top-down 2D fantasy RPG (Dragon Warrior IV): {what}
+Hard rules:
+1. Output exactly 1536 x 1024. Keep the same 6 x 4 grid: every tile stays in its own square at the same position and size, grey gaps between them. Unused squares stay plain grey.
+2. Each tile fills its whole square edge to edge; ground, water and walls run straight off every edge so the tiles sit seamlessly next to each other and next to tiles like those in Image 2.
+3. Keep each tile's layout (the same shapes in the same places), top-down view and colours.
+4. No text, borders, shadows or vignettes.
+"""
+PREFIX_WHAT = {'W': 'overworld tiles', 'T': 'town tiles', 'D': 'dungeon and tower tiles', 'S': 'shared town and dungeon tiles'}
+
+def next_ids(ids, prefix, n):
+    used = {int(k[1:]) for k in ids if k[0] == prefix and k[1:].isdigit()}
+    out, k = [], max(used, default=0) + 1
+    while len(out) < n:
+        if k not in used: out.append(f'{prefix}{k:03d}')
+        k += 1
+    return out
+
+def map_tiles(a, out):
+    """Every map tile the build has no art for, with a new art ID (written to
+    hd/field/ids.json with the palette the sheet shows it in, so the
+    returned sheet slices back through tools/slice_field_sheets.py)."""
+    missing = json.load(open(os.path.join(a.build, 'field-report.json')))['missing']
+    if not missing: return 0
+    rows = json.load(open(os.path.join(a.build, 'field-capture', 'field_tiles_all.json')))
+    by_item = collections.defaultdict(list)
+    for r in rows: by_item[r['item']].append(r)
+    idp = os.path.join(HERE, 'hd', 'field', 'ids.json'); idj = json.load(open(idp)); ids = idj['ids']
+    by_fp = {v[0]: k for k, v in ids.items()}
+    tiles, uses = [], {}
+    for prefix in 'WTDS':
+        mine = [m for m in missing if m[0] == prefix]
+        fresh = iter(next_ids(ids, prefix, len(mine)))
+        for iid in mine:
+            vs = by_item[iid]
+            # the palette it is seen in most (daytime first)
+            best = max(vs, key=lambda r: (not all(u.endswith('(night)') for u in r.get('used_in', [])), len(r.get('used_in', []))))
+            t, pal = bytes.fromhex(best['chr']), bytes.fromhex(best['nes_colors'])
+            fp = hashlib.sha1(t).hexdigest()[:16]
+            aid = by_fp.get(fp) or next(fresh)
+            ids.setdefault(aid, [fp, pal.hex()])
+            tiles.append((aid, t, bytes.fromhex(ids[aid][1]))); uses[aid] = sorted({u for r in vs for u in r.get('used_in', [])})[:6]
+    json.dump(idj, open(idp, 'w'), indent=0)
+    d = os.path.join(out, 'map_tiles'); write_pkg(d, NIGHT_RULES, {'background': 'opaque'})
+    sheets = {}
+    for s0 in range(0, len(tiles), 24):
+        part = tiles[s0:s0 + 24]; name = f'M{s0 // 24 + 1:02d}'
+        render_sheet([(t, p) for _, t, p in part]).save(os.path.join(d, 'inputs', name + '.png'))
+        kinds = collections.Counter(aid[0] for aid, _, _ in part)
+        what = ', '.join(f'{n} {PREFIX_WHAT[k]}' for k, n in kinds.items()) + ' (in that order, left to right, top to bottom).'
+        open(os.path.join(d, 'prompts', name + '.txt'), 'w').write(MAP_PROMPT.format(n=len(part), what=what))
+        sheets[name] = [aid for aid, _, _ in part]
+    json.dump({'layout': 'tools/export_chatgpt_tiles.py', 'sheets': sheets, 'used_in': uses}, open(os.path.join(d, 'sheets.json'), 'w'), indent=0)
+    # style: for each new tile the owner's tile closest in colour, as the pack shows it
+    art = os.path.join(a.build, 'field-capture', 'art')
+    have = {aid: tp for aid, tp in art_tiles(rows).items() if os.path.exists(os.path.join(art, aid + '.png'))}
+    mean = lambda t, p: np.asarray(tile_image(t, p)).reshape(-1, 3).mean(0)
+    hm = {aid: mean(*tp) for aid, tp in have.items()}
+    picks = []
+    for aid, t, p in tiles:
+        m = mean(t, p)
+        for _, h in sorted((np.abs(v - m).sum(), h) for h, v in hm.items() if h[0] == aid[0] or aid[0] == 'S'):
+            if h not in picks: picks.append(h); break
+    ref = Image.new('RGB', (1024, 1024), GREY)
+    for i, h in enumerate(picks[:16]):
+        ref.paste(Image.open(os.path.join(art, h + '.png')).convert('RGB').resize((240, 240)), (16 + (i % 4) * 252, 16 + (i // 4) * 252))
+    ref.save(os.path.join(d, 'style_reference.png'))
+    return len(sheets)
+
+# ---------------------------------------------------------------- characters (round 2)
+def characters(a, out):
+    """Walking characters without art in hd/sprites/source."""
+    have = {f[:-4] for f in os.listdir(os.path.join(HERE, 'hd', 'sprites', 'source')) if f.endswith('.png')}
+    tmp = tempfile.mkdtemp()
+    subprocess.run([sys.executable, os.path.join(TOOLS, 'export_chatgpt_sprites.py'),
+                    os.path.join(a.build, 'sprite-capture', 'characters.json'), os.path.join(tmp, 'pkg')], check=True, capture_output=True)
+    src = os.path.join(tmp, 'pkg'); d = os.path.join(out, 'characters')
+    want = []
+    for f in sorted(os.listdir(os.path.join(src, 'inputs'))):
+        cid = f[:-4]
+        parts = cid.split('-')
+        if '-' in cid: parts = [f'C{n:03d}' for n in range(int(parts[0][1:]), int(parts[1][1:]) + 1)]
+        if not all(p in have for p in parts): want.append(cid)
+    if not want: shutil.rmtree(tmp); return 0
+    write_pkg(d, open(os.path.join(src, 'PROJECT_INSTRUCTIONS.txt')).read(), {'background': 'transparent'})
+    shutil.copy(os.path.join(src, 'style_reference.png'), d)
+    os.makedirs(os.path.join(d, 'silhouettes'), exist_ok=True)
+    for cid in want:
+        shutil.copy(os.path.join(src, 'inputs', cid + '.png'), os.path.join(d, 'inputs'))
+        shutil.copy(os.path.join(src, 'silhouettes', cid + '.png'), os.path.join(d, 'silhouettes'))
+        for f in os.listdir(os.path.join(src, 'prompts')):
+            if f == cid + '.txt' or f.startswith(cid + '_'): shutil.copy(os.path.join(src, 'prompts', f), os.path.join(d, 'prompts'))
+    shutil.rmtree(tmp)
+    return len(want)
+
+# ---------------------------------------------------------------- battle captures
+IMPOSTOR = 153
+SMOKE_FRAMES = (9020, 9024, 9026)       # Transform: small puff, cloud, full cloud (tools/hd_coverage.py ENC_FRAME + forced Impostor)
+SPARKLE_FRAMES = (9036, 9040)           # the two sparkle shapes around the Double
+DOUBLE_FRAME = 9050
+
+def forced_battle(host, monster_id, frames, tmp):
+    """Mem dumps + 8-bit screenshots of a battle against monster_id, forced
+    at the encounter of the reference route (as tools/hd_coverage.py)."""
+    sys.path.insert(0, TOOLS); import hd_coverage as Hc
+    mods = os.path.join(tmp, 'mods'); os.makedirs(mods, exist_ok=True)
+    st, dump = os.path.join(tmp, 'b.cs'), os.path.join(tmp, 'b.mem')
+    f0 = Hc.ENC_FRAME
+    subprocess.run([host, Hc.ROM, '--frames', str(f0 + 1), '--no-save', '--input', Hc.ROUTE, '--mods-root', mods,
+                    '--mem-frame', str(f0), '--mem-out', dump, '--save-state', f'{f0}:{st}'], check=True, capture_output=True)
+    b = bytearray(open(st, 'rb').read()); off = b.find(load(dump)['wram'])
+    b[off + 0xE45:off + 0xE49] = bytes([monster_id, 255, 255, 255]); open(st, 'wb').write(bytes(b))
+    fr = sorted(frames); out = {}
+    for f in fr:
+        subprocess.run([host, Hc.ROM, '--load-state', st, '--frames', str(f + 1), '--no-save', '--input', Hc.ROUTE, '--mods-root', mods,
+                        '--screenshot', os.path.join(tmp, f'n{f}.png'), '--mem-frame', str(f), '--mem-out', os.path.join(tmp, f'm{f}.mem')],
+                       check=True, capture_output=True)
+        out[f] = (os.path.join(tmp, f'm{f}.mem'), os.path.join(tmp, f'n{f}.png'))
+    return out
+
+def sprite_piece(mem, shot):
+    """The frame's sprites: RGBA picture (from the 8-bit screenshot) and their keys."""
+    m = monster(mem); spr = m['spr']; ch = load(mem)['chr_ram']
+    x0, y0 = min(s['x'] for s in spr), min(s['y'] for s in spr)
+    x1, y1 = max(s['x'] for s in spr) + 8, max(s['y'] for s in spr) + 8
+    im = Image.new('RGBA', (x1 - x0, y1 - y0)); sh = Image.open(shot).convert('RGBA')
+    for s in spr:
+        px = tile_pixels(ch, s['tile'])
+        for yy in range(8):
+            for xx in range(8):
+                if px[7 - yy if s['vflip'] else yy][7 - xx if s['hflip'] else xx]:
+                    im.putpixel((s['x'] + xx - x0, s['y'] + yy - y0), sh.getpixel((s['x'] + xx, s['y'] + yy)))
+    keys = [{'x': s['x'] - x0, 'y': s['y'] - y0, 'chr': s['data'].hex().upper(), 'pal': s['pal'].hex().upper(),
+             'hflip': s['hflip'], 'vflip': s['vflip']} for s in spr]
+    return im, keys
+
+def bg_piece(mem, shot):
+    """The monster area's BG cells (tile >= $8D): picture + keys."""
+    m = monster(mem, shot); x0, y0 = m['box'][:2]
+    keys = [{'x': c * 8 - x0, 'y': r * 8 - y0, 'chr': data.hex().upper(), 'pal': p.hex().upper()} for (r, c), (t, data, p) in sorted(m['bg'].items())]
+    keys += [{'x': s['x'] - x0, 'y': s['y'] - y0, 'chr': s['data'].hex().upper(), 'pal': s['pal'].hex().upper(),
+              'hflip': s['hflip'], 'vflip': s['vflip'], 'sprite': True} for s in m['spr']]
+    return m['image'], keys
+
+def on_grey(im, size, fill=0.8):
+    k = max(1, int(min(size[0] * fill / im.width, size[1] * fill / im.height)))
+    big = im.resize((im.width * k, im.height * k), Image.NEAREST)
+    sheet = Image.new('RGBA', size, GREY + (255,)); pos = ((size[0] - big.width) // 2, (size[1] - big.height) // 2)
+    sheet.alpha_composite(big, pos)
+    return sheet.convert('RGB'), {'scale': k, 'origin': list(pos), 'size': [im.width, im.height]}
+
+BATTLE_PROMPTS = {
+    'M173': """Redraw Image 1 as a high-resolution, hand-painted Dragon Quest character illustration in the style of Image 2: a plump, cheerful travelling merchant with a big moustache, a red fez-like cap, blue waistcoat, yellow baggy trousers and a large grey sack over one arm, as shown behind a shop counter.
+Keep exactly the pose, silhouette, proportions and colour scheme of the 8-bit picture in Image 1 (it is laid over it in the game), centred, filling most of the picture. Rich painterly shading, crisp dark outline, transparent background, nothing else.""",
+    'M153D': """Redraw Image 1 as a high-resolution, hand-painted Dragon Quest monster illustration in the style of Image 2: the Impostor transformed into a copy of the hero Ragnar, a big knight in a pink helmet and purple armour holding a sword upright, front view as in battle.
+Keep exactly the pose, silhouette, proportions and colour scheme of the 8-bit picture in Image 1 (it is laid over it in the game), centred, filling most of the picture. Rich painterly shading, crisp dark outline, transparent background, nothing else.""",
+}
+
+def battle(a, out, cap):
+    """Battle pictures with no art: the shop scene's merchant (monster capture
+    173 is a shop, not a battle) and the Impostor's Double after Transform."""
+    d = os.path.join(out, 'battle'); write_pkg(d, MON_RULES, {'background': 'transparent'})
+    monster_style().save(os.path.join(d, 'style_reference.png'))
+    pieces = {'M173': bg_piece(os.path.join(a.build, 'monster-capture', '173.mem'), os.path.join(a.build, 'monster-capture', '173.png'))}
+    if cap: pieces['M153D'] = bg_piece(*cap[DOUBLE_FRAME])
+    layout = {}
+    for name, (im, keys) in pieces.items():
+        sheet, pos = on_grey(im, (1024, 1024)); sheet.save(os.path.join(d, 'inputs', name + '.png'))
+        open(os.path.join(d, 'prompts', name + '.txt'), 'w').write(BATTLE_PROMPTS[name])
+        layout[name] = dict(pos, tiles=keys)
+    json.dump(layout, open(os.path.join(d, 'pieces.json'), 'w'), indent=0)
+    return len(pieces)
+
+FX_RULES = """You redraw 8-bit Dragon Warrior IV (NES) battle effects as hand-painted HD effects for an HD texture pack, in the style of Image 2 (the pack's monster art).
+Generate the image directly."""
+FX_PROMPT = """Image 1 shows the frames of a magic effect from a fantasy RPG battle, each in its own square on a grey background, left to right: {what}
+Redraw every frame as high-resolution, hand-painted art in the style of Image 2: soft, glowing, painterly white and pale-blue magic smoke {extra}with crisp clean edges.
+Hard rules:
+1. Output exactly 1536 x 1024. Every frame stays in its own square at exactly the same position and size, with the same outline as in Image 1 (it is laid over the 8-bit frame in the game).
+2. Keep the grey background between and around the shapes flat and empty.
+3. No text, borders, characters or extra objects."""
+
+def battle_effects(a, out, cap):
+    if not cap: return 0
+    d = os.path.join(out, 'battle_effects'); write_pkg(d, FX_RULES, {'background': 'transparent'})
+    monster_style().save(os.path.join(d, 'style_reference.png'))
+    frames = [sprite_piece(*cap[f]) for f in SMOKE_FRAMES]
+    # sparkles: four copies of one 8x8 sprite; one is enough
+    for f in SPARKLE_FRAMES:
+        im, keys = sprite_piece(*cap[f]); k = keys[0]
+        frames.append((im.crop((k['x'], k['y'], k['x'] + 8, k['y'] + 8)), [dict(k, x=0, y=0)]))
+    cell, gap = 256, 32
+    x0 = (1536 - len(frames) * cell - (len(frames) - 1) * gap) // 2
+    sheet = Image.new('RGB', (1536, 1024), GREY); layout = []
+    for i, (im, keys) in enumerate(frames):
+        k = cell // max(im.width, im.height)
+        big = im.resize((im.width * k, im.height * k), Image.NEAREST)
+        ox, oy = x0 + i * (cell + gap) + (cell - big.width) // 2, (1024 - big.height) // 2
+        sheet.paste(big, (ox, oy), big)
+        layout.append({'origin': [ox, oy], 'scale': k, 'size': [im.width, im.height], 'tiles': keys})
+    sheet.save(os.path.join(d, 'inputs', 'FX01.png'))
+    open(os.path.join(d, 'prompts', 'FX01.txt'), 'w').write(FX_PROMPT.format(
+        what='three growing stages of a puff of magic smoke (the cast of "Transform"), then two small four-pointed sparkles.',
+        extra='puffs made of round billowing curls, and small bright sparkles, '))
+    json.dump({'FX01': layout}, open(os.path.join(d, 'pieces.json'), 'w'), indent=0)
+    return 1
+
 README = """Dragon Warrior IV - the remaining graphics, for OpenAI's image API
 =================================================================
 
-Five folders, one per kind of graphic, each with its own rules and style
-picture. Run the script once per folder:
+One folder per kind of graphic, each with its own rules and style picture.
+Run the script once per folder:
 
   export OPENAI_API_KEY=sk-...
-  python3 openai_sprites.py --folder monsters      # {monsters} battle monsters with no art
-  python3 openai_sprites.py --folder effects       # {effects} map effects (shadows, sparkles...)
-  python3 openai_sprites.py --folder night_tiles   # {night} night-only town tiles, one sheet
-  python3 openai_sprites.py --folder doors         # the castle door opening frames, one sheet
-  python3 openai_sprites.py --folder title         # the title screen
-
+{runs}
 That is {total} images, about ${cost:.2f}. Add --dry-run first to see the plan.
-Each folder gets its own generated/ folder: send all five back
+Each folder gets its own generated/ folder: send them all back
 (generated/results and generated/log.jsonl).
 
-Not included: the Endor casino (slots and poker). The route this project
-captures from never reaches it (it opens later in the story); it needs a
-save from a later chapter to capture.
+{notes}"""
+FOLDER_NOTE = {
+    'map_tiles': 'map tiles with no art yet, on sheets of 24',
+    'characters': 'walking characters with no art yet',
+    'battle': "the item-shop merchant and the Impostor's Double",
+    'battle_effects': 'the Transform smoke cloud and sparkles, one sheet',
+    'monsters': 'battle monsters with no art', 'effects': 'map effects (shadows, sparkles...)',
+    'night_tiles': 'night-only town tiles', 'doors': 'castle door opening frames', 'title': 'the title screen',
+}
+NOTES = """Not included, and why:
+  - The ENIX logo on the "PRESENTED BY" screen: a company logo is not
+    something to redraw; the pack smooths the game's own pixels instead.
+  - The party's spells and the story's cutscenes and ending: the save the
+    captures start from is in chapter 1, so they have not been reached yet.
 """
 
 def main():
-    build, out = sys.argv[1], sys.argv[2]
+    ap = argparse.ArgumentParser()
+    ap.add_argument('build'); ap.add_argument('out')
+    ap.add_argument('--host', help='headless host: captures the Impostor battle (battle/, battle_effects/)')
+    ap.add_argument('--only', help='comma-separated kinds')
+    a = ap.parse_args()
+    out = a.out
     if os.path.exists(out): shutil.rmtree(out)
     os.makedirs(out)
-    n = {'monsters': monsters(build, out), 'effects': effects(build, out), 'night': night_tiles(build, out),
-         'doors': doors(build, out), 'title': title(build, out)}
+    tmp = tempfile.mkdtemp()
+    cap = forced_battle(a.host, IMPOSTOR, SMOKE_FRAMES + SPARKLE_FRAMES + (DOUBLE_FRAME,), tmp) if a.host else None
+    kinds = {'map_tiles': lambda: map_tiles(a, out), 'characters': lambda: characters(a, out),
+             'battle': lambda: battle(a, out, cap), 'battle_effects': lambda: battle_effects(a, out, cap),
+             'monsters': lambda: monsters(a.build, out), 'effects': lambda: effects(a.build, out),
+             'night_tiles': lambda: night_tiles(a.build, out), 'doors': lambda: doors(a.build, out), 'title': lambda: title(a.build, out)}
+    want = a.only.split(',') if a.only else ['map_tiles', 'characters', 'battle', 'battle_effects']
+    n = {k: kinds[k]() for k in want}
+    shutil.rmtree(tmp)
     shutil.copy(os.path.join(TOOLS, 'openai_sprites.py'), os.path.join(out, 'openai_sprites.py'))
-    images = n['monsters'] + n['effects'] + 1 + 1 + 1
-    open(os.path.join(out, 'README.txt'), 'w').write(README.format(total=images, cost=images * 0.07, **n))
-    shutil.make_archive(out, 'zip', os.path.dirname(out), os.path.basename(out))
+    runs = ''.join(f'  python3 openai_sprites.py --folder {k:<15} # {v}: {FOLDER_NOTE[k]}\n' for k, v in n.items() if v)
+    images = sum(n.values())
+    open(os.path.join(out, 'README.txt'), 'w').write(README.format(runs=runs, total=images, cost=images * 0.07, notes=NOTES))
+    shutil.make_archive(out, 'zip', os.path.dirname(os.path.abspath(out)), os.path.basename(out))
     print(f'{images} images -> {out} (+ .zip): {n}')
 
 if __name__ == '__main__':
