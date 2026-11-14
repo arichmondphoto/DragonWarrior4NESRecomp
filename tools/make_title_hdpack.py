@@ -19,7 +19,10 @@ of being cut into 8x8 tiles:
                   repeating sideways (wrap)
 
 The phase (day / sunset, and the screen-fade steps of each) is read from one
-castle cell and one plate cell (tileAtPosition: CHR + colours). Every other
+castle cell and one plate cell (tileAtPosition: CHR + colours), and only on
+the title screen itself: RAM $0500 = $0F and $0026 = $77 there, never in the
+game (a battle's status-window border can sit where the plate cell is, and on
+an all-black frame the castle cell's dark step matches anything). Every other
 title cell gets an almost transparent HD tile (so the layers show through
 instead of the 8-bit tile); letter cells get the painted letter where the
 8-bit letter is already drawn, and the blank cells beside a letter show the
@@ -212,7 +215,11 @@ def main():
                 if n > 8 and (best is None or n > best[0]): best = (n, tx, ty)
         return best[1], best[2]
     ctx, cty = pick(1, range(14, 22)); ptx, pty = pick(3, range(4, 6))
-    conds, phases = [], []
+    # the title screen only (RAM $0500 is $0F there and $0E in the game; $0026 is $77)
+    conds = ['<condition>title_0500,memoryCheckConstant,0500,==,F',
+             '<condition>title_0026,memoryCheckConstant,0026,==,77']
+    phases = []
+    on_title = '&title_0500&title_0026'
     for look, cl in (('day', blue), ('sunset', red)):
         cc, cp = cl[(ctx, cty)][0], cl[(ctx, cty)][1]; pc, pp = cl[(ptx, pty)][0], cl[(ptx, pty)][1]
         for k in STEPS:
@@ -225,7 +232,7 @@ def main():
             cn, pn = f'tc_{look}{k}', f'tp_{look}{k}'
             conds.append(f'<condition>{cn},tileAtPosition,{ctx * 8},{cty * 8},{cc.hex().upper()},{cpk.hex().upper()}')
             conds.append(f'<condition>{pn},tileAtPosition,{ptx * 8},{pty * 8},{pc.hex().upper()},{ppk.hex().upper()}')
-            phases.append((look, k, br, f'{cn}&{pn}' if dark(cpk) else cn, pn))
+            phases.append((look, k, br, (f'{cn}&{pn}' if dark(cpk) else cn) + on_title, pn))
     bgs = []
     for look, k, br, cn, pn in phases:
         bgs.append(f'[{cn}]<background>title/{files["sky"][look]},{br:g},0,0,1,0,0')
