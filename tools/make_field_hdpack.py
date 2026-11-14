@@ -46,7 +46,7 @@ opposite edges meet without a visible seam.
 
 usage: make_field_hdpack.py FIELD_TILES ART OUTDIR [--report FILE]
 """
-import argparse, collections, hashlib, itertools, json, os, sys
+import argparse, colorsys, collections, hashlib, itertools, json, os, sys
 import numpy as np
 from PIL import Image
 from scipy import ndimage
@@ -65,6 +65,10 @@ def tileable(px):
     return axis(g), axis(g.T)
 
 FLASH = bytes([0x0F, 0x16, 0x16, 0x16])         # the damage-floor flash, every sub-palette
+HUE_LUM = 45          # degrees: past this hue change, colour by brightness if it fits much better
+LUM_RATIO = 0.64      # ... its error below this share of the per-channel map's (checked by eye: above it,
+                      # tiles that mix two hues, such as gold trim or orange grass with blue dots, lose a hue)
+LUM_LOG = open(os.environ['DW4_LUM_LOG'], 'w') if os.environ.get('DW4_LUM_LOG') else None
 FLASH_XF = ',rgb:1.30/8/0.30/0/0.25/0'        # art tinted red: grey stone -> about $16
 SEAM_MAX = 30   # mean edge-band colour difference (0-255) above which an axis is left alone
 
@@ -126,7 +130,7 @@ def main():
     def fade(pal, k): return bytes(0x0F if (c & 0x3F) < 0x10 * k or (c & 0x0F) >= 0x0D else c - 0x10 * k for c in pal)
     night = lambda r: all(u.endswith('(night)') for u in r['used_in'])
     versions = []        # dicts: id, item, chr, pal, img, bright, uses, real
-    missing, seamless, nights = [], 0, 0
+    missing, seamless, nights, lums = [], 0, 0, 0
     for iid, vs in items.items():
         # with ids.json the fingerprint is the only match: a tile that is new
         # in this build must never pick up art that belongs to another tile
@@ -159,6 +163,36 @@ def main():
                 g = float(np.clip(g, 0, 3)); fit.append((g, my - g * mx))
                 err += float((W * (g * x + my - g * mx - y) ** 2).sum())
             return fit, err
+        LW = np.array([0.299, 0.587, 0.114])
+        def lum_fit(pal, src=None):
+            # colour by brightness: each channel = a*L + b of the art's
+            # brightness L, fitted from the art's colours to `pal`'s
+            X = np.array([rgb((src or ref)[k]) for k in range(4)]) @ LW
+            Y = np.array([rgb(pal[k]) for k in range(4)]); fit, err = [], 0.0
+            mx = (W * X).sum() / W.sum(); vx = (W * (X - mx) ** 2).sum()
+            for ch in range(3):
+                y = Y[:, ch]; my = (W * y).sum() / W.sum()
+                g = (W * (X - mx) * (y - my)).sum() / vx if vx > 50 else 0.0
+                g = float(np.clip(g, 0, 3)); fit.append((g, my - g * mx))
+                err += float((W * (g * X + my - g * mx - y) ** 2).sum())
+            return fit, err
+        def hue_shift(pal, src=None):
+            # how far the tile's colours turn round the colour wheel (degrees,
+            # weighted by use; greys and black don't count)
+            tot = wsum = 0.0
+            for k in range(1, 4):
+                a, b = rgb((src or ref)[k]) / 255, rgb(pal[k]) / 255
+                ha, sa, _ = colorsys.rgb_to_hsv(*a); hb, sb, _ = colorsys.rgb_to_hsv(*b)
+                if sa < 0.2 or sb < 0.2: continue
+                d = abs(ha - hb) * 360; d = min(d, 360 - d)
+                tot += cnt[k] * d; wsum += cnt[k]
+            return tot / wsum if wsum else 0.0
+        def use_lum(pal, src=None):
+            # a big hue change that a per-channel map gets wrong (green grass
+            # in a pale-yellow sand palette came out coral-pink)
+            h, el, ec = hue_shift(pal, src), lum_fit(pal, src)[1], fit_of(pal, src)[1]
+            if LUM_LOG: LUM_LOG.write(f'{iid}\t{pal.hex()}\t{(src or ref).hex()}\t{h:.0f}\t{el:.0f}\t{ec:.0f}\n')
+            return h > HUE_LUM and el < LUM_RATIO * ec
         # The game animates some tiles by swapping colours (the overworld sea
         # cycles 0F 30 21 12 <-> 0F 30 12 21). A palette that is only a
         # reordering of another is the same picture: the whole group uses the
@@ -173,17 +207,21 @@ def main():
         for r in vs:
             pal = bytes.fromhex(r['nes_colors'])
             over = os.path.join(a.art, aid + r['id'][len(iid):] + '.png') if r['id'] != iid else None
-            fit = fits[rep[group(r['nes_colors'])]][0]
+            rp = bytes.fromhex(rep[group(r['nes_colors'])])
+            lum = use_lum(rp)
+            fit = lum_fit(rp)[0] if lum else fits[rep[group(r['nes_colors'])]][0]
             xf = ''
             if over and os.path.exists(over):
                 idx = add_img(load(over), aid + r['id'][len(iid):])
             else:
                 if main_idx is None: main_idx = add_img(base_img, aid)
                 idx = main_idx
-                if any(abs(g - 1) > 0.06 or abs(o) > 8 for g, o in fit):
-                    # recoloured by the player at load time (patch 0011), not stored
+                if lum or any(abs(g - 1) > 0.06 or abs(o) > 8 for g, o in fit):
+                    # recoloured by the player at load time (patch 0011; by
+                    # brightness with rgbl:, patch 0024), not stored
                     gkey = tuple((round(g / 0.05) * 0.05, round(o / 4) * 4) for g, o in fit)
-                    xf = ',rgb:' + '/'.join(f'{g:.2f}/{int(o)}' for g, o in gkey)
+                    xf = (',rgbl:' if lum else ',rgb:') + '/'.join(f'{g:.2f}/{int(o)}' for g, o in gkey)
+                    if lum: lums += 1
                     if gkey not in tinted: tinted[gkey] = True; nights += 1
             uses = len(r['used_in'])
             versions.append(dict(id=r['id'], item=iid, chr=t, pal=pal, img=idx, xf=xf, bright=1.0, uses=uses, real=True))
@@ -195,11 +233,11 @@ def main():
                 fp = fade(pal, k)
                 if all((c & 0x0F) >= 0x0D or c == 0x0F for c in fp[1:]) and fp[0] == 0x0F and k == 3:
                     continue                                   # black: nothing to draw
-                ffit = fit_of(fp, src)[0]
+                ffit = (lum_fit if lum else fit_of)(fp, src)[0]
                 gkey = tuple((round(g / 0.05) * 0.05, round(o / 4) * 4) for g, o in ffit)
                 # applied while drawing (rgbd:, patch 0022): fade frames are few,
                 # and a decoded copy per step would cost ~650 MB
-                fxf = ',rgbd:' + '/'.join(f'{g:.2f}/{int(o)}' for g, o in gkey)
+                fxf = (',rgbdl:' if lum else ',rgbd:') + '/'.join(f'{g:.2f}/{int(o)}' for g, o in gkey)
                 versions.append(dict(id=f'{r["id"]}~{k}', item=iid, chr=t, pal=fp, img=idx, xf=fxf, bright=1.0,
                                      uses=uses / (10 * k), real=False))
 
@@ -278,7 +316,7 @@ def main():
     print(f'{len(items) - len(missing)} map tiles ({seamless} made seamless, {nights} palette recolours), '
           f'{sum(v["real"] for v in versions)} palette versions + {sum(not v["real"] for v in versions)} fade steps, '
           f'{len(tiles)} tile entries, '
-          f'{len(conds)} neighbour conditions, {unresolved} unresolved -> {hires}')
+          f'{len(conds)} neighbour conditions, {unresolved} unresolved, {lums} coloured by brightness -> {hires}')
     if missing: print(f'  no art yet for {len(missing)}: {" ".join(missing[:20])}{" ..." if len(missing) > 20 else ""}')
     if a.report:
         json.dump({'missing': missing, 'seamless': seamless, 'palette_recolours': nights, 'entries': len(tiles), 'conditions': len(conds),

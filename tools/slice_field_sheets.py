@@ -71,7 +71,8 @@ def main():
     ap.add_argument('--match', type=float, default=MATCH, help='colour pull toward the original (0-1)'); a = ap.parse_args()
     meta = os.path.join(a.sheets, 'sheets.json')
     if not os.path.exists(meta): print('  no generated sheets'); return
-    sheets = json.load(open(meta))['sheets']
+    meta_j = json.load(open(meta)); sheets = meta_j['sheets']
+    only = meta_j.get('only', {})          # sheet -> the only tiles to cut from it (others redone elsewhere)
     tiles = art_tiles(json.load(open(a.field_tiles)))
     os.makedirs(a.out, exist_ok=True); n = 0
     for name, cells in sheets.items():
@@ -86,6 +87,7 @@ def main():
         placed = Image.new('RGB', (W, H), (140, 140, 140))
         placed.paste(res.resize((round(W * s), round(H * s)), Image.LANCZOS), (dx, dy))
         for i, aid in enumerate(cells):
+            if name in only and aid not in only[name]: continue
             x, y = cell_origin(i)
             cut = placed.crop((x + INSET, y + INSET, x + CELL - INSET, y + CELL - INSET)).resize((160, 160), Image.LANCZOS)
             if a.match > 0: cut = colour_match(cut, ref.crop((x, y, x + CELL, y + CELL)), a.match)

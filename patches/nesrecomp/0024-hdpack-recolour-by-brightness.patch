@@ -1,0 +1,121 @@
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index f74b9a1..6bf49f1 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -58,6 +58,7 @@ typedef struct HdTile {
+     struct HdTile *next;            /* primary hash chain */
+     int            has_drgb;        /* rgbd: colour map applied while drawing (see parse_block_xform) */
+     float          dg[3]; int dofs[3];
++    int            dlum;            /* rgbdl: the draw-time map works on brightness (see parse_block_xform) */
+ } HdTile;
+ 
+ /* Resolve a '&'-separated [cond] prefix into HdCond* + negation arrays (defined
+@@ -372,6 +373,11 @@ static int load_sheet(const char *name) {
+  *   rgb:GR/OR/GG/OG/GB/OB  per-channel colour map out = in*G + O (straight, not
+  *                          premultiplied, colour; G float, O integer; clamped)
+  *   rot:N                  the 8x8 block turned N*90 degrees counter-clockwise
++ *   rgbl:GR/OR/GG/OG/GB/OB colour by brightness: out = L*G + O per channel, with
++ *                          L = 0.299R + 0.587G + 0.114B of the art (for palettes
++ *                          that change the hue a lot, e.g. green grass drawn in
++ *                          a pale-yellow sand palette, where a per-channel map
++ *                          turns the colours wrong); rgbdl: the same while drawing
+  *   rgbd:GR/OR/GG/OG/GB/OB the same colour map as rgb:, applied while drawing
+  *                          instead of at load: the entry shares the untouched
+  *                          block (for short-lived looks such as screen-fade
+@@ -380,7 +386,7 @@ static int load_sheet(const char *name) {
+  * forms (beds) at load time instead of shipping a copy of each. Identical
+  * (image, position, transform) blocks are decoded once and shared by every
+  * tile entry that uses them (fades, conditional variants). */
+-typedef struct { int rot; int has_rgb; float g[3]; int o[3]; } HdXform;
++typedef struct { int rot; int has_rgb; int lum; float g[3]; int o[3]; } HdXform;
+ typedef struct HdBlock {
+     int sheet, x, y, w, h; HdXform xf;
+     uint32_t *px; int has_transparent, fully_transparent, invisible;
+@@ -391,16 +397,16 @@ static HdBlock *s_block_buckets[HD_NBLOCKBUCKETS];
+ 
+ static void parse_block_xform(const char *t, HdXform *xf) {
+     if (!strncmp(t, "rot:", 4)) { xf->rot = atoi(t + 4) & 3; return; }
+-    if (!strncmp(t, "rgb:", 4)) {
+-        float g[3]; int o[3];
+-        if (sscanf(t + 4, "%f/%d/%f/%d/%f/%d", &g[0], &o[0], &g[1], &o[1], &g[2], &o[2]) == 6) {
+-            xf->has_rgb = 1;
++    if (!strncmp(t, "rgb:", 4) || !strncmp(t, "rgbl:", 5)) {
++        float g[3]; int o[3]; int lum = t[3] == 'l';
++        if (sscanf(t + (lum ? 5 : 4), "%f/%d/%f/%d/%f/%d", &g[0], &o[0], &g[1], &o[1], &g[2], &o[2]) == 6) {
++            xf->has_rgb = 1; xf->lum = lum;
+             for (int c = 0; c < 3; c++) { xf->g[c] = g[c]; xf->o[c] = o[c]; }
+         }
+     }
+ }
+ static int xform_eq(const HdXform *a, const HdXform *b) {
+-    if (a->rot != b->rot || a->has_rgb != b->has_rgb) return 0;
++    if (a->rot != b->rot || a->has_rgb != b->has_rgb || a->lum != b->lum) return 0;
+     if (!a->has_rgb) return 1;
+     for (int c = 0; c < 3; c++) if (a->g[c] != b->g[c] || a->o[c] != b->o[c]) return 0;
+     return 1;
+@@ -409,8 +415,13 @@ static uint32_t recolour_px(uint32_t v, const HdXform *xf) {
+     uint32_t a = v >> 24;
+     if (!a) return v;
+     int ch[3] = { (int)((v >> 16) & 0xFF), (int)((v >> 8) & 0xFF), (int)(v & 0xFF) };
++    float L = 0.0f;
++    if (xf->lum) {                                                        /* brightness of the straight colour */
++        float k = a == 255 ? 1.0f : 255.0f / (float)a;
++        L = (0.299f * ch[0] + 0.587f * ch[1] + 0.114f * ch[2]) * k;
++    }
+     for (int c = 0; c < 3; c++) {
+-        float s = a == 255 ? (float)ch[c] : ch[c] * 255.0f / (float)a;   /* un-premultiply */
++        float s = xf->lum ? L : a == 255 ? (float)ch[c] : ch[c] * 255.0f / (float)a;   /* un-premultiply */
+         int r = (int)(s * xf->g[c] + (float)xf->o[c] + 0.5f);
+         if (r < 0) r = 0; if (r > 255) r = 255;
+         ch[c] = a == 255 ? r : (int)((r * (a + 1)) >> 8);                 /* premultiply (as premul()) */
+@@ -419,7 +430,7 @@ static uint32_t recolour_px(uint32_t v, const HdXform *xf) {
+ }
+ static const HdBlock *get_block(int sheet, int X, int Y, int W, int H, const HdXform *xf) {
+     uint32_t h = ((uint32_t)sheet * 2654435761u) ^ ((uint32_t)X * 40503u) ^ ((uint32_t)Y * 9973u) ^ (uint32_t)xf->rot;
+-    if (xf->has_rgb) h ^= (uint32_t)(xf->g[0] * 977.0f) ^ ((uint32_t)xf->o[0] << 7) ^ ((uint32_t)(xf->g[1] * 131.0f) << 3) ^ ((uint32_t)xf->o[2] << 11);
++    if (xf->has_rgb) h ^= (uint32_t)xf->lum * 0x9E3779B9u ^ (uint32_t)(xf->g[0] * 977.0f) ^ ((uint32_t)xf->o[0] << 7) ^ ((uint32_t)(xf->g[1] * 131.0f) << 3) ^ ((uint32_t)xf->o[2] << 11);
+     h &= HD_NBLOCKBUCKETS - 1;
+     for (HdBlock *b = s_block_buckets[h]; b; b = b->next)
+         if (b->sheet == sheet && b->x == X && b->y == Y && b->w == W && b->h == H && xform_eq(&b->xf, xf)) return b;
+@@ -505,10 +516,10 @@ static void process_tile(const char *cond_str, char *rest) {
+         /* trailing chrBank/tileIndex (CHR-RAM) are not used for matching;
+          * nesrecomp extensions (see parse_block_xform) may follow */
+         for (; idx < n; idx++) {
+-            if (!strncmp(tok[idx], "rgbd:", 5)) {
+-                float g[3]; int o[3];
+-                if (sscanf(tok[idx] + 5, "%f/%d/%f/%d/%f/%d", &g[0], &o[0], &g[1], &o[1], &g[2], &o[2]) == 6) {
+-                    drgb.has_rgb = 1;
++            if (!strncmp(tok[idx], "rgbd:", 5) || !strncmp(tok[idx], "rgbdl:", 6)) {
++                float g[3]; int o[3]; int lum = tok[idx][4] == 'l';
++                if (sscanf(tok[idx] + (lum ? 6 : 5), "%f/%d/%f/%d/%f/%d", &g[0], &o[0], &g[1], &o[1], &g[2], &o[2]) == 6) {
++                    drgb.has_rgb = 1; drgb.lum = lum;
+                     for (int c = 0; c < 3; c++) { drgb.g[c] = g[c]; drgb.o[c] = o[c]; }
+                 }
+             } else parse_block_xform(tok[idx], &xf);
+@@ -540,7 +551,7 @@ static void process_tile(const char *cond_str, char *rest) {
+     t->conds = tc; t->neg = tn; t->ncond = tcn;
+     t->brightness = brightness;
+     if (drgb.has_rgb) {
+-        t->has_drgb = 1;
++        t->has_drgb = 1; t->dlum = drgb.lum;
+         for (int c = 0; c < 3; c++) { t->dg[c] = drgb.g[c]; t->dofs[c] = drgb.o[c]; }
+     }
+     const HdBlock *blk = get_block(bitmap_index, X, Y, W, H, &xf);
+@@ -1022,7 +1033,7 @@ static inline uint32_t div255(uint32_t x) { return (x + 1 + (x >> 8)) >> 8; }
+ /* rgbd: (HdTile.dg/dofs) on one premultiplied pixel, as recolour_px does at load */
+ static uint32_t draw_recolour(uint32_t v, const HdTile *t) {
+     HdXform xf; memset(&xf, 0, sizeof xf);
+-    xf.has_rgb = 1;
++    xf.has_rgb = 1; xf.lum = t->dlum;
+     for (int c = 0; c < 3; c++) { xf.g[c] = t->dg[c]; xf.o[c] = t->dofs[c]; }
+     return recolour_px(v, &xf);
+ }
+@@ -1126,7 +1137,7 @@ static void blit_over(uint32_t *dst, int hd_w, const HdTile *t,
+ static const HdTile *tinted(const HdTile *t, uint32_t argb) {
+     static _Thread_local HdTile tmp;
+     tmp = *t;
+-    tmp.has_drgb = 1;
++    tmp.has_drgb = 1; tmp.dlum = 0;
+     tmp.dg[0] = (float)((argb >> 16) & 0xFF) / 255.0f;
+     tmp.dg[1] = (float)((argb >> 8) & 0xFF) / 255.0f;
+     tmp.dg[2] = (float)(argb & 0xFF) / 255.0f;

@@ -396,6 +396,10 @@ They are framework bugs, kept here until they can go upstream:
   white through screen fades and even show text the game hides with an
   all-black palette (the "Chapter 1" title before it fades in); now it fades
   with the screen and coloured text keeps its colour.
+- `0024-hdpack-recolour-by-brightness.patch` — `rgbl:` / `rgbdl:` tile tokens: the
+  same colour map as `rgb:` / `rgbd:` but on the art's brightness (each channel =
+  L*G + O), for palettes that change the hue a lot (green grass drawn in the
+  Endor arena's pale-yellow sand palette came out coral-pink with a per-channel map).
 - `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
   same per-channel colour map as `rgb:` (patch 0011), applied while drawing
   instead of at load, so the entry shares the untouched decoded block. Used

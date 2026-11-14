@@ -37,7 +37,7 @@ README.md is the full reference; this file is the working summary.
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
   A full build takes ~45 min on 2 cores; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.19.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
+  catalog keys on it). Current: 0.20.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
 - The nesmod package limit is 256 MiB; the pack is ~187 MiB — watch its size (`du -sb OUTDIR`). Never store
   recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
@@ -102,6 +102,8 @@ README.md is the full reference; this file is the working summary.
   is skipped where the painted edges differ (SEAM_MAX). Screen-fade steps (and characters' night, also a
   -$10 step) = the art recoloured to the step's own NES colours with `rgbd:` (applied while drawing, patch
   0022: no decoded copy; `rgb:` copies for every step cost ~650 MB). Battle monsters still fade by brightness.
+  Palettes that turn the hue > 45 degrees use `rgbl:`/`rgbdl:` (patch 0024: colour by the art's brightness) when
+  that fits under 0.64x the per-channel error (`HUE_LUM`, `LUM_RATIO`; `DW4_LUM_LOG=FILE` logs the choices).
 - Title layers are gated on RAM $0500=$0F and $0026=$77 (title only), or they flash on black frames.
 - Power-on screens: `make_font_hdpack.py --screen/--sprites` smooth every cell in context (whole screen), coloured
   exact-palette entry + white `defaultTile=Y` copy. Intro sprites use pattern table $1000.

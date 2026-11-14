@@ -31,6 +31,19 @@
 "R01": [
 "T128",
 "T129"
+],
+"R02": [
+"T128",
+"T129"
 ]
+},
+"only": {
+"R01": [
+"T128"
+],
+"R02": [
+"T129"
+],
+"_about": "cut only these tiles from that sheet (the rest of it was redone on another sheet)"
 }
 }

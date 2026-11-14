@@ -108,15 +108,14 @@ but are never drawn. Endor crowd frames T128-T129 were regenerated (R01, facing 
 (a dragon drawn as four facings of one character) redone as one picture (C057W), pack 0.19.0. Party spells and cutscenes
 are still unreached (chapter 1 save).
 
-### 4b. Endor arena floor in the wrong colour (found 2026-11-14)
-- **What:** in Endor's arena (map 4 sub 7) the floor is the grass tile drawn in
-  the game's pale-yellow sand palette. The pack recolours the owner's grass art
-  to that palette with its affine colour map (`rgb:`), and the result is
-  coral-pink with purple tufts instead of pale yellow with dark dots.
-- **How:** look at the fit for that palette in `make_field_hdpack.py` (an
-  affine map from green to pale yellow is a poor fit); options are a different
-  fit for big hue changes (map by brightness onto the target colours), or
-  owner art for the sand floor.
+### 4b. Endor arena floor in the wrong colour: done (pack 0.20.0)
+Palettes that turn the tile's hue more than 45 degrees are coloured by the
+art's brightness (`rgbl:`, nesrecomp patch 0024) when that fits clearly better
+(error under 0.64x the per-channel map's): 133 tile versions, checked by eye
+(grey stone that came out pink or gold, snowy trees that came out purple, the
+arena's sand). Above that ratio tiles mixing two hues (gold trim, orange grass
+with blue dots) lost a hue, so they keep the per-channel map. The arena
+floor's edge strips (top and right) still look more orange than the 8-bit.
 
 ### 5. Character art that doesn't line up
 - **Why:** the sprite builder's fit report says "redo" for C007, C011, C043,
