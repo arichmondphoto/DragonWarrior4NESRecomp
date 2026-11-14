@@ -129,8 +129,10 @@ floor's edge strips (top and right) still look more orange than the 8-bit.
 - Left (by `tools/seam_check.py` weight): neighbouring wall tiles painted as
   different stonework (D087/D088, D091/D092, round towers T005/T006/S048 against
   flat walls, S024/S025 bricks), a few floors (D001/D002 mossy rocks). These
-  need the two tiles painted as a matched set; the owner declined AI-redrawn
-  map tiles before, so this waits for a decision.
+  need the tiles painted as a matched set. Exported 2026-11-14
+  (`export_gaps.py BUILD OUT --seams seams.json`, 6 families P01-P06, plain
+  ground tiles kept as painted): import each returned sheet into
+  hd/field/sheets with its sheets.json entry, rebuild, re-run seam_check.
 
 ### 5. Character art
 - Done (0.22.0): the sparkle fields C090, C091, C101 (stars and embers on the

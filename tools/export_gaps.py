@@ -481,6 +481,103 @@ def redo(a, out):
         shutil.rmtree(tmp)
     return n
 
+# ---------------------------------------------------------------- matched sets (seams)
+SET_PROMPT = """Redraw Image 1 as high-resolution, hand-painted map tiles in the painting style of Image 2.
+Image 1 holds {n} square map tiles from a top-down 2D fantasy RPG (Dragon Warrior IV): {what}
+In the game these tiles sit directly next to each other and must read as ONE continuous surface: Image 2, bottom, shows them on a map in 8-bit; Image 2, top, shows how they are painted now, each in a different way, so they don't join.
+Hard rules:
+1. Output exactly 1536 x 1024. Keep the same 6 x 4 grid: every tile stays in its own square at the same position and size, grey gaps between them. Unused squares stay plain grey.
+2. Paint all of them as one matched set: the same stones (size, shape, colour, shading, mortar width and darkness), the same light direction, the same ground, so any two of them placed side by side join without a visible edge.
+3. Keep each tile's layout from Image 1: where the stones, joints, edges and objects are, and the colours.
+4. Each tile fills its whole square edge to edge; textures run straight off every edge.
+5. No text, borders, shadows or vignettes.
+"""
+SET_WHAT = {'D': 'dungeon walls and floors', 'S': 'town and castle walls, floors and ground', 'T': 'town walls and towers',
+            'W': 'overworld ground'}
+
+def seam_sets(a, out):
+    """Families of map tiles that meet with a seam (tools/seam_check.py
+    seams.json), worst first, each as its own folder (sheet + a style
+    picture showing the set as painted now and on a map in 8-bit)."""
+    from vramdump import tile_pixels
+    seams = json.load(open(a.seams))['seams']
+    agg = collections.defaultdict(float); where = {}
+    for p in seams:
+        if p['a'] == p['b']: continue
+        k = tuple(sorted((p['a'], p['b']))); agg[k] += p['count'] * p['score']
+        if k not in where or p['count'] > where[k][1]: where[k] = (p['where'], p['count'])
+    par = {}
+    def root(x):
+        par.setdefault(x, x)
+        while par[x] != x: x = par[x]
+        return x
+    for k in sorted(agg, key=lambda k: -agg[k])[:40]:
+        if agg[k] < 6000: break
+        ra, rb = root(k[0]), root(k[1])
+        if ra != rb: par[ra] = rb
+    fams = collections.defaultdict(set)
+    for x in par: fams[root(x)].add(x)
+    weight = lambda g: sum(v for k, v in agg.items() if k[0] in g and k[1] in g)
+    fams = sorted(fams.values(), key=lambda g: -weight(g))[:a.sets]
+    rows = json.load(open(os.path.join(a.build, 'field-capture', 'field_tiles_all.json')))
+    items = {}
+    for r in rows: items.setdefault(r['item'], r)
+    ids = json.load(open(os.path.join(HERE, 'hd', 'field', 'ids.json')))['ids']
+    by_fp = {v[0]: k for k, v in ids.items()}
+    art = os.path.join(a.build, 'field-capture', 'art')
+    names = []
+    for n, fam in enumerate(fams, 1):
+        fam = sorted(fam)
+        # the plain ground tiles (grass) stay as they are: they set the look
+        keep = [i for i in fam if plain_tile_of(items[i])]
+        draw = [i for i in fam if i not in keep]
+        if not draw: continue
+        aids = [by_fp.get(hashlib.sha1(bytes.fromhex(items[i]['chr'])).hexdigest()[:16]) for i in draw]
+        pairs = [(i, x) for i, x in zip(draw, aids) if x]
+        name = f'P{n:02d}'; d = os.path.join(out, f'matched_{name}')
+        write_pkg(d, NIGHT_RULES, {'background': 'opaque'})
+        render_sheet([(bytes.fromhex(items[i]['chr']), bytes.fromhex(ids[x][1])) for i, x in pairs]).save(os.path.join(d, 'inputs', name + '.png'))
+        what = ', '.join(sorted({SET_WHAT[x[0]] for _, x in pairs}))
+        open(os.path.join(d, 'prompts', name + '.txt'), 'w').write(SET_PROMPT.format(n=len(pairs), what=what + '.'))
+        json.dump({'layout': 'tools/export_chatgpt_tiles.py', 'sheets': {name: [x for _, x in pairs]}, 'items': [i for i, _ in pairs],
+                   'kept_as_painted': keep}, open(os.path.join(d, 'sheets.json'), 'w'), indent=0)
+        # style picture: top = the set as painted now (+ kept ground tiles), bottom = a map excerpt in 8-bit
+        ref = Image.new('RGB', (1024, 1024), GREY)
+        show = [x for _, x in pairs] + [by_fp.get(hashlib.sha1(bytes.fromhex(items[i]['chr'])).hexdigest()[:16]) for i in keep]
+        show = [x for x in show if x and os.path.exists(os.path.join(art, x + '.png'))][:8]
+        for k, x in enumerate(show):
+            ref.paste(Image.open(os.path.join(art, x + '.png')).convert('RGB').resize((240, 240)), (12 + (k % 4) * 252, 12 + (k // 4) * 252))
+        best = max((k for k in agg if k[0] in fam and k[1] in fam), key=lambda k: agg[k])
+        (path, nt, r0, c0), _ = where[best]
+        m = load(path); ch, ci, pal = m['chr_ram'], m['ciram'], m['palette']
+        exc = Image.new('RGB', (12 * 8, 6 * 8))
+        rs, cs = max(0, min(24, r0 - 2)), max(0, min(20, c0 - 4))
+        for r in range(rs, rs + 6):
+            for c in range(cs, cs + 12):
+                t = 0x100 + ci[nt + r * 32 + c]; at = ci[nt + 0x3C0 + (r // 4) * 8 + c // 4]
+                sub = (at >> (((r % 4) // 2) * 4 + ((c % 4) // 2) * 2)) & 3
+                cols = [pal[0], pal[sub * 4 + 1], pal[sub * 4 + 2], pal[sub * 4 + 3]]
+                px = tile_pixels(ch, t)
+                im = Image.new('RGB', (8, 8))
+                for y in range(8):
+                    for x in range(8):
+                        v = NES[cols[px[y][x]] & 0x3F]; im.putpixel((x, y), ((v >> 16) & 255, (v >> 8) & 255, v & 255))
+                exc.paste(im, ((c - cs) * 8, (r - rs) * 8))
+        exc = exc.resize((1000, 500), Image.NEAREST)
+        ref.paste(exc, (12, 516))
+        ref.save(os.path.join(d, 'style_reference.png'))
+        names.append((name, len(pairs), draw, keep))
+    return names
+
+def plain_tile_of(r):
+    import numpy as np_
+    from field_sheet import pixels
+    g = np_.array(pixels(bytes.fromhex(r['chr'])))
+    if len(np_.unique(g)) > 2: return False
+    h = (g[:, 0] != g[:, -1]).mean() <= (g[:, 1:] != g[:, :-1]).mean() * 1.5 + 0.05
+    v = (g[0] != g[-1]).mean() <= (g[1:] != g[:-1]).mean() * 1.5 + 0.05
+    return h and v
+
 README = """Dragon Warrior IV - the remaining graphics, for OpenAI's image API
 =================================================================
 
@@ -503,6 +600,20 @@ FOLDER_NOTE = {
     'monsters': 'battle monsters with no art', 'effects': 'map effects (shadows, sparkles...)',
     'night_tiles': 'night-only town tiles', 'doors': 'castle door opening frames', 'title': 'the title screen',
 }
+SETS_README = """Dragon Warrior IV - map tiles to repaint as matched sets
+=========================================================
+
+Each folder holds one family of map tiles that sit next to each other in the
+game but are painted differently now, so the seams show. Each is one sheet,
+painted as one matched set. The style picture in each folder shows the set as
+painted now (top) and the tiles on a map in 8-bit (bottom).
+
+  export OPENAI_API_KEY=sk-...
+{runs}
+That is {total} images, about ${cost:.2f}. Add --dry-run first to see the plan.
+Send back each folder's generated/ folder.
+"""
+
 NOTES = """Not included, and why:
   - The ENIX logo on the "PRESENTED BY" screen: a company logo is not
     something to redraw; the pack smooths the game's own pixels instead.
@@ -517,11 +628,21 @@ def main():
     ap.add_argument('--only', help='comma-separated kinds')
     ap.add_argument('--tiles', help='redo: map-tile art IDs to regenerate, e.g. T128,T129')
     ap.add_argument('--chars', help='redo: character IDs to regenerate, e.g. C057')
+    ap.add_argument('--seams', help='tools/seam_check.py seams.json: export the worst tile families as matched sets')
+    ap.add_argument('--sets', type=int, default=6, help='--seams: how many families')
     a = ap.parse_args()
     out = a.out
     if os.path.exists(out): shutil.rmtree(out)
     os.makedirs(out)
     tmp = tempfile.mkdtemp()
+    if a.seams:
+        sets = seam_sets(a, out)
+        shutil.copy(os.path.join(TOOLS, 'openai_sprites.py'), os.path.join(out, 'openai_sprites.py'))
+        runs = ''.join(f'  python3 openai_sprites.py --folder matched_{nm}   # {k} tiles: {" ".join(dr)}'
+                       + (f' (joins {" ".join(kp)}, kept)' if kp else '') + '\n' for nm, k, dr, kp in sets)
+        open(os.path.join(out, 'README.txt'), 'w').write(SETS_README.format(runs=runs, total=len(sets), cost=len(sets) * 0.07))
+        shutil.make_archive(out, 'zip', os.path.dirname(os.path.abspath(out)), os.path.basename(out))
+        print(f'{len(sets)} matched sets -> {out} (+ .zip)'); return
     redo_only = (a.tiles or a.chars) and not a.only
     cap = forced_battle(a.host, IMPOSTOR, SMOKE_FRAMES + SPARKLE_FRAMES + (DOUBLE_FRAME,), tmp) if a.host and not redo_only else None
     kinds = {'map_tiles': lambda: map_tiles(a, out), 'characters': lambda: characters(a, out),

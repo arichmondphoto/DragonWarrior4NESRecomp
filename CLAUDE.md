@@ -68,6 +68,7 @@ README.md is the full reference; this file is the working summary.
   captures by warp: `capture_casino.py`, `capture_slots.py`.
 - New art from OpenAI's image API goes through `tools/openai_sprites.py` with the export scripts
   (`export_chatgpt_sprites.py`, `export_gaps.py`); `.gitignore` has an `!` exception per art folder.
+  `export_gaps.py BUILD OUT --seams seams.json` exports the worst seam families as matched sets (one folder each).
   `export_gaps.py BUILD OUT --host HOST` packages whatever the build still reports without art (map tiles,
   characters, battle pictures, battle effects); it adds new map-tile IDs to `hd/field/ids.json`.
 - All HD packs are authored at **10x** (`<scale>10`).
