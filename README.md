@@ -384,6 +384,13 @@ They are framework bugs, kept here until they can go upstream:
   the Zapper aim and crosshair follow the offset. Labelled "Trim borders
   (overscan)" in the in-game menu (recomp-ui patch 0004 for the launcher).
   Optional since patch 0021 (off by default).
+- `0023-hdpack-tint-any-palette-tiles.patch` — art matched only through a
+  `defaultTile=Y` (any-palette) entry is drawn in the NES colour the game
+  gives that tile (its most used colour index), applied while drawing. The
+  text, window and cursor art is white and keyed that way, so it used to stay
+  white through screen fades and even show text the game hides with an
+  all-black palette (the "Chapter 1" title before it fades in); now it fades
+  with the screen and coloured text keeps its colour.
 - `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
   same per-channel colour map as `rgb:` (patch 0011), applied while drawing
   instead of at load, so the entry shares the untouched decoded block. Used

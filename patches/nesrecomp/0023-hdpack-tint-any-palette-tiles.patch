@@ -1,0 +1,102 @@
+diff --git a/runner/cyc/cyc_hdpack.c b/runner/cyc/cyc_hdpack.c
+index 68dfcf3..35bf994 100644
+--- a/runner/cyc/cyc_hdpack.c
++++ b/runner/cyc/cyc_hdpack.c
+@@ -143,6 +143,19 @@ void cyc_hdpack_output(int x,int y) {
+ static uint32_t color(uint8_t value,uint8_t mask) {
+     return hw_palette_argb[((mask>>5)*64)+((mask&1)?(value&0x30):(value&0x3f))];
+ }
++/* the most used non-zero colour index (1-3) of an 8x8 tile; 0 for a blank tile */
++static unsigned main_index(const uint8_t *t) {
++    unsigned n[4]={0,0,0,0};
++    for(int y=0;y<8;y++){
++        uint8_t lo=t[y],hi=t[y+8];
++        n[1]+=(unsigned)__builtin_popcount(lo&~hi&0xFF);
++        n[2]+=(unsigned)__builtin_popcount(hi&~lo&0xFF);
++        n[3]+=(unsigned)__builtin_popcount(lo&hi);
++    }
++    unsigned k=0,best=0;
++    for(unsigned i=1;i<4;i++)if(n[i]>best){best=n[i];k=i;}
++    return k;
++}
+ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height) {
+     *width=256;*height=240;if(!hdpack_active())return native;
+     uint64_t generation=cyc_render_generation();
+@@ -165,6 +178,8 @@ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height
+         p->backdrop=color(r->bg_pal[0],r->mask);
+         p->bg_argb=color(r->bg_pal[r->bg_color],r->mask);
+         p->sp_argb=r->sp_color?color(r->sp_pal[r->sp_color-1],r->mask):native[i];
++        if(p->bg_has){unsigned k=main_index(r->bg_tile);p->bg_tint=k?color(r->bg_pal[k],r->mask):p->backdrop;}
++        if(p->sp_has){unsigned k=main_index(r->sp_tile);if(k)p->sp_tint=color(r->sp_pal[k-1],r->mask);}
+     }
+     size_t count=(size_t)256*240*hdpack_scale()*hdpack_scale();
+     if(count>upscaled_capacity) {
+diff --git a/runner/include/hdpack.h b/runner/include/hdpack.h
+index 1f35cd8..e4fd238 100644
+--- a/runner/include/hdpack.h
++++ b/runner/include/hdpack.h
+@@ -41,6 +41,12 @@ typedef struct {
+     uint8_t        sp_has;
+     uint8_t        sp_clear;   /* sp_has on a transparent sprite pixel (<options>spriteCells) */
+     uint32_t       sp_argb;         /* original sprite color (fallback when unmatched) */
++
++    /* The colour of the tile's most used non-zero colour index (0 = not
++     * recorded). Art matched only through a defaultTile=Y (any-palette) entry
++     * is drawn in this colour: white text fades with the screen, hidden text
++     * stays hidden, coloured text keeps its colour. */
++    uint32_t       bg_tint, sp_tint;
+ } HdPixel;
+ 
+ /* Load the pack in `dir` (expects dir/hires.txt). native_w is the runner's
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 3fbd65f..f74b9a1 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -1119,6 +1119,21 @@ static void blit_over(uint32_t *dst, int hd_w, const HdTile *t,
+     }
+ }
+ 
++/* A tile matched only through its defaultTile=Y (any-palette) entry, drawn in
++ * the NES colour the game gives it (HdPixel.bg_tint/sp_tint): the art is
++ * white, so each channel is scaled by the colour (rgbd: with no offset).
++ * Thread-local scratch: one per compositing thread. */
++static const HdTile *tinted(const HdTile *t, uint32_t argb) {
++    static _Thread_local HdTile tmp;
++    tmp = *t;
++    tmp.has_drgb = 1;
++    tmp.dg[0] = (float)((argb >> 16) & 0xFF) / 255.0f;
++    tmp.dg[1] = (float)((argb >> 8) & 0xFF) / 255.0f;
++    tmp.dg[2] = (float)(argb & 0xFF) / 255.0f;
++    tmp.dofs[0] = tmp.dofs[1] = tmp.dofs[2] = 0;
++    return &tmp;
++}
++
+ static void fill_block(uint32_t *dst, int hd_w, uint32_t color, int s) {
+     for (int y = 0; y < s; y++) {
+         uint32_t *o = dst + (long)y * hd_w;
+@@ -1393,7 +1408,11 @@ static void upscale_rows(const uint32_t *native_fb, int native_w, uint32_t *hd_b
+                 }
+             }
+             if (bt && !bt->fully_transparent) {
+-                blit_over(dst, hd_w, bt, p->bg_ox, p->bg_oy, 0, 0, s);
++                uint32_t own_key = ((uint32_t)p->bg_p0 << 24) | ((uint32_t)p->bg_p1 << 16) | ((uint32_t)p->bg_p2 << 8) | p->bg_p3;
++                if (s_version >= 100 && bt->key.palette != own_key && p->bg_tint)
++                    blit_over(dst, hd_w, tinted(bt, p->bg_tint), p->bg_ox, p->bg_oy, 0, 0, s);   /* any-palette art */
++                else
++                    blit_over(dst, hd_w, bt, p->bg_ox, p->bg_oy, 0, 0, s);
+             } else if (p->bg_has) {
+                 if (s_opt_debug)      fill_block(dst, hd_w, 0xFFFF00FFu, s);  /* magenta */
+                 else if (hide_orig)   { /* leave background/backdrop showing */ }
+@@ -1409,7 +1428,11 @@ static void upscale_rows(const uint32_t *native_fb, int native_w, uint32_t *hd_b
+                                          0, p->sp_p1, p->sp_p2, p->sp_p3,
+                                          sx, sy, p);
+                 if (st && !st->fully_transparent) {
+-                    blit_over(dst, hd_w, st, p->sp_ox, p->sp_oy, p->sp_hm, p->sp_vm, s);
++                    uint32_t own_key = 0xFF000000u | ((uint32_t)p->sp_p1 << 16) | ((uint32_t)p->sp_p2 << 8) | p->sp_p3;
++                    if (s_version >= 100 && st->key.palette != own_key && p->sp_tint)
++                        blit_over(dst, hd_w, tinted(st, p->sp_tint), p->sp_ox, p->sp_oy, p->sp_hm, p->sp_vm, s);
++                    else
++                        blit_over(dst, hd_w, st, p->sp_ox, p->sp_oy, p->sp_hm, p->sp_vm, s);
+                 } else if (p->sp_clear) {
+                     /* transparent pixel of a sprite without HD art: nothing to draw */
+                 } else if (s_opt_debug) {

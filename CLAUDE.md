@@ -101,6 +101,8 @@ README.md is the full reference; this file is the working summary.
   -$10 step) = the art recoloured to the step's own NES colours with `rgbd:` (applied while drawing, patch
   0022: no decoded copy; `rgb:` copies for every step cost ~650 MB). Battle monsters still fade by brightness.
 - Title layers are gated on RAM $0500=$0F and $0026=$77 (title only), or they flash on black frames.
+- Text/window/cursor tiles are `defaultTile=Y` white art; patch 0023 tints any-palette matches with the tile's
+  NES colour while drawing (fades, hidden text, coloured text).
 - Castle doors and the title are drawn straight into the nametable (no map tiles): see
   `capture_extras.py`, `door_frames.py`, `make_title_hdpack.py`.
 
