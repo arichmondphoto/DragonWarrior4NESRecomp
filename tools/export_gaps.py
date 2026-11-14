@@ -492,6 +492,7 @@ Hard rules:
 4. Each tile fills its whole square edge to edge; textures run straight off every edge.
 5. No text, borders, shadows or vignettes.
 """
+CROWD = {f'T{n:03d}' for n in range(38, 51)}     # Endor arena spectators: their seams are figures cut by the row above
 SET_WHAT = {'D': 'dungeon walls and floors', 'S': 'town and castle walls, floors and ground', 'T': 'town walls and towers',
             'W': 'overworld ground'}
 
@@ -506,19 +507,55 @@ def seam_sets(a, out):
         if p['a'] == p['b']: continue
         k = tuple(sorted((p['a'], p['b']))); agg[k] += p['count'] * p['score']
         if k not in where or p['count'] > where[k][1]: where[k] = (p['where'], p['count'])
-    par = {}
+    par, size = {}, collections.Counter()
     def root(x):
-        par.setdefault(x, x)
+        if x not in par: par[x] = x; size[x] = 1
         while par[x] != x: x = par[x]
         return x
-    for k in sorted(agg, key=lambda k: -agg[k])[:40]:
-        if agg[k] < 6000: break
-        ra, rb = root(k[0]), root(k[1])
-        if ra != rb: par[ra] = rb
-    fams = collections.defaultdict(set)
-    for x in par: fams[root(x)].add(x)
     weight = lambda g: sum(v for k, v in agg.items() if k[0] in g and k[1] in g)
-    fams = sorted(fams.values(), key=lambda g: -weight(g))[:a.sets]
+    if a.all:
+        # every tile in any seam: tiles that meet go on the same sheet (heaviest
+        # borders first, at most 24 a sheet); left-overs packed by the maps they share
+        allt = {p['a'] for p in seams} | {p['b'] for p in seams}
+        done_sheets = json.load(open(os.path.join(HERE, 'hd', 'field', 'sheets', 'sheets.json')))['sheets']
+        repainted = {x for v in done_sheets.values() for x in v}        # every tile already generated
+        ids_ = json.load(open(os.path.join(HERE, 'hd', 'field', 'ids.json')))['ids']
+        fp_item = {}
+        for r in json.load(open(os.path.join(a.build, 'field-capture', 'field_tiles_all.json'))):
+            fp_item.setdefault(hashlib.sha1(bytes.fromhex(r['chr'])).hexdigest()[:16], r['item'])
+        rep_items = {fp_item.get(ids_[x][0]) for x in repainted if x in ids_}
+        allt -= rep_items | CROWD
+
+        for t in allt: root(t)
+        for k in sorted(agg, key=lambda k: -agg[k]):
+            if k[0] not in allt or k[1] not in allt: continue
+            ra, rb = root(k[0]), root(k[1])
+            if ra != rb and size[ra] + size[rb] <= 24: par[ra] = rb; size[rb] += size[ra]
+        comps = collections.defaultdict(set)
+        for x in allt: comps[root(x)].add(x)
+        maps_of = collections.defaultdict(collections.Counter)
+        for p in seams:
+            for t in (p['a'], p['b']):
+                for m in p['maps']: maps_of[t][m.split('_')[0]] += p['count']
+        area = lambda g: sum((maps_of[t] for t in g), collections.Counter()).most_common(1)[0][0] if g else ''
+        comps = sorted(comps.values(), key=lambda g: (area(g), -len(g)))
+        fams, cur = [], set()
+        for g in comps:                               # first fit, keeping areas together
+            for f in fams:
+                if len(f) + len(g) <= 24 and area(f) == area(g): f |= g; break
+            else:
+                for f in fams:
+                    if len(f) + len(g) <= 24: f |= g; break
+                else: fams.append(set(g))
+        fams = sorted(fams, key=lambda g: -weight(g))
+    else:
+        for k in sorted(agg, key=lambda k: -agg[k])[:40]:
+            if agg[k] < 6000: break
+            ra, rb = root(k[0]), root(k[1])
+            if ra != rb: par[ra] = rb
+        fams = collections.defaultdict(set)
+        for x in par: fams[root(x)].add(x)
+        fams = sorted(fams.values(), key=lambda g: -weight(g))[:a.sets]
     rows = json.load(open(os.path.join(a.build, 'field-capture', 'field_tiles_all.json')))
     items = {}
     for r in rows: items.setdefault(r['item'], r)
@@ -533,8 +570,10 @@ def seam_sets(a, out):
         draw = [i for i in fam if i not in keep]
         if not draw: continue
         aids = [by_fp.get(hashlib.sha1(bytes.fromhex(items[i]['chr'])).hexdigest()[:16]) for i in draw]
-        pairs = [(i, x) for i, x in zip(draw, aids) if x]
-        name = f'P{n:02d}'; d = os.path.join(out, f'matched_{name}')
+        skip = (CROWD | {x for v in json.load(open(os.path.join(HERE, 'hd', 'field', 'sheets', 'sheets.json')))['sheets'].values() for x in v}) if a.all else set()
+        pairs = [(i, x) for i, x in zip(draw, aids) if x and x not in skip]
+        if not pairs: continue
+        name = f'{"Q" if a.all else "P"}{n:02d}'; d = os.path.join(out, f'matched_{name}')
         write_pkg(d, NIGHT_RULES, {'background': 'opaque'})
         render_sheet([(bytes.fromhex(items[i]['chr']), bytes.fromhex(ids[x][1])) for i, x in pairs]).save(os.path.join(d, 'inputs', name + '.png'))
         what = ', '.join(sorted({SET_WHAT[x[0]] for _, x in pairs}))
@@ -547,7 +586,8 @@ def seam_sets(a, out):
         show = [x for x in show if x and os.path.exists(os.path.join(art, x + '.png'))][:8]
         for k, x in enumerate(show):
             ref.paste(Image.open(os.path.join(art, x + '.png')).convert('RGB').resize((240, 240)), (12 + (k % 4) * 252, 12 + (k // 4) * 252))
-        best = max((k for k in agg if k[0] in fam and k[1] in fam), key=lambda k: agg[k])
+        inside = [k for k in agg if k[0] in fam and k[1] in fam] or [k for k in agg if k[0] in fam or k[1] in fam]
+        best = max(inside, key=lambda k: agg[k])
         (path, nt, r0, c0), _ = where[best]
         m = load(path); ch, ci, pal = m['chr_ram'], m['ciram'], m['palette']
         exc = Image.new('RGB', (12 * 8, 6 * 8))
@@ -630,6 +670,7 @@ def main():
     ap.add_argument('--chars', help='redo: character IDs to regenerate, e.g. C057')
     ap.add_argument('--seams', help='tools/seam_check.py seams.json: export the worst tile families as matched sets')
     ap.add_argument('--sets', type=int, default=6, help='--seams: how many families')
+    ap.add_argument('--all', action='store_true', help='--seams: every tile in any seam, sheets of 24 (tiles that meet together)')
     a = ap.parse_args()
     out = a.out
     if os.path.exists(out): shutil.rmtree(out)
