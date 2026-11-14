@@ -37,8 +37,8 @@ README.md is the full reference; this file is the working summary.
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
   A full build takes ~45 min on 2 cores; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.20.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
-- The nesmod package limit is 256 MiB; the pack is ~187 MiB — watch its size (`du -sb OUTDIR`). Never store
+  catalog keys on it). Current: 0.21.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
+- The nesmod package limit is 256 MiB; the pack is ~200 MiB — watch its size (`du -sb OUTDIR`). Never store
   recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
 ## Headless testing
@@ -104,6 +104,8 @@ README.md is the full reference; this file is the working summary.
   0022: no decoded copy; `rgb:` copies for every step cost ~650 MB). Battle monsters still fade by brightness.
   Palettes that turn the hue > 45 degrees use `rgbl:`/`rgbdl:` (patch 0024: colour by the art's brightness) when
   that fits under 0.64x the per-channel error (`HUE_LUM`, `LUM_RATIO`; `DW4_LUM_LOG=FILE` logs the choices).
+- Shared ground (`make_field_hdpack.py --maps`): tiles next to a plain ground tile take its HD texture where the
+  8-bit pixels are that ground (README "Shared ground between map tiles"); `tools/seam_check.py` measures seams.
 - Title layers are gated on RAM $0500=$0F and $0026=$77 (title only), or they flash on black frames.
 - Power-on screens: `make_font_hdpack.py --screen/--sprites` smooth every cell in context (whole screen), coloured
   exact-palette entry + white `defaultTile=Y` copy. Intro sprites use pattern table $1000.

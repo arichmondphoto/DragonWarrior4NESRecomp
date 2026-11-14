@@ -117,6 +117,18 @@ arena's sand). Above that ratio tiles mixing two hues (gold trim, orange grass
 with blue dots) lost a hue, so they keep the per-channel map. The arena
 floor's edge strips (top and right) still look more orange than the 8-bit.
 
+### 4c. Tiles that don't blend: ground done (pack 0.21.0), art left
+- Done: `tools/seam_check.py` (measure) and shared ground in
+  `make_field_hdpack.py --maps` (README "Shared ground between map tiles"):
+  Burland Castle and the signpost on the overworld, the arena's sand edges,
+  242 tile versions in all.
+- Left (from `seams.json`): mostly art style. Neighbouring wall tiles are painted
+  as different bricks or cobbles (D087/D088 in many dungeons, S025/S048/T006
+  round towers against flat walls), gold block walls with painted outlines,
+  and the crowd figures cut off by the row above. These need art (repaint as
+  sets) or a per-pair fix. Plain tiles also show their 16-pixel repeat (the
+  same grass tile side by side): a separate issue (variation per position).
+
 ### 5. Character art that doesn't line up
 - **Why:** the sprite builder's fit report says "redo" for C007, C011, C043,
   C048, C062, C065, C090, C091, C092 and C101 (the art doesn't sit on the
@@ -164,9 +176,6 @@ floor's edge strips (top and right) still look more orange than the 8-bit.
   platforms from the same commit.
 
 ### 9. Smaller ideas
-- Capture a slot-machine win (lamp and palette blinks) and check it in HD.
-- Gottside (the 64x64 sky world) is decoded for the edge repair but was never
-  reached in a test: check its edges when a route gets there.
 - Widescreen: see item 10.
 
 ### 10. Widescreen (deferred by decision; this is the suggested method)

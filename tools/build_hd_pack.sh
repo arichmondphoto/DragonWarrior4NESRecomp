@@ -90,7 +90,8 @@ if ls hd/field/source/*.png >/dev/null 2>&1; then
     "$PY" tools/slice_field_sheets.py "$FCAP/field_tiles.json" "$FCAP/art"
     # the castle doors' in-between frames, as extra map tiles (hd/field/doors)
     "$PY" tools/door_frames.py "$FCAP/field_tiles.json" "$XCAP/doors.json" "$FCAP/art" "$FCAP/field_tiles_all.json"
-    "$PY" tools/make_field_hdpack.py "$FCAP/field_tiles_all.json" "$FCAP/art" "$OUT" --report "$(dirname "$OUT")/field-report.json"
+    "$PY" tools/make_field_hdpack.py "$FCAP/field_tiles_all.json" "$FCAP/art" "$OUT" --maps "$FCAP/maps" \
+        --report "$(dirname "$OUT")/field-report.json"
     cat >> "$OUT/NOTICE.txt" <<'NOTE'
 
 Map tiles: the project owner's artwork (hd/field/source atlases), cut per

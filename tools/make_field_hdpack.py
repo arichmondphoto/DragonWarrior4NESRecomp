@@ -46,7 +46,7 @@ opposite edges meet without a visible seam.
 
 usage: make_field_hdpack.py FIELD_TILES ART OUTDIR [--report FILE]
 """
-import argparse, colorsys, collections, hashlib, itertools, json, os, sys
+import argparse, colorsys, collections, glob, hashlib, itertools, json, os, re, sys
 import numpy as np
 from PIL import Image
 from scipy import ndimage
@@ -99,10 +99,201 @@ def make_seamless(img, h, v):
         a = a * (1 - wgt[:, None, None]) + ndimage.gaussian_filter1d(a, 3, axis=0, mode='wrap') * wgt[:, None, None]
     return Image.fromarray(np.clip(np.round(a), 0, 255).astype(np.uint8))
 
+# ---- shared ground ----------------------------------------------------------
+# The game builds one ground (grass, sand, a floor) from several tiles: a plain
+# one and others that carry an object on the same ground (a castle on the
+# overworld's grass, the Endor arena's sand edge strips). The owner's art
+# paints each tile's ground its own way, so the HD map shows patches. For each
+# tile version next to a plain ground tile of the same palette on a captured
+# map, the pixels where the 8-bit tile *is* that ground (same colour index at
+# the same place) take the plain tile's HD texture, drawn as the player draws
+# it, with a soft edge; paint of the object that spills over the 8-bit outline
+# is kept. The result is stored as that version's picture (its fades recolour
+# it with rgbd:).
+GROUND_MIN, GROUND_MAX = 0.04, 0.97     # share of the tile that is the ground
+GROUND_MIN_SEEN = 2                     # times seen next to each other on the maps
+GROUND_LOG = open(os.environ['DW4_GROUND_LOG'], 'w') if os.environ.get('DW4_GROUND_LOG') else None
+OBJ_KEEP = 0.5                          # keep a ground pixel when this much nearer the tile's object paint
+
+def plain_tile(px):
+    """A plain ground: at most two colours, repeating seamlessly both ways."""
+    g = np.array(px)
+    if len(np.unique(g)) > 2: return False
+    h, v = tileable(g)
+    return h and v
+
+def chan_fit(src, pal, W):
+    """Per-channel affine map from palette `src`'s colours to `pal`'s (weights W)."""
+    def rgb(c): v = NES[c & 0x3F]; return np.array([(v >> 16) & 255, (v >> 8) & 255, v & 255], float)
+    X = np.array([rgb(src[k]) for k in range(4)]); Y = np.array([rgb(pal[k]) for k in range(4)]); fit = []
+    for ch in range(3):
+        x, y = X[:, ch], Y[:, ch]; mx, my = (W * x).sum() / W.sum(), (W * y).sum() / W.sum()
+        vx = (W * (x - mx) ** 2).sum()
+        g = (W * (x - mx) * (y - my)).sum() / vx if vx > 50 else ((W @ Y.mean(1)) / max(W @ X.mean(1), 1))
+        g = float(np.clip(g, 0, 3)); fit.append((g, my - g * mx))
+    return fit
+
+def render_look(lk):
+    """A version's picture as the player draws it (160x160 RGB float)."""
+    im = Image.open(lk['path']).convert('RGB')
+    if im.size != (160, 160): im = im.resize((160, 160), Image.LANCZOS)
+    if lk['h'] or lk['v']: im = make_seamless(im, lk['h'], lk['v'])
+    a = np.asarray(im).astype(float)
+    m = re.match(r',rgb(l?):(.*)', lk['xf'])
+    if m:
+        vals = [float(x) for x in m[2].split('/')]; g, o = np.array(vals[0::2]), np.array(vals[1::2])
+        src = (a @ np.array([0.299, 0.587, 0.114]))[..., None] if m[1] else a
+        a = np.clip(np.floor(src * g + o + 0.5), 0, 255)
+    return a
+
+def ground_pairs(maps, items):
+    """(tile, palette) -> the plain ground tile seen next to it most, same palette."""
+    from vramdump import load
+    by_chr = {bytes.fromhex(vs[0]['chr']): iid for iid, vs in items.items()}
+    plain = {iid for iid, vs in items.items() if plain_tile(pixels(bytes.fromhex(vs[0]['chr'])))}
+    adj = collections.Counter()
+    mems = sorted(glob.glob(os.path.join(maps, '*.mem')) + glob.glob(os.path.join(maps, 'view', '*.mem')))
+    for path in mems:
+        m = load(path); ch, ci, pal = m['chr_ram'], m['ciram'], m['palette']
+        for nt in (0, 0x400):
+            grid = {}
+            for r in range(0, 28, 2):
+                for c in range(0, 32, 2):
+                    q = b''.join(bytes(ch[0x1000 + 16 * ci[nt + rr * 32 + cc]:0x1010 + 16 * ci[nt + rr * 32 + cc]])
+                                 for rr, cc in ((r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)))
+                    at = ci[nt + 0x3C0 + (r // 4) * 8 + c // 4]; sub = (at >> (((r % 4) // 2) * 4 + ((c % 4) // 2) * 2)) & 3
+                    it = by_chr.get(q)
+                    if it: grid[(r, c)] = (it, bytes([pal[0], pal[sub * 4 + 1], pal[sub * 4 + 2], pal[sub * 4 + 3]]))
+            for (r, c), (t, p) in grid.items():
+                if t in plain: continue
+                for dr, dc in ((-2, 0), (2, 0), (0, -2), (0, 2)):
+                    g = grid.get((r + dr, c + dc))
+                    if g and g[0] in plain and g[0] != t: adj[(t, p, g[0], g[1])] += 1
+    best = {}
+    for (t, p, g, gp), n in adj.items():
+        if n >= GROUND_MIN_SEEN and ((t, p) not in best or n > best[(t, p)][1]): best[(t, p)] = ((g, gp), n)
+    return {k: v[0] for k, v in best.items()}
+
+def ground_mask(tpx, tpal, gpx, gpal):
+    """Pixels where the tile shows the ground: the same NES colour at the same
+    place (the palettes may differ: a castle drawn in its own sub-palette
+    shares the grass's green through another colour index)."""
+    col = lambda c: c & 0x3F if c & 0x0F < 0x0D else 0x0F
+    tc = np.vectorize(lambda k: col(tpal[k]))(tpx); gc = np.vectorize(lambda k: col(gpal[k]))(gpx)
+    m8 = (tc == gc) & (tc != 0x0F)          # black: outlines, mortar, the void - never ground
+    lab, nl = ndimage.label(m8)
+    for j in range(1, nl + 1):
+        if (lab == j).sum() < 3: m8[lab == j] = False          # stray matching pixels, not ground
+    return m8
+
+def centres(X, k=4, it=8):
+    """k colour centres of the pixels X (n x 3), a few rounds of k-means."""
+    X = X[:: max(1, len(X) // 4000)]
+    c = X[np.linspace(0, len(X) - 1, k).astype(int)].copy()
+    for _ in range(it):
+        lab = ((X[:, None] - c[None]) ** 2).sum(2).argmin(1)
+        for j in range(k):
+            if (lab == j).any(): c[j] = X[lab == j].mean(0)
+    return c
+
+def nearest(img, c):
+    """Distance from each pixel of img (h x w x 3) to its nearest centre."""
+    return np.sqrt(((img[..., None, :] - c[None, None]) ** 2).sum(3)).min(2)
+
+def border_score(A, B, side):
+    """How much the HD picture jumps from A to B at their border (B right of A,
+    or below it), minus the texture's own change over the same distance
+    (tools/seam_check.py's measure)."""
+    W = 6
+    def strip(a_, first, off):
+        if side: return a_[:, 160 - (off + 1) * W:160 - off * W] if first else a_[:, off * W:(off + 1) * W]
+        return a_[160 - (off + 1) * W:160 - off * W, :] if first else a_[off * W:(off + 1) * W, :]
+    def dist(p1, p2):
+        d = 0.0
+        for k in range(8):
+            sl = slice(k * 20, k * 20 + 20)
+            q1 = (p1[sl] if side else p1[:, sl]).reshape(-1, 3); q2 = (p2[sl] if side else p2[:, sl]).reshape(-1, 3)
+            d += np.linalg.norm(q1.mean(0) - q2.mean(0)) + 0.5 * np.linalg.norm(q1.std(0) - q2.std(0))
+        return d / 8
+    across = dist(strip(A, True, 0), strip(B, False, 0))
+    inside = max(dist(strip(A, True, 1), strip(A, True, 0)), dist(strip(B, False, 0), strip(B, False, 1)))
+    return max(0.0, across - inside)
+
+def continuous8(ca, cb, side):
+    """The 8-bit tiles (16x16 NES colours) run on across this border."""
+    a = ca[:, -2:] if side else ca[-2:, :]; b = cb[:, :2] if side else cb[:2, :]
+    ha = collections.Counter(a.ravel()); hb = collections.Counter(b.ravel()); n = a.size
+    return sum(abs(ha[k] - hb[k]) for k in set(ha) | set(hb)) / (2 * n) < 0.35
+
+def seam_total(T, G, ct, cg):
+    """Seams of picture T (8-bit colours ct) with the ground G and with itself,
+    over the borders that are continuous in 8-bit: (total, per border)."""
+    out = []
+    for A, B, ca, cb, side in ((T, G, ct, cg, True), (G, T, cg, ct, True), (T, G, ct, cg, False), (G, T, cg, ct, False),
+                               (T, T, ct, ct, True), (T, T, ct, ct, False)):
+        if continuous8(ca, cb, side): out.append(border_score(A, B, side))
+    return sum(out), out
+
+def shared_ground(a, items, looks, versions, add_img):
+    pairs = ground_pairs(a.maps, items)
+    px = {iid: np.array(pixels(bytes.fromhex(vs[0]['chr']))) for iid, vs in items.items()}
+    stats = collections.Counter()
+    done, n = {}, 0
+    by_id = {v['id']: v for v in versions}
+    for v in versions:
+        if not v['real']: continue
+        key = (v['item'], v['pal']); gk = pairs.get(key)
+        if not gk or key not in looks or gk not in looks: continue
+        g, gp = gk
+        m8 = ground_mask(px[v['item']], v['pal'], px[g], gp)
+        share = m8.mean()
+        if not GROUND_MIN <= share <= GROUND_MAX: continue
+        if key not in done:
+            T, G = render_look(looks[key]), render_look(looks[gk])
+            big = np.kron(m8, np.ones((10, 10))).astype(bool)
+            # the ring just outside the ground: replace only what looks like the
+            # tile's own painted ground (keep object paint spilling over the outline)
+            ring = np.kron(ndimage.binary_dilation(m8), np.ones((10, 10))).astype(bool) & ~big
+            # per pixel: nearer the ground tile's colours (swap) or the tile's
+            # own object paint (keep: bushes or towers the art paints over 8-bit ground)
+            obj = np.kron(ndimage.binary_erosion(~m8), np.ones((10, 10))).astype(bool)
+            Tb = ndimage.gaussian_filter(T, (1.5, 1.5, 0))
+            dg = nearest(Tb, centres(ndimage.gaussian_filter(G, (1.5, 1.5, 0)).reshape(-1, 3)))
+            do = nearest(Tb, centres(Tb[obj])) if obj.sum() > 200 else np.full(dg.shape, np.inf)
+            # inside the 8-bit ground: swap unless clearly object paint;
+            # on the rim outside it: swap only what looks like ground
+            mask = ((big & ~(do < OBJ_KEEP * dg)) | (ring & (dg < do))).astype(float)
+            mask = ndimage.gaussian_filter(mask, 2.0, mode='nearest')
+            out = T * (1 - mask[..., None]) + G * mask[..., None]
+            # keep it only where it helps: the seams with the ground tile and
+            # with its own copies must drop, none may get clearly worse
+            col = lambda pal, px_: np.vectorize(lambda k: pal[k] & 0x3F)(px_)
+            ct, cg = col(v['pal'], px[v['item']]), col(gp, px[g])
+            before, bl = seam_total(T, G, ct, cg); after, al_ = seam_total(out, G, ct, cg)
+            ok = bl and (after < 0.8 * before or after <= 10) and all(y <= x + 12 for x, y in zip(bl, al_))
+            stats['helps' if ok else 'no gain'] += 1
+            if GROUND_LOG: GROUND_LOG.write(f"{v['item']}\t{v['pal'].hex()}\t{g}\t{gp.hex()}\t{share:.2f}\t{before:.0f}\t{after:.0f}\t{ok}\n")
+            if not ok: done[key] = None; continue
+            name = f"{looks[key]['aid']}_g{v['pal'].hex()}"
+            done[key] = add_img(Image.fromarray(np.clip(np.round(out), 0, 255).astype(np.uint8)), name)
+        if done[key] is None: continue
+        v['img'], v['xf'] = done[key], ''
+        W = looks[key]['W']
+        for k in (1, 2, 3):
+            f = by_id.get(f"{v['id']}~{k}")
+            if not f: continue
+            fit = chan_fit(v['pal'], f['pal'], W)
+            gkey = tuple((round(gg / 0.05) * 0.05, round(o / 4) * 4) for gg, o in fit)
+            f['img'], f['xf'] = done[key], ',rgbd:' + '/'.join(f'{gg:.2f}/{int(o)}' for gg, o in gkey)
+        n += 1
+    print(f'  shared ground: {dict(stats)} (tile versions tried)')
+    return n
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('field_tiles'); ap.add_argument('art'); ap.add_argument('outdir')
     ap.add_argument('--report')
+    ap.add_argument('--maps', help='the map capture (MM_SS.mem dumps): tiles next to a plain ground take its texture')
     a = ap.parse_args()
     rows = json.load(open(a.field_tiles))
     items = collections.OrderedDict()
@@ -120,6 +311,10 @@ def main():
     hires = os.path.join(a.outdir, 'hires.txt')
     lines = open(hires).read().splitlines() if os.path.exists(hires) else ['<ver>106', '<scale>10']
     img_index = sum(1 for l in lines if l.startswith('<img>'))
+    def add_img_top(img, name):
+        nonlocal img_index
+        rel = f'field/{name}.png'; img.save(os.path.join(a.outdir, rel))
+        lines.append(f'<img>{rel}'); img_index += 1; return img_index - 1
     os.makedirs(os.path.join(a.outdir, 'field'), exist_ok=True)
 
     # ---- versions: (item, palette, image, brightness) ---------------------
@@ -130,6 +325,7 @@ def main():
     def fade(pal, k): return bytes(0x0F if (c & 0x3F) < 0x10 * k or (c & 0x0F) >= 0x0D else c - 0x10 * k for c in pal)
     night = lambda r: all(u.endswith('(night)') for u in r['used_in'])
     versions = []        # dicts: id, item, chr, pal, img, bright, uses, real
+    looks = {}           # (item, palette) -> how the player draws that version (for the ground pass)
     missing, seamless, nights, lums = [], 0, 0, 0
     for iid, vs in items.items():
         # with ids.json the fingerprint is the only match: a tile that is new
@@ -225,6 +421,7 @@ def main():
                     if gkey not in tinted: tinted[gkey] = True; nights += 1
             uses = len(r['used_in'])
             versions.append(dict(id=r['id'], item=iid, chr=t, pal=pal, img=idx, xf=xf, bright=1.0, uses=uses, real=True))
+            looks.setdefault((iid, pal), dict(path=over if (over and os.path.exists(over)) else base, h=h, v=v, xf=xf, aid=aid, W=W.copy()))
             # The screen-fade steps (each colour -$10, black below $10): the art
             # recoloured to the step's own NES colours, as the game shows them
             # (deep blues and greens, parts going black first), not dimmed.
@@ -248,6 +445,10 @@ def main():
         versions.append(dict(id=f'{iid}~flash', item=iid, chr=t, pal=FLASH, img=main_idx, xf=FLASH_XF, bright=1.0,
                              uses=0.01, real=False))
 
+    # ---- shared ground: tiles next to a plain ground take its texture ------
+    grounded = 0
+    if a.maps:
+        grounded = shared_ground(a, items, looks, versions, add_img_top)
     # a fade step that equals a real palette of the same tile is that palette
     real_keys = {(v['chr'], v['pal']) for v in versions if v['real']}
     seen = set(); kept = []
@@ -316,7 +517,8 @@ def main():
     print(f'{len(items) - len(missing)} map tiles ({seamless} made seamless, {nights} palette recolours), '
           f'{sum(v["real"] for v in versions)} palette versions + {sum(not v["real"] for v in versions)} fade steps, '
           f'{len(tiles)} tile entries, '
-          f'{len(conds)} neighbour conditions, {unresolved} unresolved, {lums} coloured by brightness -> {hires}')
+          f'{len(conds)} neighbour conditions, {unresolved} unresolved, {lums} coloured by brightness, '
+          f'{grounded} versions on shared ground -> {hires}')
     if missing: print(f'  no art yet for {len(missing)}: {" ".join(missing[:20])}{" ..." if len(missing) > 20 else ""}')
     if a.report:
         json.dump({'missing': missing, 'seamless': seamless, 'palette_recolours': nights, 'entries': len(tiles), 'conditions': len(conds),

@@ -256,6 +256,37 @@ How the characters are built (`tools/build_hd_pack.sh`):
 - Tiles are matched by their 16 CHR-RAM bytes and exact palettes.
   Bump `HD_VERSION` in `package_macos_app.sh` when the pack's content changes.
 
+## Shared ground between map tiles
+
+The game builds one ground (grass, sand, a floor) out of several tiles: a
+plain one and others that carry something on the same ground (a castle on the
+overworld's grass, the Endor arena's sand edge strips). The owner's atlas
+paints each tile's ground its own way, so in HD the ground showed patches
+where the 8-bit picture is continuous.
+
+`tools/seam_check.py PACK FIELD_CAPTURE OUT` measures this. It draws every
+captured map screen from the pack (the player's keys, conditions and colour
+transforms), and at each border between two map tiles that is continuous in
+8-bit it scores the HD jump (minus the texture's own change over the same
+distance). It writes `seams.json` (tile pairs, worst first, where seen) and
+`seams.png`.
+
+`make_field_hdpack.py --maps` (the build passes the map capture) then gives
+tiles a shared ground. For each tile version next to a plain ground tile on a
+captured map:
+- the pixels where the 8-bit tile shows that ground (same NES colour at the
+  same place, any sub-palette; never black) take the plain tile's HD
+  texture, drawn as the player draws it, with a soft edge;
+- paint the art puts over 8-bit ground (bushes, tree crowns) stays when its
+  colour is much nearer the tile's own object paint than the ground's;
+- the version keeps the result only if its seams with the ground tile and
+  with its own copies don't get worse (`DW4_GROUND_LOG=FILE` logs each choice).
+
+In pack 0.21.0 this applies to 242 tile versions (about +11 MiB). The seam
+check went from 46,530 seam borders to 40,971: about 5,400 fixed and 220 new
+small ones. What is left is mostly art style (two wall tiles painted as
+different bricks) rather than ground.
+
 ## Map edges at the full 256x240 picture
 
 The game shows the full 256x240 picture by default ("Trim borders
