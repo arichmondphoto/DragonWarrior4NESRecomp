@@ -23,6 +23,22 @@ from export_chatgpt_tiles import W, H, CELL, cell_origin, render_sheet, art_tile
 INSET = 5
 MATCH = 0.4          # how far each tile's colours are pulled to the original's
 
+def drop_gap_lines(tile, depth=8):
+    """A sheet drawn a little smaller than its input leaves strips of the
+    flat grey gap (#8C8C8C) along some tile edges after cutting: replace each
+    edge row/column that is mostly that flat grey with the nearest row/column
+    inside the tile."""
+    a = np.asarray(tile).astype(float).copy()
+    def grey(line):
+        return ((np.abs(line - 140).sum(-1) < 30) & (line.std(-1) < 6)).mean() > 0.5
+    for side in range(4):
+        b = np.rot90(a, side)
+        k = 0
+        while k < depth and grey(b[k]): k += 1
+        if k: b[:k + 2] = b[k + 2]                # skip the soft row where the grey blends into the art
+        a = np.rot90(b, -side)
+    return Image.fromarray(np.clip(np.round(a), 0, 255).astype(np.uint8))
+
 def colour_match(tile, orig, k=MATCH):
     """The model paints in its own palette (often darker and duller than
     the NES colours, black areas turn grey). Fit an RGB affine map (3x3 +
@@ -90,6 +106,7 @@ def main():
             if name in only and aid not in only[name]: continue
             x, y = cell_origin(i)
             cut = placed.crop((x + INSET, y + INSET, x + CELL - INSET, y + CELL - INSET)).resize((160, 160), Image.LANCZOS)
+            cut = drop_gap_lines(cut)
             if a.match > 0: cut = colour_match(cut, ref.crop((x, y, x + CELL, y + CELL)), a.match)
             cut.save(os.path.join(a.out, aid + '.png'))
             n += 1
