@@ -30,8 +30,8 @@ ones; night and the fade steps between screens subtract $10 from each colour,
 up to three times). Every character gets entries for every set (a sprite's
 colours are its palette slot in that set), so it keeps its art anywhere: the
 art's own palette as drawn, other real palettes as per-channel affine
-recolours, and night/fade steps of those as the same image at the matching
-brightness.
+recolours, and night/fade steps recoloured to their own NES colours (as the
+game shows them), not dimmed.
 
 People lying down (beds): the game turns a character's tiles by 90, 180 or
 270 degrees (bank 8 $82D4) for the types a map loads with the $80 flag (taken
@@ -149,7 +149,7 @@ def main():
             cache = {}
             for (v, L, k) in versions:
                 for p in ref:
-                    T = L[p]
+                    T = v[p]                           # the colours shown (a night/fade step's own)
                     if (p, T) in imgs: continue
                     if base is None: base = add_img(canvas, label)
                     if T == ref[p]:
@@ -242,8 +242,8 @@ def main():
             pal = palkey(cols)
             out = real_lines if k == 0 else fade_lines
             def entry(u):
-                idx, xf = u['imgs'][(p, L[p])]; sl = u['slot']
-                return f'<tile>{idx},{c.hex().upper()},{pal},{(sl % 8) * SL},{(sl // 8) * SL},{bright(u, v, L, k):g},N{xf}'
+                idx, xf = u['imgs'][(p, v[p])]; sl = u['slot']
+                return f'<tile>{idx},{c.hex().upper()},{pal},{(sl % 8) * SL},{(sl // 8) * SL},1,N{xf}'
             if not blank: out.append(entry(own_d[0]))           # default: first use
             elif k == 0: gated_only += 1
             if len(own_d) == 1 and not blank: continue
@@ -268,10 +268,10 @@ def main():
             u = dict(p=p, cnt=cnt_of[(cid, p)])
             for (v, L, k) in versions:
                 cols = v[p]
-                if black(cols) or (p, L[p]) not in imgs: continue
-                idx, xf = imgs[(p, L[p])]
+                if black(cols) or (p, v[p]) not in imgs: continue
+                idx, xf = imgs[(p, v[p])]
                 turn_lines.append(f'<tile>{idx},{c2.hex().upper()},{palkey(cols)},{(slot % 8) * SL},{(slot // 8) * SL},'
-                                  f'{bright(u, v, L, k):g},N,rot:{t % 4}{xf}')
+                                  f'1,N,rot:{t % 4}{xf}')
 
     head = [l for l in lines if l.startswith(('<ver>', '<scale>'))]
     imgl = [l for l in lines if l.startswith('<img>')]

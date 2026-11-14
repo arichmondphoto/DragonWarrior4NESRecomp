@@ -27,9 +27,10 @@ palette's colours, weighted by how much of each colour the tile uses.
 
 Fades: between screens the game steps every colour down by $10 three times
 (e.g. $2A -> $1A -> $0A -> black). Every day and night version also gets
-entries for those three faded palettes, using the same art at the matching
-brightness (the pack's per-tile brightness), so the HD art fades with the
-screen instead of flashing back to 8-bit. Real palettes win over a fade
+entries for those three faded palettes: the art recoloured (rgb:) to each
+step's own NES colours, so the HD art fades with the screen the way the game
+does (deep blues and greens, darker colours going black first) instead of
+flashing back to 8-bit or dimming evenly. Real palettes win over a fade
 step that happens to look the same.
 
 Screen edges: the pack carries `<options>edgePaletteFallback` (nesrecomp patch
@@ -144,8 +145,11 @@ def main():
             lines.append(f'<img>{rel}'); img_index += 1; return img_index - 1
         base_img = load(base); main_idx = None; tinted = {}
         ref = bytes.fromhex(ref_pal.get(iid) or vs[0]['nes_colors'])   # palette the art was made for
-        X = np.array([rgb(ref[k]) for k in range(4)]); W = cnt + 0.5
-        def fit_of(pal):
+        W = cnt + 0.5
+        def fit_of(pal, src=None):
+            # per channel affine map from the art's colours (drawn for `src`,
+            # default the art's own palette) to the colours of `pal`
+            X = np.array([rgb((src or ref)[k]) for k in range(4)])
             Y = np.array([rgb(pal[k]) for k in range(4)]); fit, err = [], 0.0
             for ch in range(3):
                 x, y = X[:, ch], Y[:, ch]; mx, my = (W * x).sum() / W.sum(), (W * y).sum() / W.sum()
@@ -182,13 +186,18 @@ def main():
                     if gkey not in tinted: tinted[gkey] = True; nights += 1
             uses = len(r['used_in'])
             versions.append(dict(id=r['id'], item=iid, chr=t, pal=pal, img=idx, xf=xf, bright=1.0, uses=uses, real=True))
-            L0 = lum(pal, cnt)
+            # The screen-fade steps (each colour -$10, black below $10): the art
+            # recoloured to the step's own NES colours, as the game shows them
+            # (deep blues and greens, parts going black first), not dimmed.
+            src = pal if (over and os.path.exists(over)) else ref
             for k in (1, 2, 3):
                 fp = fade(pal, k)
                 if all((c & 0x0F) >= 0x0D or c == 0x0F for c in fp[1:]) and fp[0] == 0x0F and k == 3:
                     continue                                   # black: nothing to draw
-                br = 0.0 if L0 <= 0 else min(1.0, lum(fp, cnt) / L0)
-                versions.append(dict(id=f'{r["id"]}~{k}', item=iid, chr=t, pal=fp, img=idx, xf=xf, bright=round(br, 3),
+                ffit = fit_of(fp, src)[0]
+                gkey = tuple((round(g / 0.05) * 0.05, round(o / 4) * 4) for g, o in ffit)
+                fxf = ',rgb:' + '/'.join(f'{g:.2f}/{int(o)}' for g, o in gkey)
+                versions.append(dict(id=f'{r["id"]}~{k}', item=iid, chr=t, pal=fp, img=idx, xf=fxf, bright=1.0,
                                      uses=uses / (10 * k), real=False))
 
         # Damage-floor flash: each step on a damage floor turns every background
