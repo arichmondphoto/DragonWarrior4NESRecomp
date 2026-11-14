@@ -424,12 +424,13 @@ def battle_effects(a, out, cap):
     return 1
 
 # ---------------------------------------------------------------- redo (owner's picks)
-CROWD_PROMPT = """Redraw Image 1 as high-resolution, hand-painted map tiles that match the painted tiles in Image 2 exactly: the same painting style, the same grass, the same soft rounded painted people seen from above.
-Image 1 holds {n} square map tiles from a top-down 2D RPG: people of Endor's arena standing on grass. They are the other animation frames of the tiles in Image 2, so they must look like the same painting.
+CROWD_PROMPT = """Redraw Image 1 as high-resolution, hand-painted map tiles in the painting style of Image 2: the same grass, the same soft rounded painted people.
+Image 1 holds {n} square map tiles from a top-down 2D RPG: fighters of Endor's arena standing on grass, FACING THE VIEWER. Their faces are visible: eyes, mouth and the front of the helmet or hair, exactly as the 8-bit tiles show them. Do not turn them around.
+Image 2, top: the painted crowd tiles these must match in style (those people face away; these do not). Image 2, bottom: painted people facing the viewer, for the faces and fronts.
 Hard rules:
 1. Output exactly 1536 x 1024. Keep the same 6 x 4 grid: every tile stays in its own square at the same position and size, grey gaps between them. Unused squares stay plain grey.
 2. Each tile fills its whole square edge to edge; the grass runs to every edge.
-3. Keep each person's pose, clothes and colours. Painted and smooth like Image 2, never blocky or pixelated.
+3. Keep each person's pose, clothes, colours and facing (towards the viewer). Painted and smooth like Image 2, never blocky or pixelated.
 4. No text, borders, shadows or vignettes.
 """
 
@@ -451,10 +452,17 @@ def redo(a, out):
         border = lambda im: np.concatenate([im[0], im[-1], im[:, 0], im[:, -1]]).reshape(-1, 3).mean(0)
         g = border(np.asarray(tile_image(*tiles[ids[0]])).astype(float))          # the same ground only
         near = [t for t in near if t not in ids and os.path.exists(os.path.join(art, t + '.png'))
-                and np.abs(border(np.asarray(Image.open(os.path.join(art, t + '.png')).convert('RGB')).astype(float)) - g).sum() < 200][:9]
+                and np.abs(border(np.asarray(Image.open(os.path.join(art, t + '.png')).convert('RGB')).astype(float)) - g).sum() < 200][:6]
         ref = Image.new('RGB', (1024, 1024), GREY)
         for k, t in enumerate(near):
             ref.paste(Image.open(os.path.join(art, t + '.png')).convert('RGB').resize((320, 320)), (12 + (k % 3) * 338, 12 + (k // 3) * 338))
+        # bottom row: the owner's walking people, facing down (towards the viewer)
+        for k, cid in enumerate(('C017', 'C019', 'C022')):
+            p = os.path.join(HERE, 'hd/sprites/source', cid + '.png')
+            if not os.path.exists(p): continue
+            fr = Image.open(p).convert('RGBA').crop((39 + 2 * 374, 117, 39 + 2 * 374 + 336, 117 + 336)); fr.thumbnail((320, 320))
+            bg = Image.new('RGBA', fr.size, GREY + (255,)); bg.alpha_composite(fr)
+            ref.paste(bg.convert('RGB'), (12 + k * 338, 12 + 2 * 338))
         ref.save(os.path.join(d, 'style_reference.png')); n += 1
     if a.chars:
         tmp = tempfile.mkdtemp()
