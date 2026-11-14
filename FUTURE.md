@@ -216,7 +216,12 @@ Known today:
   colours (deep blues and greens, darker colours going black first), applied
   while drawing (nesrecomp patch 0022, no extra memory). Pieces of the title
   art flashed on the first black frame after a battle: the title's layers now
-  need the title's own RAM values. HD pack 0.16.0.
+  need the title's own RAM values. Text, windows and cursors (white art matched
+  for any palette) now take the colour the game gives them, so they fade too
+  and hidden text stays hidden (nesrecomp patch 0023). HD pack 0.16.0.
+  Checked: every fade-up of the reference route, HD vs 8-bit per frame; the
+  only difference left is approximation (stone whose main colour goes black
+  first stays dark grey for 3 frames).
 
 - **2026-11-13 — Full 256x240 picture without edge artifacts.** The game now
   shows the raw picture by default; the rows a TV's overscan hid (written late
