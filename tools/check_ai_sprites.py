@@ -34,6 +34,30 @@ from export_chatgpt_sprites import W, H, CELL, SCALE, cell_origin, BIG_ID, BIG_P
 
 OK, FIT = 0.85, 0.80          # IoU as drawn / after fitting
 PAD = 48
+# Fields of single-pixel sparkles or embers (stars over the night overworld, the
+# lighthouse): painted art can't land on the game's random pixels, so these
+# are drawn from the 8-bit frames instead, each lit pixel a soft glow.
+GLOW = {'C090', 'C091', 'C101'}
+# Looked at by eye: the art is right; the outline differs in small ways the
+# score dislikes (a sword hand, wagon-wheel spokes, a tail).
+REVIEWED = {'C007', 'C011', 'C043', 'C062', 'C065', 'C092'}
+
+def glow_frame(frame_rgba, size=160):
+    """An 8-bit frame of single-pixel dots as soft glows (RGBA, size x size)."""
+    a = np.asarray(frame_rgba.convert('RGBA'))
+    n = a.shape[0]; k = size / n
+    yy, xx = np.mgrid[0:size, 0:size] + 0.5
+    out = np.zeros((size, size, 4), float)
+    for y, x in zip(*np.nonzero(a[..., 3] > 0)):
+        cy, cx = (y + 0.5) * k, (x + 0.5) * k
+        r = np.hypot(yy - cy, xx - cx)
+        al = np.clip(1.0 - (r - 0.25 * k) / (0.55 * k), 0, 1) ** 1.6          # core, soft rim
+        col = a[y, x, :3].astype(float)
+        hot = col[None, None] + (255 - col)[None, None] * (np.clip(1 - r / (0.35 * k), 0, 1) * 0.6)[..., None]
+        new = al > out[..., 3] / 255
+        out[new, :3] = hot[new]
+        out[..., 3] = np.maximum(out[..., 3], al * 255)
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8), 'RGBA')
 
 def clean_alpha(img):
     """Art with real transparency keeps its own (soft) alpha minus the faint
@@ -148,6 +172,16 @@ def main():
         if stem in rows: todo.append((stem, img, note))       # exactly <ID>.png
     big_done = {c for c, i, n in todo if 'from ' + BIG_ID in n}      # BIG_ID parts and QUAD wholes
     todo = [t for t in todo if t[0] not in big_done or 'from ' + BIG_ID in t[2]]   # the combined art wins
+    todo = [t for t in todo if t[0] not in GLOW]
+    for cid in sorted(GLOW & set(rows)):
+        r = rows[cid]; cols = [bytes.fromhex(c) for c in r['versions'][0]['colours']]
+        sheet = Image.new('RGBA', (4 * 160 + 5 * 12, 2 * 160 + 3 * 12), (0, 0, 0, 0))
+        for fi, fr in enumerate(r['frames']):
+            o = frame_image([(bytes.fromhex(c), a_) for c, a_ in fr], cols[fi * 4:fi * 4 + 4], 1)
+            sheet.alpha_composite(glow_frame(o), (12 + (fi // 2) * 172, 12 + (fi % 2) * 172))
+        sheet.save(os.path.join(out, 'fitted', cid + '.png')); sheet.save(os.path.join(out, 'fitted_full', cid + '.png'))
+        report.append([cid, 'glow', '', '', '', 'drawn from the 8-bit pixels (single-pixel sparkles)'])
+        print(f'{cid}: glow  (drawn from the 8-bit pixels)')
     for cid, img, note in todo:
         r = rows[cid]
         big = 'from ' + BIG_ID in note                        # also the QUAD pictures
@@ -161,6 +195,8 @@ def main():
         img, gs = sheet_fit(img, full) if not big else (img, '')
         if gs: note += gs + '; '
         mask = shape_mask(img)
+        solid_col = None
+        cell_box = lambda q: (cell_origin(q)[0], cell_origin(q)[1], cell_origin(q)[0] + CELL, cell_origin(q)[1] + CELL)
         fitted = Image.new('RGBA', (4 * 160 + 5 * 12, 2 * 160 + 3 * 12), (0, 0, 0, 0))
         fitted_full = fitted.copy()
         review = Image.new('RGBA', (3 * 4 * 170 + 40, 2 * 170 + 10), (60, 60, 64, 255))
@@ -181,7 +217,18 @@ def main():
                 a2 = art.copy()
                 a2 = a2.resize((round(a2.width * s), round(a2.height * s)), Image.LANCZOS)
                 placed = Image.new('RGBA', (CELL, CELL), (0, 0, 0, 0)); placed.paste(a2, (dx, dy), a2)
-            placed = placed.copy(); pa = np.asarray(placed).copy()
+            placed = placed.copy()
+            if sil.mean() > 0.95:
+                # a solid frame (water, a wall piece): no holes where the art is
+                # transparent; back it with the art's own main colour
+                if solid_col is None:
+                    # one colour for the whole character: its most fully painted frame's
+                    best_c = max(range(8), key=lambda q: (np.asarray(img.crop(cell_box(q)))[..., 3] > 200).mean())
+                    cc = np.asarray(img.crop(cell_box(best_c))); op = cc[..., 3] > 200
+                    solid_col = tuple(int(x) for x in np.median(cc[..., :3][op], axis=0)) if op.any() else (0, 0, 0)
+                back = Image.new('RGBA', placed.size, solid_col + (255,))
+                back.alpha_composite(placed); placed = back
+            pa = np.asarray(placed).copy()
             pa[..., 3] = np.where(sil, 255, 0)        # as the game shows it: inside the outline only
             game = Image.fromarray(pa, 'RGBA')
             scores.append((drawn, best))
@@ -209,6 +256,7 @@ def main():
         bad = [name(i) for i, (a, b) in enumerate(scores) if b < FIT]
         if swapped:
             verdict = 'redo'; bad += [f'{name(k)} looks like {name(int(err[k].argmin()))}' for k in swapped]
+        if verdict == 'redo' and cid in REVIEWED: verdict = 'reviewed'
         fitted.save(os.path.join(out, 'fitted', cid + '.png')); fitted_full.save(os.path.join(out, 'fitted_full', cid + '.png')); review.save(os.path.join(out, 'review', cid + '.png'))
         report.append([cid, verdict, f'{worst_drawn:.2f}', f'{worst_fit:.2f}', ' '.join(bad), note.strip('; ')])
         print(f'{cid}: {verdict}  (worst frame as drawn {worst_drawn:.2f}, fitted {worst_fit:.2f}) {" ".join(bad)} {note}')

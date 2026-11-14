@@ -55,6 +55,7 @@ from capture_types import fold
 S = 10                                     # 10x pack
 SL = 8 * S                                 # slice size (80)
 CELL, GUT = 160, 12                        # fitted_full layout
+CLASH_DIFF = 12.0                          # mean colour difference that shows (0-255)
 ORDER = [4, 5, 2, 3, 6, 7, 0, 1]            # frame preference for the default owner (down first)
 POS = [(0, 0), (8, 0), (0, 8), (8, 8)]
 
@@ -211,10 +212,25 @@ def main():
         lum = lambda pal: sum(u['cnt'][i + 1] * rgb(pal[i]) @ (0.299, 0.587, 0.114) for i in range(3))
         l0 = lum(L[u['p']]); return 0.0 if l0 <= 0 else round(min(1.0, lum(v[u['p']]) / l0), 3)
 
+    cache_im = {}
+    def slice_of(u):
+        idx, _ = next(iter(u['imgs'].values())); path = os.path.join(a.outdir, img_path[idx])
+        if path not in cache_im: cache_im[path] = np.asarray(Image.open(path).convert('RGBA')).astype(float)
+        sl = u['slot']; im = cache_im[path]
+        return im[(sl // 8) * SL:(sl // 8) * SL + SL, (sl % 8) * SL:(sl % 8) * SL + SL]
+    def mismatch(u):
+        # how far the art painted for this use is from the 8-bit piece (8x8, opaque pixels)
+        px = tile_px(u['chr']); cols = u['ref'][u['p']]
+        im = Image.fromarray(slice_of(u).astype(np.uint8), 'RGBA').resize((8, 8), Image.BOX)
+        a8 = np.asarray(im).astype(float); m = px > 0
+        if not m.any(): return 0.0
+        want = np.array([rgb(cols[v - 1]) for v in px[m]])
+        return float(np.abs(a8[..., :3][m] - want).mean() + (255 - a8[..., 3][m]).mean())
     by_key = collections.defaultdict(list)       # (chr, p) -> uses (palette slot decides colours per version)
     for u in uses: by_key[(u['chr'], u['p'])].append(u)
     real_lines, fade_lines, turn_lines = [], [], []
     unresolved = gated_only = 0
+    clash = []           # (chr, slot, the use drawn, a use that gets its art instead)
     def preds(u):
         return [('hm', u['hm']), ('vm', u['vm'])] + [('sib',) + s for s in u['sibs']]
     def holds(o, pr):
@@ -225,6 +241,19 @@ def main():
         blank = not any(c)
         # one use per distinct art (same character + same slice look-alike is still distinct art)
         own_d = list({(u['cid'], u['slot']): u for u in own}.values())
+        # several frames of one character can use the same piece (statues that
+        # look the same every way): the piece can only have one look, so draw
+        # the art that matches the 8-bit piece best (not whichever frame came first)
+        if len(own_d) > 1:
+            first = {}
+            for u in own_d: first.setdefault(u['cid'], u)
+            best = {}
+            for u in own_d:
+                if u['cid'] not in best or mismatch(u) < mismatch(best[u['cid']]): best[u['cid']] = u
+            order = [u['cid'] for u in own_d]; seen_c = []
+            for cc in order:
+                if cc not in seen_c: seen_c.append(cc)
+            own_d = [best[cc] for cc in seen_c] + [u for u in own_d if u is not best[u['cid']]]
         choices = []
         for i, u in enumerate(own_d):
             if len(own_d) == 1: choices.append(()); break
@@ -234,7 +263,9 @@ def main():
                 for combo in itertools.combinations(mine, n):
                     if not any(all(holds(o, pr) for pr in combo) for o in others): choice = combo; break
                 if choice: break
-            if choice is None: unresolved += 1; choice = None
+            if choice is None:
+                unresolved += 1
+                if u is not own_d[0]: clash.append((c, p, own_d[0], u))
             choices.append(choice)
         for (v, L, k) in versions:
             cols = v[p]
@@ -284,8 +315,19 @@ def main():
     open(hires, 'w').write('\n'.join(out) + '\n')
     print(f'  {len(real_lines)} sprite entries + {len(fade_lines)} night/fade + {len(turn_lines)} turned (beds), '
           f'{len(conds)} neighbour conditions, {unresolved} unresolved, {gated_only} blank tiles gated only -> {hires}')
+    # how different the art of the pieces that can't be told apart really is
+    # (the same piece of two characters often has near-identical art: feet, a cape)
+    diffs = []
+    for c, p, u0, u in clash:
+        A, B = slice_of(u0), slice_of(u)
+        d = float((np.abs(A[..., :3] * A[..., 3:] / 255 - B[..., :3] * B[..., 3:] / 255)).mean())
+        diffs.append({'chr': c.hex().upper(), 'drawn': u0['cid'], 'wanted': u['cid'], 'diff': round(d, 1)})
+    diffs.sort(key=lambda x: -x['diff'])
+    real = [x for x in diffs if x['diff'] > CLASH_DIFF]
+    print(f'  shared pieces: {len(diffs)} drawn with another character\'s art, {len(real)} of them visibly different')
     if a.report:
         json.dump({'missing': missing, 'entries': len(tiles), 'conditions': len(conds), 'unresolved': unresolved,
+                   'clashes': diffs,
                    'recolours': recolours, 'versions': len(versions)}, open(a.report, 'w'), indent=1)
 
 if __name__ == '__main__':
