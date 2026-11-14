@@ -104,9 +104,19 @@ Checked in a forced Impostor battle and the shop scene. **The Impostor's
 Double stays 8-bit on purpose** (owner's choice: a nod to the original), so
 coverage checks will flag it; that's expected.
 Left: the overworld definitions W036-W044 are still printed under "no art yet"
-but are never drawn. Endor crowd frames T128-T129 came back blockier than the
-other crowd tiles: regenerate if they stand out. Party spells and cutscenes
+but are never drawn. Endor crowd frames T128-T129 were regenerated (R01, facing the viewer) and C057
+(a dragon drawn as four facings of one character) redone as one picture (C057W), pack 0.19.0. Party spells and cutscenes
 are still unreached (chapter 1 save).
+
+### 4b. Endor arena floor in the wrong colour (found 2026-11-14)
+- **What:** in Endor's arena (map 4 sub 7) the floor is the grass tile drawn in
+  the game's pale-yellow sand palette. The pack recolours the owner's grass art
+  to that palette with its affine colour map (`rgb:`), and the result is
+  coral-pink with purple tufts instead of pale yellow with dark dots.
+- **How:** look at the fit for that palette in `make_field_hdpack.py` (an
+  affine map from green to pale yellow is a poor fit); options are a different
+  fit for big hue changes (map by brightness onto the target colours), or
+  owner art for the sand floor.
 
 ### 5. Character art that doesn't line up
 - **Why:** the sprite builder's fit report says "redo" for C007, C011, C043,
