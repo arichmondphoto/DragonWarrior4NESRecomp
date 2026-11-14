@@ -37,7 +37,7 @@ README.md is the full reference; this file is the working summary.
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
   A full build takes ~45 min on 2 cores; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.16.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
+  catalog keys on it). Current: 0.17.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
 - The nesmod package limit is 256 MiB; the pack is ~187 MiB — watch its size (`du -sb OUTDIR`). Never store
   recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
@@ -68,6 +68,8 @@ README.md is the full reference; this file is the working summary.
   captures by warp: `capture_casino.py`, `capture_slots.py`.
 - New art from OpenAI's image API goes through `tools/openai_sprites.py` with the export scripts
   (`export_chatgpt_sprites.py`, `export_gaps.py`); `.gitignore` has an `!` exception per art folder.
+  `export_gaps.py BUILD OUT --host HOST` packages whatever the build still reports without art (map tiles,
+  characters, battle pictures, battle effects); it adds new map-tile IDs to `hd/field/ids.json`.
 - All HD packs are authored at **10x** (`<scale>10`).
 
 ## HD pack mechanics worth knowing
@@ -101,6 +103,8 @@ README.md is the full reference; this file is the working summary.
   -$10 step) = the art recoloured to the step's own NES colours with `rgbd:` (applied while drawing, patch
   0022: no decoded copy; `rgb:` copies for every step cost ~650 MB). Battle monsters still fade by brightness.
 - Title layers are gated on RAM $0500=$0F and $0026=$77 (title only), or they flash on black frames.
+- Power-on screens: `make_font_hdpack.py --screen/--sprites` smooth every cell in context (whole screen), coloured
+  exact-palette entry + white `defaultTile=Y` copy. Intro sprites use pattern table $1000.
 - Text/window/cursor tiles are `defaultTile=Y` white art; patch 0023 tints any-palette matches with the tile's
   NES colour while drawing (fades, hidden text, coloured text).
 - Castle doors and the title are drawn straight into the nametable (no map tiles): see

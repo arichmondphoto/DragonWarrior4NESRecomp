@@ -95,6 +95,11 @@ sharp at every Window Scale from 1x to 10x.
 - *Text and windows* — the font, window borders, cursors and arrows, smoothly
   upscaled 10x from the game's own 8x8 tiles (`tools/smooth_pixels.py`), so every
   letter keeps its Dragon Warrior IV shape. Generated from **your ROM** at build time.
+  The power-on screens (copyright, "PRESENTED BY" and the ENIX logo, whose "e" is
+  drawn in by sprites) use their own lettering in the same tile numbers: those
+  cells are smoothed with the whole screen around them as context, so letters
+  that span two tiles stay joined (`make_font_hdpack.py --screen DUMP` /
+  `--sprites DUMP`, dumps taken by `tools/build_hd_text.sh`).
 - *Battle monsters* — AI-generated artwork (`hd/monsters/source/DW4Sprites.jpg`)
   replacing the 8-bit monsters. `hd/monsters/mapping.json` maps each sheet sprite
   to a game monster ID; `boxes.json` holds each sprite's box on the sheet.

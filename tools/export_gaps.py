@@ -216,15 +216,33 @@ def next_ids(ids, prefix, n):
         k += 1
     return out
 
+def overworld_on_screen(maps):
+    """Every 16x16 overworld tile (4 tiles' CHR) drawn on a captured screen."""
+    seen = set()
+    for f in [f for d in ('', 'anim', 'view') for f in glob.glob(os.path.join(maps, d, '*.mem'))]:
+        m = load(f)
+        if m['ram'][0x28] != 0: continue
+        ch, ci = m['chr_ram'], m['ciram']
+        cell = lambda nt, r, c: bytes(ch[0x1000 + 16 * ci[nt + r * 32 + c]:0x1010 + 16 * ci[nt + r * 32 + c]])
+        for nt in (0, 0x400):
+            for r in range(29):
+                for c in range(31):
+                    seen.add(cell(nt, r, c) + cell(nt, r, c + 1) + cell(nt, r + 1, c) + cell(nt, r + 1, c + 1))
+    return seen
+
 def map_tiles(a, out):
     """Every map tile the build has no art for, with a new art ID (written to
     hd/field/ids.json with the palette the sheet shows it in, so the
     returned sheet slices back through tools/slice_field_sheets.py)."""
     missing = json.load(open(os.path.join(a.build, 'field-report.json')))['missing']
-    if not missing: return 0
     rows = json.load(open(os.path.join(a.build, 'field-capture', 'field_tiles_all.json')))
     by_item = collections.defaultdict(list)
     for r in rows: by_item[r['item']].append(r)
+    # overworld tiles come from the tileset's definitions, 16 of which (WRAM
+    # $1680) the map data never uses: keep only those seen on a screen
+    shown = overworld_on_screen(os.path.join(a.build, 'field-capture', 'maps'))
+    missing = [m for m in missing if m[0] != 'W' or bytes.fromhex(by_item[m][0]['chr']) in shown]
+    if not missing: return 0
     idp = os.path.join(HERE, 'hd', 'field', 'ids.json'); idj = json.load(open(idp)); ids = idj['ids']
     by_fp = {v[0]: k for k, v in ids.items()}
     tiles, uses = [], {}

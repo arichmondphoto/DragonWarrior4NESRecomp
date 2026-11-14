@@ -95,23 +95,34 @@ the Enix logo and title-to-game screens, the casino's slot win.
 ## Next up
 
 ### 4. Art for what is missing
-Known today:
-- the Enix logo (sprites) and the copyright screen at power-on;
-- "(" and ")" on the name-entry screen; the "-" there is drawn like "=" (check
-  the glyph);
-- 9 overworld tiles, W036-W044 (the build prints "no art yet for");
-- 13 animation-frame map tiles found by the 0.14.0 capture: T127-T134 (Endor;
-  the Izmit/Konenber fountain, which is map 18's sparkle; Konenber's pillar
-  base, map 67), D358-D362 (Birdsong Tower, Loch Tower);
-- the Impostor's Transform smoke (battle sprite);
-- 4 characters in Necrosaro's Lair, C069-C072;
-- from the sweep: the Chapter 3 shop scene (Torneko behind the counter).
-  (The map 66 golden statue only needed capturing: fixed in 0.14.0.)
-- **How:** the same route as before. Export a package for OpenAI's image API
-  (`tools/export_gaps.py`, `tools/openai_sprites.py`), the owner generates and
-  returns the art, it is committed under `hd/` and the pack rebuilt. Text
-  glyphs and the logo can be smoothed from the ROM instead (as the poker
-  screen's digits are) if painted art isn't wanted.
+**Package sent (2026-11-14):** `tools/export_gaps.py BUILD OUT --host HOST`
+(5 images, ~$0.35), built from the build's own reports, so re-running it
+always packages exactly what is still missing:
+- `map_tiles/` M01: 13 animation-frame tiles, T128-T129 (Endor's crowd),
+  T130-T134 (the Izmit/Konenber fountain), T135 (Konenber's pillar base),
+  D358-D361 (Birdsong Tower), D362 (Loch Tower). Their new art IDs and
+  fingerprints are in `hd/field/ids.json`; `sheets.json` goes to
+  `hd/field/sheets/` (merge with N01's) and the sheet to `hd/field/sheets/M01.png`.
+  W036-W044 are not tiles to draw: they are 16 overworld tileset definitions
+  (WRAM $1680) the map data never uses and no captured screen shows.
+- `characters/` C069-C072: the big demon in Necrosaro's Lair (four characters).
+- `battle/` M173 (the item-shop merchant, Chapter 3's shop scene) and M153D
+  (the Impostor after Transform: a copy of the lead hero, here Ragnar, drawn as
+  background tiles). `pieces.json` has every 8x8 key and where it sits in the
+  picture. **Import still to write**: key them like the monsters
+  (`make_monster_hdpack.py`), from those keys. The Double copies whoever leads
+  the party; only Ragnar's is captured (chapter 1).
+- `battle_effects/` FX01: the Transform smoke (3 stages) and the two sparkles
+  (sprites, palette FF303C2C); import from `pieces.json` likewise.
+
+Done without painted art (pack 0.17.0): the copyright screen, "PRESENTED BY"
+and the ENIX logo (sprites) are smoothed from the game's pixels with the whole
+screen as context (`make_font_hdpack.py --screen/--sprites`), in their own
+colours plus a white any-palette copy for the fades; "(" ")" on the
+name-entry screen are font glyphs.
+
+Still unreached: the party's spells and the story's cutscenes and ending
+(the captures start from a chapter 1 save).
 - **Watch:** the pack is 188 MiB of the 256 MiB package limit.
 
 ### 5. Character art that doesn't line up
