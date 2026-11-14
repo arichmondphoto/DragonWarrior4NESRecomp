@@ -117,25 +117,13 @@ arena's sand). Above that ratio tiles mixing two hues (gold trim, orange grass
 with blue dots) lost a hue, so they keep the per-channel map. The arena
 floor's edge strips (top and right) still look more orange than the 8-bit.
 
-### 4c. Tiles that don't blend
-- Done (0.21.0-0.22.0): shared ground (Burland Castle, arena edges, 234 tile
-  versions); repeating tiles meet themselves better: where the 8-bit tile
-  repeats every half tile (grass dots, brick rows) the art is blended with a
-  half-tile-shifted copy near its edges, so painted strokes run across the
-  tile border (town grass no longer shows a grid); edge colours matched row by row.
-- Tried and dropped: matching neighbouring tiles' tones with colour offsets
-  solved over all borders. The seam score went down 15-20% but some stone walls
-  came out visibly darker than their neighbours.
-- Left (by `tools/seam_check.py` weight): neighbouring wall tiles painted as
-  different stonework (D087/D088, D091/D092, round towers T005/T006/S048 against
-  flat walls, S024/S025 bricks), a few floors (D001/D002 mossy rocks). These
-  were repainted as matched sets (pack 0.23.0, hd/field/sheets/P01-P06):
-  dungeon stone walls (seam weight 288k -> 90k), town walls and towers, overworld
-  bushes/trees/mountains, pillars, a town tile, mossy rock floor (102k -> 60k).
-  The checker scores the new town bricks and bushes worse against themselves
-  (their mortar joints and bush rims now fall on the tile border); by eye they
-  repeat cleanly. Next families by weight can be exported the same way
-  (`export_gaps.py BUILD OUT --seams seams.json --sets N`).
+### 4c. Tiles that don't blend: done (pack 0.24.0)
+Shared ground, seamless repeats and the owner's matched-set repaints: P01-P06,
+then every remaining seam tile in one package (381 tiles, Q01-Q18; the inn sign
+T024 keeps its earlier painting via sheets.json "only"). Seams between
+different tiles: 1.28M -> 1.07M by `tools/seam_check.py`; what it still counts
+is mostly mortar lines and bush rims that sit on the tile border, which look
+continuous. Closed: no more rounds.
 
 ### 5. Character art
 - Done (0.22.0): the sparkle fields C090, C091, C101 (stars and embers on the

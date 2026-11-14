@@ -37,7 +37,7 @@ README.md is the full reference; this file is the working summary.
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
   A full build takes ~45 min on 2 cores; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.23.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
+  catalog keys on it). Current: 0.24.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
 - The nesmod package limit is 256 MiB; the pack is ~200 MiB — watch its size (`du -sb OUTDIR`). Never store
   recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
