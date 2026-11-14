@@ -72,26 +72,48 @@ LUM_LOG = open(os.environ['DW4_LUM_LOG'], 'w') if os.environ.get('DW4_LUM_LOG') 
 FLASH_XF = ',rgb:1.30/8/0.30/0/0.25/0'        # art tinted red: grey stone -> about $16
 SEAM_MAX = 30   # mean edge-band colour difference (0-255) above which an axis is left alone
 
-def make_seamless(img, h, v):
-    """Make a repeating ground tile meet itself across its edges (h: left/right,
-    v: top/bottom): (1) a gentle ramp so the edge bands' average colours match,
-    then (2) a wrap-around blur that fades in only within a few pixels of the
-    seam, so texture flows across it instead of stopping at a line."""
+def half_periodic(px):
+    """(h, v): the 8-bit tile repeats every half tile along that axis (grass
+    dots, brick floors), so a copy shifted by half a tile lines up with it."""
+    g = np.array(px)
+    return bool((g[:, :8] == g[:, 8:]).mean() >= 0.95), bool((g[:8] == g[8:]).mean() >= 0.95)
+
+def make_seamless(img, h, v, hh=False, hv=False):
+    """Make a repeating tile meet itself across its edges (h: left/right,
+    v: top/bottom).
+    Axes where the 8-bit tile repeats every half tile (hh/hv): blend the art
+    with itself shifted by half a tile; the shifted copy runs on across the
+    tile's edges and lines up with the 8-bit pattern, the original keeps the
+    middle, so painted strokes cross the edge instead of stopping at a line.
+    Other repeating axes: (1) the edge colours are matched row by row, the
+    correction fading over ~12 pixels from each edge, then (2) a wrap-around
+    blur within a few pixels of the seam."""
     a = np.asarray(img.convert('RGB')).astype(float)
-    W = a.shape[1]; ramp = np.arange(W) / (W - 1) - 0.5
+    W = a.shape[1]; x = np.arange(W)
+    if hh or hv:
+        dist = np.minimum(x, W - 1 - x).astype(float)                 # 0 at the edges, W/2 in the middle
+        w = np.clip((dist - 0.10 * W) / (0.25 * W), 0, 1); w = w * w * (3 - 2 * w)   # 0 near edges -> 1 inside
+        if hh:
+            a = a * w[None, :, None] + np.roll(a, W // 2, axis=1) * (1 - w[None, :, None])
+        if hv:
+            a = a * w[:, None, None] + np.roll(a, W // 2, axis=0) * (1 - w[:, None, None])
+        h, v = h and not hh, v and not hv
     # Edges whose colours differ a lot are not one repeating texture in the art
     # (a tower's foot standing on a red floor matches itself in the 8-bit tile
-    # but not in the painting): ramping those would tint the whole tile, so they
-    # are left as painted.
+    # but not in the painting): correcting those would smear them, so they are
+    # left as painted.
+    fall = np.exp(-x / 12.0)                                            # weight from the left/top edge
     if h:
-        d = ndimage.gaussian_filter1d(a[:, :8].mean(1) - a[:, -8:].mean(1), 10, axis=0, mode='wrap')
-        if np.abs(d).mean() > SEAM_MAX: h = False
-        else: a += d[:, None, :] * ramp[None, :, None]
+        coarse = ndimage.gaussian_filter1d(a[:, :8].mean(1) - a[:, -8:].mean(1), 10, axis=0, mode='wrap')
+        d = ndimage.gaussian_filter1d(a[:, :4].mean(1) - a[:, -4:].mean(1), 3, axis=0, mode='wrap')
+        if np.abs(coarse).mean() > SEAM_MAX: h = False
+        else: a += d[:, None, :] * (0.5 * fall[::-1][None, :, None] - 0.5 * fall[None, :, None])
     if v:
-        d = ndimage.gaussian_filter1d(a[:8].mean(0) - a[-8:].mean(0), 10, axis=0, mode='wrap')
-        if np.abs(d).mean() > SEAM_MAX: v = False
-        else: a += d[None, :, :] * ramp[:, None, None]
-    dist = np.minimum(np.arange(W), W - 1 - np.arange(W)) + 0.5
+        coarse = ndimage.gaussian_filter1d(a[:8].mean(0) - a[-8:].mean(0), 10, axis=0, mode='wrap')
+        d = ndimage.gaussian_filter1d(a[:4].mean(0) - a[-4:].mean(0), 3, axis=0, mode='wrap')
+        if np.abs(coarse).mean() > SEAM_MAX: v = False
+        else: a += d[None, :, :] * (0.5 * fall[::-1][:, None, None] - 0.5 * fall[:, None, None])
+    dist = np.minimum(x, W - 1 - x) + 0.5
     wgt = np.exp(-(dist / 5.0) ** 2)
     if h:
         a = a * (1 - wgt[None, :, None]) + ndimage.gaussian_filter1d(a, 3, axis=1, mode='wrap') * wgt[None, :, None]
@@ -137,7 +159,7 @@ def render_look(lk):
     """A version's picture as the player draws it (160x160 RGB float)."""
     im = Image.open(lk['path']).convert('RGB')
     if im.size != (160, 160): im = im.resize((160, 160), Image.LANCZOS)
-    if lk['h'] or lk['v']: im = make_seamless(im, lk['h'], lk['v'])
+    if lk['h'] or lk['v'] or lk['hh'] or lk['hv']: im = make_seamless(im, lk['h'], lk['v'], lk['hh'], lk['hv'])
     a = np.asarray(im).astype(float)
     m = re.match(r',rgb(l?):(.*)', lk['xf'])
     if m:
@@ -334,11 +356,11 @@ def main():
         base = os.path.join(a.art, (aid or '-') + '.png')
         if not aid or not os.path.exists(base): missing.append(iid); continue
         t = bytes.fromhex(vs[0]['chr']); cnt = counts(t)
-        h, v = tileable(pixels(t))
+        h, v = tileable(pixels(t)); hh, hv = half_periodic(pixels(t))
         def load(path):
             im = Image.open(path).convert('RGB')
             if im.size != (160, 160): im = im.resize((160, 160), Image.LANCZOS)
-            return make_seamless(im, h, v) if (h or v) else im
+            return make_seamless(im, h, v, hh, hv) if (h or v or hh or hv) else im
         if h or v: seamless += 1
         def add_img(img, name):
             nonlocal img_index
@@ -421,7 +443,7 @@ def main():
                     if gkey not in tinted: tinted[gkey] = True; nights += 1
             uses = len(r['used_in'])
             versions.append(dict(id=r['id'], item=iid, chr=t, pal=pal, img=idx, xf=xf, bright=1.0, uses=uses, real=True))
-            looks.setdefault((iid, pal), dict(path=over if (over and os.path.exists(over)) else base, h=h, v=v, xf=xf, aid=aid, W=W.copy()))
+            looks.setdefault((iid, pal), dict(path=over if (over and os.path.exists(over)) else base, h=h, v=v, hh=hh, hv=hv, xf=xf, aid=aid, W=W.copy()))
             # The screen-fade steps (each colour -$10, black below $10): the art
             # recoloured to the step's own NES colours, as the game shows them
             # (deep blues and greens, parts going black first), not dimmed.
