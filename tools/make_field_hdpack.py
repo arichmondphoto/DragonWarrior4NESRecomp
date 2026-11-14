@@ -133,6 +133,8 @@ def make_seamless(img, h, v, hh=False, hv=False):
 # is kept. The result is stored as that version's picture (its fades recolour
 # it with rgbd:).
 GROUND_MIN, GROUND_MAX = 0.04, 0.97     # share of the tile that is the ground
+EXTRA_GROUND_FP = {json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'hd', 'field', 'ids.json')))['ids'][i][0]
+                   for i in ('W001',)}             # art IDs of multi-colour grounds (W001 = the open sea)
 GROUND_MIN_SEEN = 2                     # times seen next to each other on the maps
 GROUND_LOG = open(os.environ['DW4_GROUND_LOG'], 'w') if os.environ.get('DW4_GROUND_LOG') else None
 OBJ_KEEP = 0.5                          # keep a ground pixel when this much nearer the tile's object paint
@@ -173,6 +175,8 @@ def ground_pairs(maps, items):
     from vramdump import load
     by_chr = {bytes.fromhex(vs[0]['chr']): iid for iid, vs in items.items()}
     plain = {iid for iid, vs in items.items() if plain_tile(pixels(bytes.fromhex(vs[0]['chr'])))}
+    # grounds with more than two colours: the open sea (its shores must carry the same water)
+    plain |= {iid for iid, vs in items.items() if hashlib.sha1(bytes.fromhex(vs[0]['chr'])).hexdigest()[:16] in EXTRA_GROUND_FP}
     adj = collections.Counter()
     mems = sorted(glob.glob(os.path.join(maps, '*.mem')) + glob.glob(os.path.join(maps, 'view', '*.mem')))
     for path in mems:
@@ -191,6 +195,18 @@ def ground_pairs(maps, items):
                 for dr, dc in ((-2, 0), (2, 0), (0, -2), (0, 2)):
                     g = grid.get((r + dr, c + dc))
                     if g and g[0] in plain and g[0] != t: adj[(t, p, g[0], g[1])] += 1
+    # grounds also seen where the captures don't reach (the overworld coast):
+    # a tile drawn in the same palette whose 8-bit pixels are partly that ground
+    for g in {iid for iid, vs in items.items() if hashlib.sha1(bytes.fromhex(vs[0]['chr'])).hexdigest()[:16] in EXTRA_GROUND_FP}:
+        gp_ = np.array(pixels(bytes.fromhex(items[g][0]['chr'])))
+        gpals = {bytes.fromhex(r['nes_colors']) for r in items[g]}
+        for t, vs in items.items():
+            if t == g or t[0] != g[0]: continue
+            share = (np.array(pixels(bytes.fromhex(vs[0]['chr']))) == gp_).mean()
+            if not 0.25 <= share <= 0.97: continue
+            for r in vs:
+                p = bytes.fromhex(r['nes_colors'])
+                if p in gpals: adj[(t, p, g, p)] += GROUND_MIN_SEEN
     best = {}
     for (t, p, g, gp), n in adj.items():
         if n >= GROUND_MIN_SEEN and ((t, p) not in best or n > best[(t, p)][1]): best[(t, p)] = ((g, gp), n)
