@@ -40,6 +40,8 @@ PAD = 48
 GLOW = {'C090', 'C091', 'C101'}
 # Looked at by eye: the art is right; the outline differs in small ways the
 # score dislikes (a sword hand, wagon-wheel spokes, a tail).
+# Art clipped to the game's outline (its painted splashes don't follow the 8-bit spray)
+CLIP = {'C048'}
 REVIEWED = {'C007', 'C011', 'C043', 'C062', 'C065', 'C092'}
 
 def glow_frame(frame_rgba, size=160):
@@ -257,6 +259,38 @@ def main():
         if swapped:
             verdict = 'redo'; bad += [f'{name(k)} looks like {name(int(err[k].argmin()))}' for k in swapped]
         if verdict == 'redo' and cid in REVIEWED: verdict = 'reviewed'
+        # frames the game draws identically (a statue or boss that faces front
+        # every way) get one painting: the one whose colours match the 8-bit
+        # frame best; otherwise turned or back views would mix in one sprite
+        fkey = [tuple(map(tuple, f)) for f in r['frames']]
+        cell = lambda fi: (12 + (fi // 2) * 172, 12 + (fi % 2) * 172, 12 + (fi // 2) * 172 + 160, 12 + (fi % 2) * 172 + 160)
+        for fi in range(8):
+            same = [j for j in range(8) if fkey[j] == fkey[fi]]
+            # one direction for every identical frame: the column whose two
+            # paintings together match the game's colours best (a back view can
+            # match a single frame's colours by chance)
+            cols_ = sorted({j // 2 for j in same}, key=lambda d: (sum(err[2 * d + t, 2 * d + t] for t in (0, 1)), d != 2))
+            src = next((2 * d + fi % 2 for d in cols_ if 2 * d + fi % 2 in same), min(same, key=lambda j: err[j, j]))
+            if src != fi:
+                for im in (fitted, fitted_full):
+                    piece = im.crop(cell(src)); im.paste((0, 0, 0, 0), cell(fi)); im.paste(piece, cell(fi)[:2])
+        # pieces the same in both walking steps of a direction (a head that
+        # doesn't move while the legs do) can only have one painting in the
+        # pack: take them all from the step whose painting matches better, so
+        # they join their neighbours from the same painting
+        POS4 = [(0, 0), (80, 0), (0, 80), (80, 80)]
+        fkey = [tuple(map(tuple, f)) for f in r['frames']]
+        for d in range(4):
+            a_, b_ = 2 * d, 2 * d + 1
+            if fkey[a_] == fkey[b_]: continue
+            keep, other = (a_, b_) if err[a_, a_] <= err[b_, b_] else (b_, a_)
+            for kk in range(4):
+                if r['frames'][a_][kk] == r['frames'][b_][kk] and any(bytes.fromhex(r['frames'][a_][kk][0])):
+                    for im in (fitted, fitted_full):
+                        x0, y0 = cell(keep)[:2]; x1, y1 = cell(other)[:2]; dx, dy = POS4[kk]
+                        piece = im.crop((x0 + dx, y0 + dy, x0 + dx + 80, y0 + dy + 80))
+                        im.paste((0, 0, 0, 0), (x1 + dx, y1 + dy, x1 + dx + 80, y1 + dy + 80)); im.paste(piece, (x1 + dx, y1 + dy))
+        if cid in CLIP: fitted_full = fitted
         fitted.save(os.path.join(out, 'fitted', cid + '.png')); fitted_full.save(os.path.join(out, 'fitted_full', cid + '.png')); review.save(os.path.join(out, 'review', cid + '.png'))
         report.append([cid, verdict, f'{worst_drawn:.2f}', f'{worst_fit:.2f}', ' '.join(bad), note.strip('; ')])
         print(f'{cid}: {verdict}  (worst frame as drawn {worst_drawn:.2f}, fitted {worst_fit:.2f}) {" ".join(bad)} {note}')

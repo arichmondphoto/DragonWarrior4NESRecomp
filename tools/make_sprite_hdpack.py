@@ -231,6 +231,19 @@ def main():
     real_lines, fade_lines, turn_lines = [], [], []
     unresolved = gated_only = 0
     clash = []           # (chr, slot, the use drawn, a use that gets its art instead)
+    pending = []
+    frames_of = {}
+    for r in rows:
+        if not r.get('art_from'): frames_of[r['id']] = [[(c_, at & 0xC3) for c_, at in f] for f in r['frames']]
+    def mirror(f):            # the frame flipped left-right: pieces swap columns and flip
+        return [(f[k][0], f[k][1] ^ 0x40) for k in (1, 0, 3, 2)]
+    def same_picture(o, u):
+        # u's whole frame is o's frame (or its mirror image): the drawn piece
+        # comes with the matching neighbours, so the sprite is coherent
+        fo = frames_of.get(o['cid'].split('_')[0]); fu = frames_of.get(u['cid'].split('_')[0])
+        if not fo or not fu: return False
+        a_, b_ = fo[o['frame']], fu[u['frame']]
+        return a_ == b_ or mirror(a_) == b_
     def preds(u):
         return [('hm', u['hm']), ('vm', u['vm'])] + [('sib',) + s for s in u['sibs']]
     def holds(o, pr):
@@ -265,8 +278,14 @@ def main():
                 if choice: break
             if choice is None:
                 unresolved += 1
-                if u is not own_d[0]: clash.append((c, p, own_d[0], u))
+                pending.append(u)
             choices.append(choice)
+        # what the game draws for an unresolved use: the first use whose
+        # condition holds for it (e.g. the mirrored step), else the default
+        for u in pending:
+            drawn = next((o for o, ch in zip(own_d, choices) if o is not u and ch and all(holds(u, pr) for pr in ch)), own_d[0])
+            if drawn is not u and not same_picture(drawn, u): clash.append((c, p, drawn, u))
+        pending.clear()
         for (v, L, k) in versions:
             cols = v[p]
             if black(cols): continue

@@ -125,18 +125,16 @@ different tiles: 1.28M -> 1.07M by `tools/seam_check.py`; what it still counts
 is mostly mortar lines and bush rims that sit on the tile border, which look
 continuous. Closed: no more rounds.
 
-### 5. Character art
-- Done (0.22.0): the sparkle fields C090, C091, C101 (stars and embers on the
-  overworld at night, the lighthouse) are drawn from the 8-bit pixels as soft
-  glows (`GLOW` in `check_ai_sprites.py`); solid frames (the waterfall C048)
-  are backed with the art's main colour; C007, C011, C043, C062, C065, C092
-  were looked at and are right (the score dislikes a sword hand, wagon spokes,
-  a tail: `REVIEWED`). Pieces a character repeats across frames (statues that
-  look the same every way) draw the painting that matches the 8-bit piece best.
-- Left: C048's splash frames don't follow the 8-bit outline (redo if the
-  waterfall is ever seen in play); `make_sprite_hdpack.py --report` lists 292
-  pieces shared between characters whose paintings visibly differ ("clashes"):
-  each shows the first character's painting.
+### 5. Character art: done (pack 0.25.0)
+Sparkle fields drawn as glows (C090, C091, C101); the waterfall C048 clipped to
+the game's outline (`CLIP`); six characters checked by eye (`REVIEWED`).
+Frames the game draws identically (statues and bosses that face front every
+way, C075, C100, C060, C068 ...) now use one painting: the direction whose
+paintings match the game's colours best (a back view was showing). Pieces
+shared by both walking steps come from the step that matches best, so they
+join their neighbours. The report now counts only pieces drawn with a
+painting that doesn't fit their frame: 10 left, all harmless (plain water in
+the waterfall, one piece just over the threshold).
 
 ## Later
 
