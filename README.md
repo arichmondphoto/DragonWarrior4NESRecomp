@@ -384,6 +384,11 @@ They are framework bugs, kept here until they can go upstream:
   the Zapper aim and crosshair follow the offset. Labelled "Trim borders
   (overscan)" in the in-game menu (recomp-ui patch 0004 for the launcher).
   Optional since patch 0021 (off by default).
+- `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
+  same per-channel colour map as `rgb:` (patch 0011), applied while drawing
+  instead of at load, so the entry shares the untouched decoded block. Used
+  for the screen-fade steps of map tiles and characters, which follow the
+  game's own fade colours; as load-time copies they cost ~650 MB of memory.
 - `0021-ppu-bg-tile-hook.patch` — `cyc_ppu_set_bg_tile_hook`: a game may
   replace the tile number and palette of any background tile the PPU fetches
   (asked with the screen line, x, PPU address and tile; presentation only,

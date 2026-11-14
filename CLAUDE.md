@@ -37,7 +37,7 @@ README.md is the full reference; this file is the working summary.
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
   A full build takes ~45 min on 2 cores; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.15.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
+  catalog keys on it). Current: 0.16.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
 - The nesmod package limit is 256 MiB; the pack is ~187 MiB — watch its size (`du -sb OUTDIR`). Never store
   recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
@@ -97,7 +97,10 @@ README.md is the full reference; this file is the working summary.
   overwrite the town's tile memory are re-run one type at a time). Modes: maps (`--times N`), monsters, battles, dusk, chars, report. See FUTURE.md.
 - Map tiles and characters: other palettes are affine recolours of the art (`rgb:` at load time); palettes that are only reorderings of each
   other (colour-cycling animations such as the overworld sea) share one recolour. Seamless smoothing
-  is skipped where the painted edges differ (SEAM_MAX). Fades = the same art at lower brightness.
+  is skipped where the painted edges differ (SEAM_MAX). Screen-fade steps (and characters' night, also a
+  -$10 step) = the art recoloured to the step's own NES colours with `rgbd:` (applied while drawing, patch
+  0022: no decoded copy; `rgb:` copies for every step cost ~650 MB). Battle monsters still fade by brightness.
+- Title layers are gated on RAM $0500=$0F and $0026=$77 (title only), or they flash on black frames.
 - Castle doors and the title are drawn straight into the nametable (no map tiles): see
   `capture_extras.py`, `door_frames.py`, `make_title_hdpack.py`.
 

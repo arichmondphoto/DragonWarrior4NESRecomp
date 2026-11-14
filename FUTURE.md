@@ -210,6 +210,14 @@ Known today:
 
 ## Done
 
+- **2026-11-13 — Fades follow the NES colours; no title flash after battles.**
+  The screen-fade steps of map tiles and walking characters were the art
+  dimmed evenly; they are now the art recoloured to each step's own NES
+  colours (deep blues and greens, darker colours going black first), applied
+  while drawing (nesrecomp patch 0022, no extra memory). Pieces of the title
+  art flashed on the first black frame after a battle: the title's layers now
+  need the title's own RAM values. HD pack 0.16.0.
+
 - **2026-11-13 — Full 256x240 picture without edge artifacts.** The game now
   shows the raw picture by default; the rows a TV's overscan hid (written late
   by the game, in stale colours) and the masked left column are drawn from the

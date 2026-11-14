@@ -243,6 +243,7 @@ def main():
             out = real_lines if k == 0 else fade_lines
             def entry(u):
                 idx, xf = u['imgs'][(p, v[p])]; sl = u['slot']
+                if k: xf = xf.replace(',rgb:', ',rgbd:')   # night/fade steps: recoloured while drawing (patch 0022)
                 return f'<tile>{idx},{c.hex().upper()},{pal},{(sl % 8) * SL},{(sl // 8) * SL},1,N{xf}'
             if not blank: out.append(entry(own_d[0]))           # default: first use
             elif k == 0: gated_only += 1
@@ -270,6 +271,7 @@ def main():
                 cols = v[p]
                 if black(cols) or (p, v[p]) not in imgs: continue
                 idx, xf = imgs[(p, v[p])]
+                if k: xf = xf.replace(',rgb:', ',rgbd:')
                 turn_lines.append(f'<tile>{idx},{c2.hex().upper()},{palkey(cols)},{(slot % 8) * SL},{(slot // 8) * SL},'
                                   f'1,N,rot:{t % 4}{xf}')
 

@@ -1,0 +1,100 @@
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 8208cab..3fbd65f 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -56,6 +56,8 @@ typedef struct HdTile {
+     int            invisible;       /* every pixel alpha <= 1: matched, but draws nothing visible */
+     struct HdCond **conds; int *neg; int ncond;  /* [cond] gate; 0 = unconditional */
+     struct HdTile *next;            /* primary hash chain */
++    int            has_drgb;        /* rgbd: colour map applied while drawing (see parse_block_xform) */
++    float          dg[3]; int dofs[3];
+ } HdTile;
+ 
+ /* Resolve a '&'-separated [cond] prefix into HdCond* + negation arrays (defined
+@@ -370,6 +372,10 @@ static int load_sheet(const char *name) {
+  *   rgb:GR/OR/GG/OG/GB/OB  per-channel colour map out = in*G + O (straight, not
+  *                          premultiplied, colour; G float, O integer; clamped)
+  *   rot:N                  the 8x8 block turned N*90 degrees counter-clockwise
++ *   rgbd:GR/OR/GG/OG/GB/OB the same colour map as rgb:, applied while drawing
++ *                          instead of at load: the entry shares the untouched
++ *                          block (for short-lived looks such as screen-fade
++ *                          steps, which would otherwise each cost a decoded copy)
+  * so a pack stores one picture and derives its palette versions and turned
+  * forms (beds) at load time instead of shipping a copy of each. Identical
+  * (image, position, transform) blocks are decoded once and shared by every
+@@ -463,6 +469,7 @@ static void process_tile(const char *cond_str, char *rest) {
+     int bitmap_index, X, Y, default_tile, brightness;
+     int idx = 0;
+     HdXform xf; memset(&xf, 0, sizeof(xf));
++    HdXform drgb; memset(&drgb, 0, sizeof(drgb));
+ 
+     if (s_version < 100) {
+         /* legacy: tileIdx, img, palR, palG, palB, X, Y, brightness, default[, 16 dec bytes] */
+@@ -497,7 +504,15 @@ static void process_tile(const char *cond_str, char *rest) {
+         default_tile = (tok[idx][0] == 'Y' || tok[idx][0] == 'y'); idx++;
+         /* trailing chrBank/tileIndex (CHR-RAM) are not used for matching;
+          * nesrecomp extensions (see parse_block_xform) may follow */
+-        for (; idx < n; idx++) parse_block_xform(tok[idx], &xf);
++        for (; idx < n; idx++) {
++            if (!strncmp(tok[idx], "rgbd:", 5)) {
++                float g[3]; int o[3];
++                if (sscanf(tok[idx] + 5, "%f/%d/%f/%d/%f/%d", &g[0], &o[0], &g[1], &o[1], &g[2], &o[2]) == 6) {
++                    drgb.has_rgb = 1;
++                    for (int c = 0; c < 3; c++) { drgb.g[c] = g[c]; drgb.o[c] = o[c]; }
++                }
++            } else parse_block_xform(tok[idx], &xf);
++        }
+     }
+ 
+     if (bitmap_index < 0 || bitmap_index >= s_sheet_count) {
+@@ -524,6 +539,10 @@ static void process_tile(const char *cond_str, char *rest) {
+     t->w = W; t->h = H;
+     t->conds = tc; t->neg = tn; t->ncond = tcn;
+     t->brightness = brightness;
++    if (drgb.has_rgb) {
++        t->has_drgb = 1;
++        for (int c = 0; c < 3; c++) { t->dg[c] = drgb.g[c]; t->dofs[c] = drgb.o[c]; }
++    }
+     const HdBlock *blk = get_block(bitmap_index, X, Y, W, H, &xf);
+     if (!blk) { free(t->conds); free(t->neg); free(t); return; }
+     t->data = blk->px;
+@@ -1000,6 +1019,14 @@ int hdpack_load_from_config(int is_chr_ram_game, int native_w) {
+ /* x / 255 for 0 <= x <= 65535*255, exact (truncating), without a divide */
+ static inline uint32_t div255(uint32_t x) { return (x + 1 + (x >> 8)) >> 8; }
+ 
++/* rgbd: (HdTile.dg/dofs) on one premultiplied pixel, as recolour_px does at load */
++static uint32_t draw_recolour(uint32_t v, const HdTile *t) {
++    HdXform xf; memset(&xf, 0, sizeof xf);
++    xf.has_rgb = 1;
++    for (int c = 0; c < 3; c++) { xf.g[c] = t->dg[c]; xf.o[c] = t->dofs[c]; }
++    return recolour_px(v, &xf);
++}
++
+ static uint32_t adjust_brightness(uint32_t px, int b) {
+     uint32_t a = px >> 24;
+     int r = (px >> 16) & 0xFF, g = (px >> 8) & 0xFF, bl = px & 0xFF;
+@@ -1049,6 +1076,7 @@ static void blit_under(uint32_t *dst, int hd_w, const HdTile *t,
+     for (int y = 0; y < s; y++) {
+         for (int x = 0; x < s; x++) {
+             uint32_t px = bm[bo];
++            if (t->has_drgb) px = draw_recolour(px, t);
+             if (t->brightness != 255) px = adjust_brightness(px, t->brightness);
+             uint32_t a = px >> 24;
+             if (!t->has_transparent || a == 0xFF) out[x] = px;
+@@ -1069,7 +1097,7 @@ static void blit_over(uint32_t *dst, int hd_w, const HdTile *t,
+     blit_setup(t, off_x, off_y, hmir, vmir, s, &bo, &small_inc, &large_inc);
+     uint32_t *out = dst;
+     if (t->invisible) return;      /* alpha <= 1/255 everywhere: nothing visible to draw */
+-    if (!t->has_transparent && t->brightness == 255 && small_inc == 1) {
++    if (!t->has_transparent && t->brightness == 255 && !t->has_drgb && small_inc == 1) {
+         for (int y = 0; y < s; y++) {          /* opaque, unmirrored: plain row copies */
+             memcpy(out, bm + bo, (size_t)s * sizeof(uint32_t));
+             bo += s + large_inc; out += hd_w;
+@@ -1079,6 +1107,7 @@ static void blit_over(uint32_t *dst, int hd_w, const HdTile *t,
+     for (int y = 0; y < s; y++) {
+         for (int x = 0; x < s; x++) {
+             uint32_t px = bm[bo];
++            if (t->has_drgb) px = draw_recolour(px, t);
+             if (t->brightness != 255) px = adjust_brightness(px, t->brightness);
+             uint32_t a = px >> 24;
+             if (a == 0xFF)  out[x] = px;

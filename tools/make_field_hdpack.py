@@ -27,7 +27,8 @@ palette's colours, weighted by how much of each colour the tile uses.
 
 Fades: between screens the game steps every colour down by $10 three times
 (e.g. $2A -> $1A -> $0A -> black). Every day and night version also gets
-entries for those three faded palettes: the art recoloured (rgb:) to each
+entries for those three faded palettes: the art recoloured (rgbd:, while
+drawing, nesrecomp patch 0022) to each
 step's own NES colours, so the HD art fades with the screen the way the game
 does (deep blues and greens, darker colours going black first) instead of
 flashing back to 8-bit or dimming evenly. Real palettes win over a fade
@@ -196,7 +197,9 @@ def main():
                     continue                                   # black: nothing to draw
                 ffit = fit_of(fp, src)[0]
                 gkey = tuple((round(g / 0.05) * 0.05, round(o / 4) * 4) for g, o in ffit)
-                fxf = ',rgb:' + '/'.join(f'{g:.2f}/{int(o)}' for g, o in gkey)
+                # applied while drawing (rgbd:, patch 0022): fade frames are few,
+                # and a decoded copy per step would cost ~650 MB
+                fxf = ',rgbd:' + '/'.join(f'{g:.2f}/{int(o)}' for g, o in gkey)
                 versions.append(dict(id=f'{r["id"]}~{k}', item=iid, chr=t, pal=fp, img=idx, xf=fxf, bright=1.0,
                                      uses=uses / (10 * k), real=False))
 
