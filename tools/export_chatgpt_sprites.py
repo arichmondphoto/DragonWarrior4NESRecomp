@@ -49,7 +49,7 @@ def big_origin(step, part):
 
 BIG_PROMPT = """Redraw Image 1 as a high-resolution, hand-painted version in the art style of Image 2.
 
-Subject: a huge horned demon lord crouching, seen from the front (a boss on the map).
+Subject: {subject}.
 Image 1 shows the same creature twice: left = walking step 1, right = walking step 2.
 
 Hard rules:
@@ -60,6 +60,14 @@ Hard rules:
 5. Background: transparent. If transparency isn't possible, flat grey #8C8C8C. No shadows, glow, ground, scenery, borders, labels or text.
 """
 BIG_SIL = " Image 3 shows each pose's exact silhouette in black."
+BIG_SUBJECT = 'a huge horned demon lord crouching, seen from the front (a boss on the map)'
+
+# One large creature drawn by four copies of ONE character, each facing a
+# different way: its up/right/down/left frames are the creature's TL/TR/BL/BR
+# quarters (verified: C057 put together this way is one 32x32 dragon). Exported
+# like BIG_ID (two whole poses) as <ID>W.png, cut back into the one
+# character's 8 frames; <ID>W.png beats an older <ID>.png sheet.
+QUAD = {'C057': 'a huge orange dragon with a spiny back, folded wings, horns and a long tail, crouching, seen from the front (a guardian on the map)'}
 
 # shadows, sparkles and effects: fine to leave 8-bit; drawn last if at all
 OPTIONAL_TYPES = {0x0E, 0x30, 0x58, 0x59, 0x5A, 0x5F, 0x60, 0x61}
@@ -160,12 +168,29 @@ def main():
                     sil.alpha_composite(black, big_origin(step, q))
             sheet.convert('RGB').save(os.path.join(out, 'inputs', BIG_ID + '.png'))
             sil.convert('RGB').save(os.path.join(out, 'silhouettes', BIG_ID + '.png'))
-            open(os.path.join(out, 'prompts', BIG_ID + '.txt'), 'w').write(BIG_PROMPT.format(sil=''))
-            open(os.path.join(out, 'prompts', BIG_ID + '_with_silhouette.txt'), 'w').write(BIG_PROMPT.format(sil=BIG_SIL))
+            open(os.path.join(out, 'prompts', BIG_ID + '.txt'), 'w').write(BIG_PROMPT.format(sil='', subject=BIG_SUBJECT))
+            open(os.path.join(out, 'prompts', BIG_ID + '_with_silhouette.txt'), 'w').write(BIG_PROMPT.format(sil=BIG_SIL, subject=BIG_SUBJECT))
             wr.writerow([BIG_ID, 'large horned demon (four characters C069-C072 drawn as one)', '',
                          '; '.join(byid[BIG_PARTS[0]]['maps'])])
             n += 1
         for r in rows:
+            if r['id'] in QUAD:
+                sheet = Image.new('RGBA', (W, H), GREY + (255,)); sil = Image.new('RGBA', (W, H), (255, 255, 255, 255))
+                cols = [bytes.fromhex(c) for c in r['versions'][0]['colours']]
+                for q in range(4):
+                    for step in (0, 1):
+                        fi = q * 2 + step
+                        img = frame_image([(bytes.fromhex(c), a) for c, a in r['frames'][fi]], cols[fi * 4:fi * 4 + 4], SCALE)
+                        sheet.alpha_composite(img, big_origin(step, q))
+                        black = Image.new('RGBA', img.size, (0, 0, 0, 255)); black.putalpha(img.getchannel('A'))
+                        sil.alpha_composite(black, big_origin(step, q))
+                sheet.convert('RGB').save(os.path.join(out, 'inputs', r['id'] + 'W.png'))
+                sil.convert('RGB').save(os.path.join(out, 'silhouettes', r['id'] + 'W.png'))
+                open(os.path.join(out, 'prompts', r['id'] + 'W.txt'), 'w').write(BIG_PROMPT.format(sil='', subject=QUAD[r['id']]))
+                open(os.path.join(out, 'prompts', r['id'] + 'W_with_silhouette.txt'), 'w').write(BIG_PROMPT.format(sil=BIG_SIL, subject=QUAD[r['id']]))
+                wr.writerow([r['id'] + 'W', QUAD[r['id']] + ' (one character drawn 4 times as the quarters)', '', '; '.join(r['maps'])])
+                n += 1
+                continue
             if r.get('art_from') or r['id'] in BIG_PARTS: continue
             types = r.get('types', [])
             who = WHO.get(types[0], '') if types else 'faint sparkles seen on the overworld at night'

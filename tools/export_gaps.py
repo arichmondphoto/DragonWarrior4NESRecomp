@@ -423,6 +423,56 @@ def battle_effects(a, out, cap):
     json.dump({'FX01': layout}, open(os.path.join(d, 'pieces.json'), 'w'), indent=0)
     return 1
 
+# ---------------------------------------------------------------- redo (owner's picks)
+CROWD_PROMPT = """Redraw Image 1 as high-resolution, hand-painted map tiles that match the painted tiles in Image 2 exactly: the same painting style, the same grass, the same soft rounded painted people seen from above.
+Image 1 holds {n} square map tiles from a top-down 2D RPG: people of Endor's arena standing on grass. They are the other animation frames of the tiles in Image 2, so they must look like the same painting.
+Hard rules:
+1. Output exactly 1536 x 1024. Keep the same 6 x 4 grid: every tile stays in its own square at the same position and size, grey gaps between them. Unused squares stay plain grey.
+2. Each tile fills its whole square edge to edge; the grass runs to every edge.
+3. Keep each person's pose, clothes and colours. Painted and smooth like Image 2, never blocky or pixelated.
+4. No text, borders, shadows or vignettes.
+"""
+
+def redo(a, out):
+    """Art the owner wants regenerated: --tiles IDs (map tiles; style = the
+    owner's tiles next to them in the ID list) and --chars IDs (characters;
+    QUAD ones as one whole creature)."""
+    n = 0
+    if a.tiles:
+        ids = a.tiles.split(',')
+        rows = json.load(open(os.path.join(a.build, 'field-capture', 'field_tiles_all.json')))
+        tiles = art_tiles(rows)
+        d = os.path.join(out, 'map_tiles'); write_pkg(d, NIGHT_RULES, {'background': 'opaque'})
+        render_sheet([tiles[i] for i in ids]).save(os.path.join(d, 'inputs', 'R01.png'))
+        open(os.path.join(d, 'prompts', 'R01.txt'), 'w').write(CROWD_PROMPT.format(n=len(ids)))
+        json.dump({'layout': 'tools/export_chatgpt_tiles.py', 'sheets': {'R01': ids}}, open(os.path.join(d, 'sheets.json'), 'w'), indent=0)
+        art = os.path.join(a.build, 'field-capture', 'art')
+        near = [f'{i[0]}{int(i[1:]) - k:03d}' for i in ids[:1] for k in range(10, 0, -1)]
+        border = lambda im: np.concatenate([im[0], im[-1], im[:, 0], im[:, -1]]).reshape(-1, 3).mean(0)
+        g = border(np.asarray(tile_image(*tiles[ids[0]])).astype(float))          # the same ground only
+        near = [t for t in near if t not in ids and os.path.exists(os.path.join(art, t + '.png'))
+                and np.abs(border(np.asarray(Image.open(os.path.join(art, t + '.png')).convert('RGB')).astype(float)) - g).sum() < 200][:9]
+        ref = Image.new('RGB', (1024, 1024), GREY)
+        for k, t in enumerate(near):
+            ref.paste(Image.open(os.path.join(art, t + '.png')).convert('RGB').resize((320, 320)), (12 + (k % 3) * 338, 12 + (k // 3) * 338))
+        ref.save(os.path.join(d, 'style_reference.png')); n += 1
+    if a.chars:
+        tmp = tempfile.mkdtemp()
+        subprocess.run([sys.executable, os.path.join(TOOLS, 'export_chatgpt_sprites.py'),
+                        os.path.join(a.build, 'sprite-capture', 'characters.json'), os.path.join(tmp, 'pkg')], check=True, capture_output=True)
+        src = os.path.join(tmp, 'pkg'); d = os.path.join(out, 'characters')
+        write_pkg(d, open(os.path.join(src, 'PROJECT_INSTRUCTIONS.txt')).read(), {'background': 'transparent'})
+        shutil.copy(os.path.join(src, 'style_reference.png'), d); os.makedirs(os.path.join(d, 'silhouettes'), exist_ok=True)
+        for cid in a.chars.split(','):
+            stem = cid + 'W' if os.path.exists(os.path.join(src, 'inputs', cid + 'W.png')) else cid
+            shutil.copy(os.path.join(src, 'inputs', stem + '.png'), os.path.join(d, 'inputs'))
+            shutil.copy(os.path.join(src, 'silhouettes', stem + '.png'), os.path.join(d, 'silhouettes'))
+            for f in os.listdir(os.path.join(src, 'prompts')):
+                if f == stem + '.txt' or f.startswith(stem + '_'): shutil.copy(os.path.join(src, 'prompts', f), os.path.join(d, 'prompts'))
+            n += 1
+        shutil.rmtree(tmp)
+    return n
+
 README = """Dragon Warrior IV - the remaining graphics, for OpenAI's image API
 =================================================================
 
@@ -441,6 +491,7 @@ FOLDER_NOTE = {
     'characters': 'walking characters with no art yet',
     'battle': "the item-shop merchant and the Impostor's Double",
     'battle_effects': 'the Transform smoke cloud and sparkles, one sheet',
+    'redo': 'see the folders inside',
     'monsters': 'battle monsters with no art', 'effects': 'map effects (shadows, sparkles...)',
     'night_tiles': 'night-only town tiles', 'doors': 'castle door opening frames', 'title': 'the title screen',
 }
@@ -456,23 +507,36 @@ def main():
     ap.add_argument('build'); ap.add_argument('out')
     ap.add_argument('--host', help='headless host: captures the Impostor battle (battle/, battle_effects/)')
     ap.add_argument('--only', help='comma-separated kinds')
+    ap.add_argument('--tiles', help='redo: map-tile art IDs to regenerate, e.g. T128,T129')
+    ap.add_argument('--chars', help='redo: character IDs to regenerate, e.g. C057')
     a = ap.parse_args()
     out = a.out
     if os.path.exists(out): shutil.rmtree(out)
     os.makedirs(out)
     tmp = tempfile.mkdtemp()
-    cap = forced_battle(a.host, IMPOSTOR, SMOKE_FRAMES + SPARKLE_FRAMES + (DOUBLE_FRAME,), tmp) if a.host else None
+    redo_only = (a.tiles or a.chars) and not a.only
+    cap = forced_battle(a.host, IMPOSTOR, SMOKE_FRAMES + SPARKLE_FRAMES + (DOUBLE_FRAME,), tmp) if a.host and not redo_only else None
     kinds = {'map_tiles': lambda: map_tiles(a, out), 'characters': lambda: characters(a, out),
              'battle': lambda: battle(a, out, cap), 'battle_effects': lambda: battle_effects(a, out, cap),
              'monsters': lambda: monsters(a.build, out), 'effects': lambda: effects(a.build, out),
              'night_tiles': lambda: night_tiles(a.build, out), 'doors': lambda: doors(a.build, out), 'title': lambda: title(a.build, out)}
-    want = a.only.split(',') if a.only else ['map_tiles', 'characters', 'battle', 'battle_effects']
-    n = {k: kinds[k]() for k in want}
+    if redo_only:
+        n = {'map_tiles': 0, 'characters': 0}; redo(a, out)
+        n['map_tiles'] = int(bool(a.tiles)); n['characters'] = len(a.chars.split(',')) if a.chars else 0
+    else:
+        want = a.only.split(',') if a.only else ['map_tiles', 'characters', 'battle', 'battle_effects']
+        n = {k: kinds[k]() for k in want}
     shutil.rmtree(tmp)
     shutil.copy(os.path.join(TOOLS, 'openai_sprites.py'), os.path.join(out, 'openai_sprites.py'))
-    runs = ''.join(f'  python3 openai_sprites.py --folder {k:<15} # {v}: {FOLDER_NOTE[k]}\n' for k, v in n.items() if v)
+    notes = dict(FOLDER_NOTE)
+    if redo_only:
+        notes['map_tiles'] = f'map tiles to redraw ({a.tiles})'
+        notes['characters'] = f'characters to redraw ({a.chars}; a "W" picture is the whole creature)'
+    runs = ''.join(f'  python3 openai_sprites.py --folder {k:<15} # {v}: {notes[k]}\n' for k, v in n.items() if v)
     images = sum(n.values())
-    open(os.path.join(out, 'README.txt'), 'w').write(README.format(runs=runs, total=images, cost=images * 0.07, notes=NOTES))
+    readme = README.format(runs=runs, total=images, cost=images * 0.07, notes='' if redo_only else NOTES)
+    if redo_only: readme = readme.replace('the remaining graphics', 'graphics to redraw')
+    open(os.path.join(out, 'README.txt'), 'w').write(readme)
     shutil.make_archive(out, 'zip', os.path.dirname(os.path.abspath(out)), os.path.basename(out))
     print(f'{images} images -> {out} (+ .zip): {n}')
 

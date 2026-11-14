@@ -30,7 +30,7 @@ import numpy as np
 from PIL import Image
 sys.path.insert(0, os.path.dirname(__file__))
 from sprite_sheet import frame_image
-from export_chatgpt_sprites import W, H, CELL, SCALE, cell_origin, BIG_ID, BIG_PARTS, big_origin
+from export_chatgpt_sprites import W, H, CELL, SCALE, cell_origin, BIG_ID, BIG_PARTS, big_origin, QUAD
 
 OK, FIT = 0.85, 0.80          # IoU as drawn / after fitting
 PAD = 48
@@ -136,12 +136,21 @@ def main():
                     sheet.alpha_composite(img.crop((x, y, x + CELL, y + CELL)), cell_origin(fi))
                 todo.append((pid, sheet, note + f'from {BIG_ID}; '))
             continue
+        if stem[:-1] in QUAD and stem.endswith('W'):
+            stem = stem[:-1]
+            # one picture of the whole creature: quarter q of each pose = frame q*2+step
+            sheet = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+            for fi in range(8):
+                x, y = big_origin(fi % 2, fi // 2)
+                sheet.alpha_composite(img.crop((x, y, x + CELL, y + CELL)), cell_origin(fi))
+            todo.append((stem, sheet, note + f'from {BIG_ID}-style picture; '))
+            continue
         if stem in rows: todo.append((stem, img, note))       # exactly <ID>.png
-    big_done = {c for c, i, n in todo if 'from ' + BIG_ID in n}
+    big_done = {c for c, i, n in todo if 'from ' + BIG_ID in n}      # BIG_ID parts and QUAD wholes
     todo = [t for t in todo if t[0] not in big_done or 'from ' + BIG_ID in t[2]]   # the combined art wins
     for cid, img, note in todo:
         r = rows[cid]
-        big = 'from ' + BIG_ID in note
+        big = 'from ' + BIG_ID in note                        # also the QUAD pictures
         cols = [bytes.fromhex(c) for c in r['versions'][0]['colours']]
         # whole-sheet fit first: the model often redraws the canvas slightly
         # bigger/smaller or shifted, moving the outer frames by more than a cell gap
