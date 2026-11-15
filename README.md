@@ -276,7 +276,8 @@ flash cover them too. Leaving a map (doors, stairs, battles) the native
 picture fades or spirals out while it can no longer be matched as a map: the
 last map picture's side tiles are kept (with their CHR bytes, as the next
 screen loads other tiles) and shown with the colours of the moment until the
-native picture is black, or another screen replaces it. The battle's spiral is
+native picture is black, another screen replaces it, or the map's own tiles
+are gone from it (windows such as the status can stay up into a battle). The battle's spiral is
 continued into the sides from a fit of when it reaches each tile (four arms
 turning, a little later further out; median error under 2 frames), placed by
 how far it has come in the native picture. Fading in, the new map is matched
@@ -297,7 +298,8 @@ the compositor draws the map's other people itself from the object table (WRAM
 `$6F60` cell X, `$6F80` Y, `$6FA0`/`$6FC0` the cell they come from, `$6FE0`
 low nibble their character slot, `$7000` low 2 bits their facing (0 up,
 1 right, 2 down, 3 left), `$7020` bit 7 hidden; frames at `$7200 + slot*64`;
-everyone walks in step with RAM `$3E` counting the 16-pixel step down;
+a walking character's place is the left/upper of its two cells plus its
+own progress in 1/16 pixels, `$7100` (X) and `$7120` (Y);
 sprites sit 4 pixels above their cell in towns, in it on the overworld). The
 walking step follows the characters on screen (the frame whose sprites match
 best). On the overworld the cells are world cells (a byte each way, the copy
@@ -315,7 +317,7 @@ same formula gets wrong, `DW4_WIDE_FULL=1` draws the native 256 from the map
 too, `DW4_WIDE_DEBUG=1` the camera search and each character's match.
 Rooms: inside a room (the hero's cell has room bits, key >> 5) the game shows
 only that room's cells and blacks out the rest, so cells not on screen follow
-that rule; black looks are learned like any other (not inside windows: the
+that rule (outside every room, a room cell never seen is shown open); black looks are learned like any other (not inside windows: the
 window's blank). Towns re-check their ring offset every 8 frames (room cells
 only count where they show, so an offset matched while the screen was half
 drawn could otherwise stay). Checked over all 279 areas by warp: 8 differ by
