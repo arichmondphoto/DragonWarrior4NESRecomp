@@ -244,6 +244,8 @@ static void map_tiles(void)
 
 static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *wx0_, int *wy0_);
 
+static uint8_t objsnap[0x1600];   /* WRAM object table + frames, at the start of the frame */
+
 /* Whether nametable tile (tx, ty), of flat tile f, is the blank inside of a
  * window: along its row, the first other tile on each side is not a map tile. */
 static bool in_window(int tx, int ty, uint8_t f)
@@ -352,6 +354,9 @@ static void frame_begin(void *ctx)
     size_t n;
     E.ram = cyc_cpu_ram();
     E.wram = cyc_cart_ram(&n);
+    /* the characters as the frame about to be drawn shows them: the game
+       builds its sprites from the object table one frame behind */
+    if (E.wram && n >= 0x1600) memcpy(objsnap + 0xF60, E.wram + 0xF60, 0x1600 - 0xF60);
     E.ciram = cyc_ppu_ciram(&n);
     bool was = E.valid;
     E.valid = false;
@@ -754,7 +759,7 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
  * no facing we could find: a walking character faces where it goes, a
  * standing one keeps what it showed on screen last (down if never seen). */
 #define OBJS 32
-static const uint8_t *frame_sprites(int i, int f) { return E.wram + 0x1200 + 64 * (E.wram[0xFE0 + i] & 15) + f * 8; }
+static const uint8_t *frame_sprites(int i, int f) { return objsnap + 0x1200 + 64 * (objsnap[0xFE0 + i] & 15) + f * 8; }
 
 static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
 {
@@ -766,7 +771,7 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
     /* the overworld's characters stand 4 pixels lower in their cells than in towns */
     if (E.overworld) oy += 4;
     for (int i = 0; i < OBJS; i++) {
-        const uint8_t *w = E.wram;
+        const uint8_t *w = objsnap;
         int X = w[0xF60 + i], Y = w[0xF80 + i], PX = w[0xFA0 + i], PY = w[0xFC0 + i];
         if (w[0x1020 + i] & 0x80) continue;                  /* hidden */
         if (E.overworld) {
@@ -783,9 +788,9 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
         int rem = X != PX || Y != PY;
         int face = w[0x1000 + i] & 3;                      /* 0 up 1 right 2 down 3 left */
         /* top-left of the character in canvas pixels (CHAR_DX/DY: where the game puts sprites in a cell) */
-        int cx = ox + 16 * X, cy = oy + 16 * Y;
-        if (X != PX) cx = ox + 16 * (X < PX ? X : PX) + (w[0x1100 + i] >> 4);
-        if (Y != PY) cy = oy + 16 * (Y < PY ? Y : PY) + (w[0x1120 + i] >> 4);
+        /* (the progress can still be counting the last pixels when the cells agree) */
+        int cx = ox + 16 * (X < PX ? X : PX) + (w[0x1100 + i] >> 4);
+        int cy = oy + 16 * (Y < PY ? Y : PY) + (w[0x1120 + i] >> 4);
         /* what the game drew: the frame whose four sprites are in OAM at this place */
         int nx = cx - x0, shown = -1, hits[8];
         for (int f = 0; f < 8; f++) {
@@ -800,6 +805,18 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
                 }
             hits[f] = hit;
             if (hit >= 2 && (shown < 0 || hit > hits[shown])) shown = f;
+        }
+        if (debug && shown >= 0 && nx >= 8 && nx + 16 <= 248 && cy >= 16 && cy + 16 <= 224) {
+            const uint8_t *fs = frame_sprites(i, shown);
+            int bd = 999, bx = 0, by = 0;
+            for (int s2 = 0; s2 < 64; s2++) {
+                const uint8_t *o = oam + 4 * s2;
+                if (o[0] >= 0xEF || o[1] != fs[0]) continue;
+                int ddx = o[3] - nx, ddy = o[0] + 1 - cy;
+                if (abs(ddx) + abs(ddy) < bd) { bd = abs(ddx) + abs(ddy); bx = ddx; by = ddy; }
+            }
+            fprintf(stderr, "dw4_wide: dpos %d %d %d moving %d X %02X PX %02X Y %02X PY %02X off %02X %02X\n", i, bx, by, rem,
+                    X, PX, Y, PY, w[0x1100 + i], w[0x1120 + i]);
         }
         /* both steps alike (the frames share their sprites): no say on the step */
         bool step_known = shown >= 0 && hits[shown ^ 1] < hits[shown];

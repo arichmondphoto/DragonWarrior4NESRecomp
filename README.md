@@ -299,7 +299,9 @@ the compositor draws the map's other people itself from the object table (WRAM
 low nibble their character slot, `$7000` low 2 bits their facing (0 up,
 1 right, 2 down, 3 left), `$7020` bit 7 hidden; frames at `$7200 + slot*64`;
 a walking character's place is the left/upper of its two cells plus its
-own progress in 1/16 pixels, `$7100` (X) and `$7120` (Y);
+own progress in 1/16 pixels, `$7100` (X) and `$7120` (Y), read from the
+table as it stood at the start of the frame (the game builds its sprites one
+frame behind);
 sprites sit 4 pixels above their cell in towns, in it on the overworld). The
 walking step follows the characters on screen (the frame whose sprites match
 best). On the overworld the cells are world cells (a byte each way, the copy
