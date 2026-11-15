@@ -274,6 +274,8 @@ static bool in_window(int tx, int ty, uint8_t f)
     return side == 2;
 }
 
+static int dbg_frame;
+static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *wx0_, int *wy0_);
 static void learn(void)
 {
     memset(E.cur, -1, sizeof E.cur);
@@ -346,7 +348,12 @@ static void learn(void)
                 if (E.valid_frames >= 30 || !(q[0] == q[1] && q[1] == q[2] && q[2] == q[3])) {
                     __typeof__(E.border[0][0]) *b = &E.border[x & 15][y & 15];
                     uint8_t bp = nt_pal(tx, ty);
-                    if (!b->ok || memcmp(b->q, q, 4) || b->pal != bp) E.border_new = true;
+                    if (!b->ok || memcmp(b->q, q, 4) || b->pal != bp) {
+                        E.border_new = true;
+                        if (getenv("DW4_BORDER_LOG"))
+                            fprintf(stderr, "f%d border set %d,%d = %02X%02X%02X%02X/%d (was %d) dx %d dy %d cam %d,%d ok %d hero %d,%d vf %d s3e %d wh %d,%d key %08X\n",
+                                    dbg_frame, x, y, q[0], q[1], q[2], q[3], bp, b->ok, E.dx, E.dy, E.cam_px, E.cam_py, E.cam_ok, E.hx, E.hy, E.valid_frames, E.ram[0x3E], E.w, E.h, E.key);
+                    }
                     memcpy(b->q, q, 4); b->pal = bp; b->ok = 1;
                 }
                 continue;
@@ -407,7 +414,7 @@ static void frame_begin(void *ctx)
 {
     (void)ctx;
     size_t n;
-    E.ram = cyc_cpu_ram();
+    E.ram = cyc_cpu_ram(); dbg_frame++;
     E.wram = cyc_cart_ram(&n);
     /* the characters as the frame about to be drawn shows them: the game
        builds its sprites from the object table one frame behind */
@@ -426,6 +433,9 @@ static void frame_begin(void *ctx)
     } else {
         E.w = E.ram[0x3F]; E.h = E.ram[0x40]; E.hx = E.ram[0x44]; E.hy = E.ram[0x45];
         if (E.w < 4 || E.h < 4 || E.w * E.h > 0x800) goto done;
+        /* entering a map, the hero's cell is still the old map's for a few
+           frames (and the screen still the old picture) */
+        if (E.hx >= E.w || E.hy >= E.h) goto done;
         key = (unsigned)E.ram[0x63] << 24 | (unsigned)E.ram[0x64] << 16 | (unsigned)E.w << 8 | (unsigned)E.h;
     }
     if (ow != E.overworld || key != E.key) {
@@ -492,6 +502,15 @@ static void frame_begin(void *ctx)
            frame by frame; searched again when the map was matched anew) */
         if (!was || !E.cam_ok) { E.cam_ok = false; E.need_search = true; }
         E.valid_frames = was ? E.valid_frames + 1 : 0;
+        /* towns: follow the camera to the frame just drawn before learning
+           from it (compose may not run every frame: the window hidden, fast
+           forward, a slower display; a camera left behind puts the learning
+           window over cells off screen, whose nametable rows and columns hold
+           other cells, and those were learned as the border's looks) */
+        if (was && E.cam_ok && !E.need_search && !E.overworld) {
+            int a, b, c, d, e, f;
+            locate(false, &a, &b, &c, &d, &e, &f);
+        }
         learn();
     } else E.valid_frames = 0;
     if (E.valid != was && getenv("DW4_EDGES_DEBUG"))
