@@ -432,7 +432,8 @@ static int map_quarter(int wx, int wy)
         }
     }
     if (l[0].conf > 0) return l[0].q[q] | l[0].pal << 8;
-    const uint8_t *d = plain(c, &pal);
+    /* never seen: a room's cells open (the hero outside every room) */
+    const uint8_t *d = plain(E.overworld ? c : c & 31, &pal);
     return d ? d[q] | pal << 8 : -1;
 }
 
@@ -501,6 +502,7 @@ static struct {
     SideTile t[MAX_SIDE]; int n;            /* this picture's */
     SideTile held[MAX_SIDE]; int nheld;     /* the last map picture's */
     uint8_t nt[30][32]; int tx0, ty0;       /* the native picture's tiles then */
+    uint8_t ismap[30][32]; int maps;        /* which were map tiles (not windows, not flat), how many */
     bool have; int frames;
 } P;
 
@@ -584,12 +586,12 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
     if (!P.have || ++P.frames > 240) { P.have = false; return 0; }
     /* still the map picture: its tiles, or ones turned to one colour (the spiral) */
     uint16_t table = cyc_render_line_bg_table(120);
-    int same = 0, flat = 0, other = 0;
+    int same = 0, flat = 0, other = 0, same_map = 0;
     static double times[30 * 32];
     for (int j = 0; j < 30; j++)
         for (int k = 0; k < 32; k++) {
             uint8_t g = nt_tile(P.tx0 + k, mod(P.ty0 + j, 30));
-            if (g == P.nt[j][k]) same++;
+            if (g == P.nt[j][k]) { same++; same_map += P.ismap[j][k]; }
             else if (flat_tile(g, table)) times[flat++] = spiral_time(k + 0.5 - 16, j + 0.5 - 15);
             else other++;
         }
@@ -599,7 +601,9 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
         lit += ((c >> 16 & 255) > 24) || ((c >> 8 & 255) > 24) || ((c & 255) > 24);
     }
     if (debug) fprintf(stderr, "dw4_wide: hold %d same %d flat %d other %d lit %d\n", P.frames, same, flat, other, lit);
-    if (other > 96 || lit < 40) { P.have = false; return 0; }   /* another screen, or black */
+    /* another screen, black, or the map gone (the spiral done: windows such as
+       the status may stay up into the battle) */
+    if (other > 96 || lit < 40 || same_map * 25 < P.maps) { P.have = false; return 0; }
     static uint8_t skip[MAX_SIDE];
     memset(skip, 0, (size_t)P.nheld);
     if (flat > 8) {
@@ -668,6 +672,9 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
     P.tx0 = tx0; P.ty0 = ty0;
     for (int j = 0; j < 30; j++)
         for (int k = 0; k < 32; k++) P.nt[j][k] = nt_tile(tx0 + k, mod(ty0 + j, 30));
+    P.maps = 0;
+    for (int j = 0; j < 30; j++)
+        for (int k = 0; k < 32; k++) P.maps += P.ismap[j][k] = E.map_tile[P.nt[j][k]] && !flat_tile(P.nt[j][k], table);
     P.have = true; P.frames = 0;
     return 1;
 }
@@ -705,10 +712,14 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
             /* the previous cell only counts when it is next door (it also holds where the party came out) */
             if (abs(pdx) + abs(pdy) == 1) { PX = X + pdx; PY = Y + pdy; } else { PX = X; PY = Y; }
         } else if (X >= 0x80 || Y >= 0x80) continue;        /* not on the map */
-        int rem = (X != PX || Y != PY) ? (E.ram[0x3E] + 1 > 16 ? 16 : E.ram[0x3E] + 1) : 0;
+        /* walking: each character's own progress, in 1/16 pixels from the
+           left/upper of its two cells ($7100 X, $7120 Y) */
+        int rem = X != PX || Y != PY;
         int face = w[0x1000 + i] & 3;                      /* 0 up 1 right 2 down 3 left */
         /* top-left of the character in canvas pixels (CHAR_DX/DY: where the game puts sprites in a cell) */
-        int cx = ox + 16 * X + rem * (PX - X), cy = oy + 16 * Y + rem * (PY - Y);
+        int cx = ox + 16 * X, cy = oy + 16 * Y;
+        if (X != PX) cx = ox + 16 * (X < PX ? X : PX) + (w[0x1100 + i] >> 4);
+        if (Y != PY) cy = oy + 16 * (Y < PY ? Y : PY) + (w[0x1120 + i] >> 4);
         /* what the game drew: the frame whose four sprites are in OAM at this place */
         int nx = cx - x0, shown = -1, hits[8];
         for (int f = 0; f < 8; f++) {
@@ -726,6 +737,20 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
         }
         /* both steps alike (the frames share their sprites): no say on the step */
         bool step_known = shown >= 0 && hits[shown ^ 1] < hits[shown];
+        if (debug && shown < 0 && rem && nx >= 8 && nx + 16 <= 248 && cy >= 16 && cy + 16 <= 224) {
+            int bd = 999, bx = 0, by = 0;
+            for (int f = 0; f < 8; f++) {
+                const uint8_t *fs = frame_sprites(i, f);
+                for (int s2 = 0; s2 < 64; s2++) {
+                    const uint8_t *o = oam + 4 * s2;
+                    if (o[0] >= 0xEF || o[1] != fs[0]) continue;
+                    int ddx = o[3] - nx, ddy = o[0] + 1 - cy;
+                    if (abs(ddx) + abs(ddy) < bd) { bd = abs(ddx) + abs(ddy); bx = ddx; by = ddy; }
+                }
+            }
+            fprintf(stderr, "dw4_wide: miss %d X %02X PX %02X Y %02X PY %02X off %02X %02X 3E %02X d %d %d\n", i, X, PX, Y, PY,
+                    w[0x1100 + i], w[0x1120 + i], E.ram[0x3E], bx, by);
+        }
         if (debug && nx >= 8 && nx + 16 <= 248 && cy >= 16 && cy + 16 <= 224)
             fprintf(stderr, "dw4_wide: obj %d %s face %d/%d step %d/%d moving %d at %d %d\n", i, shown >= 0 ? "found" : "MISSING",
                     face, shown >= 0 ? shown >> 1 : -1, E.step, shown >= 0 ? shown & 1 : -1, rem != 0, nx, cy);
