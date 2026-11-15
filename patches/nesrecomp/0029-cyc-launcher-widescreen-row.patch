@@ -1,0 +1,135 @@
+From: DragonWarrior4NESRecomp
+Subject: [PATCH] cyc launcher: Widescreen row for a game with a 16:9 view mode
+
+A game whose host extras offer the 16:9 view mode gets a "Widescreen" row
+in the launcher's Display settings (Off / On (16:9)), as the launcher's
+game-defined aspect cycle. It carries config.ini [Game] ViewMode, the value
+the runtime menu's View mode row sets; Restore defaults turns it off. The
+view mode is applied after the launcher even when 0, so turning it off
+there takes effect. ui_launcher_test covers the row both ways and the save.
+---
+diff --git a/runner/cyc/cyc_ui_launcher.c b/runner/cyc/cyc_ui_launcher.c
+--- a/runner/cyc/cyc_ui_launcher.c
++++ b/runner/cyc/cyc_ui_launcher.c
+@@ -51,6 +51,13 @@
+     return n;
+ }
+ 
++/* view_mode values: the index of the RECOMP_RUNTIME_UI_VIEW_MODE_* bit */
++#define RECOMP_RUNTIME_UI_VIEW_MODE_FIXED_16_9_VALUE 1
++static bool view_wide_offered(const CycHostExtras *x)
++{
++    return x && x->set_view_mode && (x->view_modes & (1u << RECOMP_RUNTIME_UI_VIEW_MODE_FIXED_16_9_VALUE));
++}
++
+ static void to_launcher(const CycSettings *s, RecompLauncherCSettings *io, const int *shortcuts, int count)
+ {
+     io->window_scale = s->window_scale;
+@@ -241,9 +248,22 @@
+      * it (psx is the only console that sets this today). The host builds its
+      * renderer with SDL_RENDERER_PRESENTVSYNC when the setting is on. */
+     gi.has_vsync = 1;
+-    /* a game's view modes are a runtime-menu row (live), not a launcher toggle */
+     gi.widescreen_supported = 0;
+-    (void)extras;
++    /* A game with a 16:9 view mode (cyc_host_extras.h) also gets a Widescreen
++     * row in Display settings, as the launcher's game-defined aspect cycle:
++     * index 0 Off (native), 1 On (16:9). It carries config.ini [Game]
++     * ViewMode, the same value the runtime menu's View mode row sets. */
++    static const char *const wide_labels[2] = { "Off", "On (16:9)" };
++    const bool wide = view_wide_offered(extras);
++    if (wide) {
++        gi.aspect_labels = wide_labels;
++        gi.num_aspect_labels = 2;
++        gi.aspect_setting_label = "Widescreen";
++        gi.aspect_setting_help = "Draws the map past the sides of the NES picture to fill a 16:9 screen.\n"
++                                 "Also in the in-game menu (View mode).";
++        io.aspect_index = settings->view_mode == RECOMP_RUNTIME_UI_VIEW_MODE_FIXED_16_9_VALUE;
++        defaults.aspect_index = 0;
++    }
+     gi.config_path = settings_path;
+ #ifdef CYC_GAME_PASSWORD_SAVE
+     /* --config must not redirect an existing mantra away from the executable. */
+@@ -341,6 +361,7 @@
+     cyc_diagnostics_note("launcher returned action=%d", act);
+     /* The edits come back whichever way the launcher closed. */
+     from_launcher(&io, settings, shortcuts, count);
++    if (wide) settings->view_mode = io.aspect_index == 1 ? RECOMP_RUNTIME_UI_VIEW_MODE_FIXED_16_9_VALUE : 0;
+ #ifdef NES_HOST_HAS_RECOMP_UI
+     if(act==RECOMP_LAUNCHER_RESULT_LAUNCH && io.netplay_launch.enabled) {
+         NesNetplayConfig cfg;
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -247,7 +247,9 @@
+         s_set.window_scale, s_set.fullscreen, s_set.integer_scale, s_set.linear_filter,
+         s_set.audio_enabled, s_set.volume, s_set.skip_launcher, s_set.view_mode,
+         linked.major, linked.minor, linked.patch, SDL_GetPlatform());
+-    if (s_extras && s_extras->set_view_mode && s_set.view_mode) s_extras->set_view_mode(s_extras->ctx, s_set.view_mode);
++    /* also 0: back from the launcher with Widescreen turned off */
++    if (s_extras && s_extras->set_view_mode && (s_set.view_mode || s_extras->view_modes))
++        s_extras->set_view_mode(s_extras->ctx, s_set.view_mode);
+     *saved_hle = s_set.fds_hle;
+     *saved_bios = s_set.fds_bios[0] ? s_set.fds_bios : NULL;
+ #if defined(NESRECOMP_CYCLE_HDPACK) && !defined(NESRECOMP_CYCLE_HDPACK_MODS)
+diff --git a/runner/cyc/ui_launcher_test.c b/runner/cyc/ui_launcher_test.c
+--- a/runner/cyc/ui_launcher_test.c
++++ b/runner/cyc/ui_launcher_test.c
+@@ -12,6 +12,7 @@
+  * saved as config.ini [FDS] Bios, used by the next start, and cleared.
+  * Needs recomp-ui's headers only (the launcher's ABI); no window. */
+ #include "cyc_fds_bios.h"
++#include "cyc_host_extras.h"
+ #include "cyc_input.h"
+ #include "cyc_settings.h"
+ #include "cyc_ui.h"
+@@ -70,6 +71,10 @@
+ }
+ void recomp_launcher_set_preserve_sdl(int preserve) { (void)preserve; }
+ 
++static bool wide_set(void *ctx, int mode) { (void)ctx; return mode == 0 || mode == 1; }
++static void edit_wide_on(RecompLauncherCSettings *io) { io->aspect_index = 1; }
++static void edit_wide_off(RecompLauncherCSettings *io) { io->aspect_index = 0; }
++
+ /* The player's edits: every row of the Controls page and the settings. */
+ static void edit_everything(RecompLauncherCSettings *io)
+ {
+@@ -328,6 +333,38 @@
+ #endif
+     CHECK(seen_io.hdpack_enabled == 1);
+ 
++    /* a game with a 16:9 view mode: a Widescreen row (the game-defined aspect
++     * cycle Off / On (16:9)) carrying [Game] ViewMode both ways */
++    {
++        static CycHostExtras wide_x;
++        wide_x.view_modes = 1u << 0 | 1u << 1;
++        wide_x.set_view_mode = wide_set;
++        cyc_settings_default(&s);
++        script_result = RECOMP_LAUNCHER_RESULT_QUIT;
++        CHECK(cyc_ui_launcher(&s, cfg, NULL, &rom, false, NULL, NULL) == 1);
++        CHECK(seen_game.num_aspect_labels == 0 && !seen_game.aspect_labels);   /* no view modes: no row */
++        CHECK(cyc_ui_launcher(&s, cfg, &wide_x, &rom, false, NULL, NULL) == 1);
++        CHECK(seen_game.num_aspect_labels == 2 && !strcmp(seen_game.aspect_labels[1], "On (16:9)"));
++        CHECK(!strcmp(seen_game.aspect_setting_label, "Widescreen") && seen_io.aspect_index == 0);
++        CHECK(seen_game.default_settings && seen_game.default_settings->aspect_index == 0);
++        s.view_mode = 1;
++        CHECK(cyc_ui_launcher(&s, cfg, &wide_x, &rom, false, NULL, NULL) == 1);
++        CHECK(seen_io.aspect_index == 1);
++        script_edit = edit_wide_off;
++        CHECK(cyc_ui_launcher(&s, cfg, &wide_x, &rom, false, NULL, NULL) == 1);
++        CHECK(s.view_mode == 0);
++        script_edit = edit_wide_on;
++        CHECK(cyc_ui_launcher(&s, cfg, &wide_x, &rom, false, NULL, NULL) == 1);
++        CHECK(s.view_mode == 1);
++        CycSettings back;
++        CHECK(cyc_settings_save(&s, cfg, NULL));
++        cyc_settings_default(&back);
++        CHECK(cyc_settings_load(&back, cfg, stderr, NULL));
++        CHECK(back.view_mode == 1);
++        script_edit = NULL;
++        remove(cfg);
++    }
++
+     /* every edit comes back, then survives config.ini */
+     cyc_settings_default(&s);
+     script_edit = edit_everything;

@@ -259,8 +259,10 @@ How the characters are built (`tools/build_hd_pack.sh`):
 ## Widescreen (16:9)
 
 The in-game menu's **View mode** row switches between **Native** (the NES's
-256x240, the default) and **16:9** (426x240). The choice is saved in
-config.ini (`[Game] ViewMode`, 0 or 1); headless runs take `--view native|16:9`.
+256x240, the default) and **16:9** (426x240), live. The launcher's Display
+settings have the same choice as a **Widescreen** row (Off / On (16:9);
+nesrecomp patch 0029). Both save it in config.ini (`[Game] ViewMode`, 0 or
+1); headless runs take `--view native|16:9`.
 
 The game still draws its own 256x240 picture; `src/dw4_edges.c` installs a
 compositor (nesrecomp `cyc_render.h`) that paints the 85 columns on each side
@@ -545,6 +547,10 @@ They are framework bugs, kept here until they can go upstream:
   margin tile kept over a transition that loads other tiles), compositor tiles
   over native pixels count as margin in HD, and greyscale lines (the battle
   flash) are turned grey in the HD picture too.
+- `0029-cyc-launcher-widescreen-row.patch` — a game whose host extras offer
+  the 16:9 view mode gets a **Widescreen** row in the launcher's Display
+  settings (the launcher's game-defined aspect cycle), carrying `[Game]
+  ViewMode`; the view mode is applied after the launcher even when off.
 - `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
   same per-channel colour map as `rgb:` (patch 0011), applied while drawing
   instead of at load, so the entry shares the untouched decoded block. Used
