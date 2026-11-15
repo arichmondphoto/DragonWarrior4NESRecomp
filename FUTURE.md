@@ -178,12 +178,11 @@ the waterfall, one piece just over the threshold).
   config.ini; map sides drawn from the map, in 8-bit and HD (README
   "Widescreen (16:9)"); other screens pillarboxed.
 - Done (phase 3): characters in the sides of towns, castles, dungeons and
-  the overworld, real facing (`$7000`), all areas checked by warp (README).
-  Not checked (no save that far): the wagon and a parked ship or balloon on
-  the overworld in 16:9. Done: fades, the battle flash and spiral, damage
-  flash in the sides; rooms and interiors; HD art in the sides of every area
-  (README). Left: flat fields and tiny rooms are pillarboxed (nothing to
-  match on). Optional phase 4: wider title and battle art. 21:9 and Fit would exceed the 8192-pixel HD picture limit at 10x.
+  the overworld (the game's own draw rule, real facing, own walking progress),
+  vehicles tested without a save (types pointed at wagon/ship/balloon); fades,
+  the battle flash and spiral, damage flash; rooms, roofs and dark rooms;
+  windows; map borders by pattern; plain fields; HD art in the sides of every
+  area (README). Optional phase 4: wider title and battle art. 21:9 and Fit would exceed the 8192-pixel HD picture limit at 10x.
 
 ## Done
 
