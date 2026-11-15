@@ -90,6 +90,7 @@ static struct {
     int view;               /* 0 native, 1 16:9 */
     int cam_px, cam_py;     /* map pixel at native (0, 0) last presented (compose) */
     unsigned cam_key; bool cam_ok, need_search;
+    int recheck;            /* frames since the town offset was last checked against the others */
     int step, step_count;   /* the walking step on screen, and frames since it changed */
     uint8_t map_tile[256];  /* tile numbers that belong to the map */
     const uint8_t *ram, *wram, *ciram;
@@ -208,11 +209,11 @@ static int score(int dx, int dy, int *total)
 /* The best ring offset; true if it explains at least 60% of the cells. */
 static bool search(void)
 {
-    int best = -1, bdx = 0, bdy = 0, total = 0;
+    int best = -1, bdx = 0, bdy = 0, total = 0, t;
     for (int dy = 0; dy < 30; dy += 2)
         for (int dx = 0; dx < 64; dx += 2) {
-            int v = score(dx, dy, &total);
-            if (v > best) { best = v; bdx = dx; bdy = dy; }
+            int v = score(dx, dy, &t);
+            if (v > best) { best = v; bdx = dx; bdy = dy; total = t; }   /* (the best one's total) */
         }
     if (getenv("DW4_EDGES_DEBUG") && getenv("DW4_EDGES_DEBUG")[0] == '2')
         fprintf(stderr, "dw4_edges: search %s best %d of %d at %d,%d hero %d,%d\n",
@@ -237,6 +238,21 @@ static void map_tiles(void)
 
 static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *wx0_, int *wy0_);
 
+/* Whether nametable tile (tx, ty), of flat tile f, is the blank inside of a
+ * window: along its row, the first other tile on each side is not a map tile. */
+static bool in_window(int tx, int ty, uint8_t f)
+{
+    int side = 0;
+    for (int dir = -1; dir <= 1; dir += 2)
+        for (int i = 1; i < 32; i++) {
+            uint8_t g = nt_tile(tx + dir * i, ty);
+            if (g == f) continue;
+            side += !E.map_tile[g];
+            break;
+        }
+    return side == 2;
+}
+
 static void learn(void)
 {
     memset(E.cur, -1, sizeof E.cur);
@@ -255,10 +271,12 @@ static void learn(void)
             if (!E.map_tile[q[0]] || !E.map_tile[q[1]] || !E.map_tile[q[2]] || !E.map_tile[q[3]]) continue;  /* a window */
             uint8_t pal = nt_pal(tx, ty);
             Look *l = E.look[c];
-            /* a flat cell (four equal tiles) that isn't the value's own metatile:
-               a window's blank inside, a dark scene - not a look of the map */
+            /* a flat cell (four equal tiles) that isn't the value's own metatile
+               inside a window (its blank inside: window tiles further along the
+               row on both sides) is not a look of the map; elsewhere it is (rooms
+               and the outside go black depending on where the hero is) */
             int pp; const uint8_t *d = plain(E.overworld || !(c >> 5) ? c : c & 31, &pp);
-            if (q[0] == q[1] && q[1] == q[2] && q[2] == q[3] && d && memcmp(d, q, 4)) continue;
+            if (q[0] == q[1] && q[1] == q[2] && q[2] == q[3] && d && memcmp(d, q, 4) && in_window(tx, ty, q[0])) continue;
             /* every look a value shows (animation frames, rooms shown and
                hidden), counted; the least seen one makes room for a new one */
             int j = 0;
@@ -337,6 +355,22 @@ static void frame_begin(void *ctx)
         if (E.valid) memset(E.look, 0, sizeof E.look);
         else E.search_wait = 8;
     }
+    if (E.valid && was && !ow && ++E.recheck >= 8) {
+        /* towns: room cells only count where they show, so a wrong offset
+           matched early (the screen half drawn) can go on looking right;
+           every 8 frames, another offset that explains clearly more wins */
+        E.recheck = 0;
+        int t, cur = score(E.dx, E.dy, &t), best = cur, bdx = E.dx, bdy = E.dy;
+        for (int dy = 0; dy < 30; dy += 2)
+            for (int dx = 0; dx < 64; dx += 2) {
+                int v = score(dx, dy, &t);
+                if (v > best) { best = v; bdx = dx; bdy = dy; }
+            }
+        if (best >= cur + cur / 4 + 4 && (bdx != E.dx || bdy != E.dy)) {
+            E.dx = bdx; E.dy = bdy;
+            memset(E.look, 0, sizeof E.look); was = false;
+        }
+    }
     if (E.valid) {
         /* where the camera looked in the frame just drawn (compose follows it
            frame by frame; searched again when the map was matched anew) */
@@ -387,6 +421,16 @@ static int map_quarter(int wx, int wy)
     int c = cell_key(floordiv(wx, 2), floordiv(wy, 2)), q = (wx & 1) | (wy & 1) << 1, pal;
     const Look *l = E.look[c];
     if (E.cur[c] >= 0 && l[E.cur[c]].conf > 0) return l[E.cur[c]].q[q] | l[E.cur[c]].pal << 8;
+    if (!E.overworld) {
+        /* not on screen now. Inside a room (the hero's cell has room bits) the
+           game shows that room's cells and blacks out everything else */
+        int hr = cell_key(E.hx, E.hy) >> 5;
+        if (hr) {
+            if ((c >> 5) != hr) return -1;
+            const uint8_t *d = plain(c & 31, &pal);
+            return d ? d[q] | pal << 8 : -1;
+        }
+    }
     if (l[0].conf > 0) return l[0].q[q] | l[0].pal << 8;
     const uint8_t *d = plain(c, &pal);
     return d ? d[q] | pal << 8 : -1;

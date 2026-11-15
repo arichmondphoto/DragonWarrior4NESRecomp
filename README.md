@@ -313,9 +313,15 @@ nametable that frame (cells of the border's value don't count). Debug:
 `DW4_WIDE_CHECK=1` prints per frame how many tiles of the native picture the
 same formula gets wrong, `DW4_WIDE_FULL=1` draws the native 256 from the map
 too, `DW4_WIDE_DEBUG=1` the camera search and each character's match.
-Checked over all 279 areas by warp: 20 differ by more than 2%, all a scene
-the check can't reproduce (the warp's reveal frozen half-way, rooms shown or
-hidden, windows); Gottside and the Underworld by walking out of their towns.
+Rooms: inside a room (the hero's cell has room bits, key >> 5) the game shows
+only that room's cells and blacks out the rest, so cells not on screen follow
+that rule; black looks are learned like any other (not inside windows: the
+window's blank). Towns re-check their ring offset every 8 frames (room cells
+only count where they show, so an offset matched while the screen was half
+drawn could otherwise stay). Checked over all 279 areas by warp: 8 differ by
+more than 2% (windows, tiles events change); 28 are not matched (small rooms
+with the outside black, flat fields, the balloon's sky: pillarboxed);
+Gottside and the Underworld by walking out of their towns.
 
 ## Shared ground between map tiles
 
