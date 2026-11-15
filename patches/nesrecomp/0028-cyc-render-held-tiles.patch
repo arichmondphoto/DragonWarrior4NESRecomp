@@ -1,0 +1,117 @@
+diff --git a/runner/cyc/cyc_hdpack.c b/runner/cyc/cyc_hdpack.c
+index 3542086..b74e767 100644
+--- a/runner/cyc/cyc_hdpack.c
++++ b/runner/cyc/cyc_hdpack.c
+@@ -185,7 +185,8 @@ static unsigned margin_count;
+ static const uint8_t *margin_tile(uint16_t pattern) {
+     for(unsigned i=0;i<margin_count;i++)if(margin_pattern[i]==pattern)return margin_bytes[i];
+     if(margin_count>=512)return NULL;
+-    for(unsigned j=0;j<16;j++)margin_bytes[margin_count][j]=cyc_render_chr((uint16_t)(pattern+j));
++    const uint8_t *given=cyc_render_hd_chr_bytes(pattern);
++    for(unsigned j=0;j<16;j++)margin_bytes[margin_count][j]=given?given[j]:cyc_render_chr((uint16_t)(pattern+j));
+     margin_pattern[margin_count]=pattern;return margin_bytes[margin_count++];
+ }
+ static uint32_t *wide_out;static size_t wide_capacity;static int presented_width;
+@@ -226,7 +227,9 @@ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height
+         uint8_t mask=recorded[y*256+128].mask;
+         for(int x=0;x<pw;x++) {
+             int nx=wide?x-origin:x;HdPixel *p=&pixels[y*pw+x];
+-            if(nx>=0 && nx<256){
++            uint16_t cp;int cpal,cox,coy;
++            /* native pixels the compositor painted over (a held picture's first column) count as margin */
++            if(nx>=0 && nx<256 && !(wide && cyc_render_hd_cell(x,y,&cp,&cpal,&cox,&coy))){
+                 fill_pixel(p,&recorded[y*256+nx],wide?canvas[y*w+x]:native[y*256+x]);
+                 if(wide && !p->sp_has)add_sprite(p,x,y,mask,canvas[y*w+x]);   /* a character the compositor completed */
+                 continue;
+@@ -247,6 +250,21 @@ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height
+     }
+     if(!reserve(&upscaled,&upscaled_capacity,(size_t)pw*s*240*s))return native;
+     hdpack_upscale(wide?canvas:native,pw,upscaled);
++    /* greyscale lines ($2001 bit 0, a flash): the art drawn in colour is turned
++     * grey and lifted like the NES greyscale column (black becomes $00's grey);
++     * pixels already grey (8-bit fallbacks with the mask applied) are kept */
++    for(int y=0;y<240;y++) {
++        if(!(recorded[y*256+128].mask&1))continue;
++        for(int yy=y*s;yy<(y+1)*s;yy++) {
++            uint32_t *row=upscaled+(size_t)yy*pw*s;
++            for(int x=0;x<pw*s;x++) {
++                uint32_t c=row[x];unsigned r=c>>16&255,g=c>>8&255,b=c&255;
++                if(r==g&&g==b)continue;
++                unsigned l=(r*77+g*150+b*29)>>8;l=102+l*153/255;
++                row[x]=(c&0xFF000000u)|l<<16|l<<8|l;
++            }
++        }
++    }
+     presented_generation=generation;presented_width=w;presentation_valid=true;
+     *width=w*s;*height=240*s;
+     if(w>256 && !wide) {
+diff --git a/runner/cyc/cyc_render.c b/runner/cyc/cyc_render.c
+index 98775e8..b1258c1 100644
+--- a/runner/cyc/cyc_render.c
++++ b/runner/cyc/cyc_render.c
+@@ -19,6 +19,30 @@ typedef struct { uint16_t pattern; int8_t pal; uint8_t oxy; } HdCell;
+ static HdCell          s_hd[CYC_VIDEO_MAX_WIDTH * 240], s_hd_sp[CYC_VIDEO_MAX_WIDTH * 240];
+ static int             s_hd_width;
+ static bool            s_painted;
++/* CHR bytes a compositor gave for pattern addresses (cyc_render_hd_chr). */
++static uint16_t        s_chr_pattern[512];
++static uint8_t         s_chr_bytes[512][16];
++static int             s_chr_count;
++
++void cyc_render_hd_chr(uint16_t pattern, const uint8_t bytes[16])
++{
++    for (int i = 0; i < s_chr_count; ++i)
++        if (s_chr_pattern[i] == pattern) { memcpy(s_chr_bytes[i], bytes, 16); return; }
++    if (s_chr_count >= 512) return;
++    s_chr_pattern[s_chr_count] = pattern; memcpy(s_chr_bytes[s_chr_count++], bytes, 16);
++}
++
++const uint8_t *cyc_render_hd_chr_bytes(uint16_t pattern)
++{
++    for (int i = 0; i < s_chr_count; ++i)
++        if (s_chr_pattern[i] == pattern) return s_chr_bytes[i];
++    return NULL;
++}
++
++uint32_t cyc_render_nes_color(uint8_t value, uint8_t mask)
++{
++    return hw_palette_argb[((mask & 1) ? (value & 0x30) : (value & 0x3F)) | (unsigned)(mask >> 5) << 6];
++}
+ 
+ void cyc_render_hd_tile(int x, int y, uint16_t pattern, int palette)
+ {
+@@ -239,6 +263,7 @@ const uint32_t *cyc_render_present(int *width, int *height)
+     s_hd_width = w;
+     memset(s_hd, 0xFF, (size_t)w * 240 * sizeof s_hd[0]);
+     memset(s_hd_sp, 0xFF, (size_t)w * 240 * sizeof s_hd_sp[0]);
++    s_chr_count = 0;
+     int painted = s_fn ? s_fn(s_canvas, w, 240, x0, native, s_user) : 0;
+     s_origin = x0;
+     s_painted = painted != 0;
+diff --git a/runner/cyc/cyc_render.h b/runner/cyc/cyc_render.h
+index 23f26f1..2c01c16 100644
+--- a/runner/cyc/cyc_render.h
++++ b/runner/cyc/cyc_render.h
+@@ -82,6 +82,12 @@ bool cyc_render_hd_sprite_cell(int x, int y, uint16_t *pattern, int *palette, in
+ /* The tile recorded at canvas pixel (x, y) of the last composed picture:
+  * false if none; *ox, *oy the pixel's place inside the tile. */
+ bool cyc_render_hd_cell(int x, int y, uint16_t *pattern, int *palette, int *ox, int *oy);
++/* The CHR bytes of a recorded margin tile when they are no longer (or not yet)
++ * in CHR memory (a picture held over a transition that loads other tiles):
++ * the HD presenter matches these instead of pattern's current bytes. Cleared
++ * at the start of each compose. */
++void cyc_render_hd_chr(uint16_t pattern, const uint8_t bytes[16]);
++const uint8_t *cyc_render_hd_chr_bytes(uint16_t pattern);
+ /* Whether the last wide picture was painted by the compositor (true, *origin
+  * the canvas column of native column 0) or pillarboxed (false). */
+ bool cyc_render_composed(int *origin);
+@@ -105,6 +111,9 @@ uint8_t  cyc_render_nametable(uint16_t ppu_addr); /* $2000-$2FFF */
+ uint8_t  cyc_render_palette(int entry);           /* palette RAM $3F00 + entry (0-31), 6 bits */
+ /* A palette RAM entry as ARGB, with the emphasis the picture's last line had. */
+ uint32_t cyc_render_color(int entry);
++/* An NES colour (0-63) as ARGB under a $2001 value's greyscale and emphasis
++ * (a line's cyc_render_line_mask). */
++uint32_t cyc_render_nes_color(uint8_t value, uint8_t mask);
+ 
+ /* ---- drawing ---- */
+ enum {

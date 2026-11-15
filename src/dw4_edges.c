@@ -54,6 +54,7 @@
 #include "cyc_video.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -441,12 +442,142 @@ static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *w
     *fx_ = fx; *fy_ = fy; *tx0_ = tx0; *ty0_ = ty0; *wx0_ = wx0; *wy0_ = wy0;
 }
 
+/* ---- the sides as a list of tiles ----
+ * Each picture's side tiles (map tiles, then characters) are listed with their
+ * CHR bytes and painted with the colours each line used (palette, greyscale,
+ * emphasis: the battle flash is greyscale). The last map picture's list is
+ * kept: when the game leaves the map (a door, stairs, a battle) the native
+ * picture fades or spirals out while it is no longer a map we can match, so
+ * the sides go on showing that picture, with the colours of the moment, until
+ * the native picture is black. */
+typedef struct { int16_t x, y; uint16_t pattern; uint8_t pal, flags, chr[16]; } SideTile;  /* pal 0-3 BG, 4-7 sprites */
+#define EDGE_TILE 0x80      /* flags: over the native picture's first column */
+#define MAX_SIDE 2048
+static struct {
+    SideTile t[MAX_SIDE]; int n;            /* this picture's */
+    SideTile held[MAX_SIDE]; int nheld;     /* the last map picture's */
+    uint8_t nt[30][32]; int tx0, ty0;       /* the native picture's tiles then */
+    bool have; int frames;
+} P;
+
+static void side_tile(int x, int y, uint16_t pattern, int pal, unsigned flags)
+{
+    if (P.n >= MAX_SIDE) return;
+    SideTile *t = &P.t[P.n++];
+    t->x = (int16_t)x; t->y = (int16_t)y; t->pattern = pattern; t->pal = (uint8_t)pal; t->flags = (uint8_t)flags;
+    for (int i = 0; i < 16; i++) t->chr[i] = cyc_render_chr((uint16_t)(pattern + i));
+}
+
+static int paint_x0;        /* the native picture's canvas column */
+
+static void paint_tile(uint32_t *out, int width, const SideTile *t, const uint8_t *pal, bool held)
+{
+    bool sprite = t->pal >= 4;
+    for (int r = 0; r < 8; r++) {
+        int py = t->y + r;
+        if (py < 0 || py >= 240) continue;
+        uint8_t m = cyc_render_line_mask(py);
+        if (!(m & (sprite ? 0x10 : 0x08))) continue;
+        int row = t->flags & CYC_TILE_VFLIP ? 7 - r : r;
+        uint8_t lo = t->chr[row], hi = t->chr[row + 8];
+        for (int c = 0; c < 8; c++) {
+            int px = t->x + c;
+            if (px < 0 || px >= width) continue;
+            int b = t->flags & CYC_TILE_HFLIP ? c : 7 - c;
+            int v = (lo >> b & 1) | (hi >> b & 1) << 1;
+            if (v) out[py * width + px] = cyc_render_nes_color(pal[(sprite ? 16 + (t->pal - 4) * 4 : t->pal * 4) + v], m);
+        }
+    }
+    if ((t->flags & EDGE_TILE) && !held && t->x >= paint_x0) return;   /* under the native picture: the game's own */
+    if (held) cyc_render_hd_chr(t->pattern, t->chr);
+    if (sprite) cyc_render_hd_sprite(t->x, t->y, t->pattern, t->pal - 4, t->flags);
+    else cyc_render_hd_tile(t->x, t->y, t->pattern, t->pal);
+}
+
+/* The battle's spiral: when (frames after it starts) it reaches screen tile
+ * (dx, dy) from the middle, fitted on the native picture (median error under
+ * 2 frames): four arms turning, a little later further out. */
+static double spiral_time(double dx, double dy)
+{
+    double r = sqrt(dx * dx + dy * dy), ph = fmod(atan2(dy, dx) - 0.4712 - 0.1 * r, M_PI / 2);
+    if (ph < 0) ph += M_PI / 2;
+    return 6.30 + 12.54 * ph + 0.404 * r;
+}
+
+/* skip (may be NULL): per tile, leave it out (the spiral reached it) */
+static void paint(uint32_t *out, int width, int x0, const uint32_t *native, const SideTile *t, int n,
+                  const uint8_t *skip, bool held, bool full)
+{
+    uint8_t pal[32];
+    for (int i = 0; i < 32; i++) pal[i] = cyc_render_palette(i);
+    paint_x0 = x0;
+    for (int y = 0; y < 240; y++) {
+        uint8_t m = cyc_render_line_mask(y);
+        uint32_t back = m & 0x08 ? cyc_render_nes_color(pal[0], m) : 0xFF000000u;   /* background off: black */
+        for (int x = 0; x < width; x++) out[y * width + x] = back;
+    }
+    for (int i = 0; i < n; i++) if (t[i].pal < 4 && !(skip && skip[i])) paint_tile(out, width, &t[i], pal, held);
+    if (!full) for (int y = 0; y < 240; y++) memcpy(out + y * width + x0, native + y * 256, 256 * sizeof(uint32_t));
+    /* held: the game no longer repairs its first column (the edge hook needs a map) */
+    if (held) for (int i = 0; i < n; i++) if ((t[i].flags & EDGE_TILE) && !(skip && skip[i])) paint_tile(out, width, &t[i], pal, held);
+    for (int i = 0; i < n; i++) if (t[i].pal >= 4 && !(skip && skip[i])) paint_tile(out, width, &t[i], pal, held);
+}
+
+/* A background tile of one colour (the spiral's black, a cleared screen). */
+static bool flat_tile(uint8_t tile, uint16_t table)
+{
+    uint8_t lo = cyc_render_chr((uint16_t)(table + tile * 16)), hi = cyc_render_chr((uint16_t)(table + tile * 16 + 8));
+    if ((lo != 0 && lo != 0xFF) || (hi != 0 && hi != 0xFF)) return false;
+    for (int i = 1; i < 8; i++)
+        if (cyc_render_chr((uint16_t)(table + tile * 16 + i)) != lo || cyc_render_chr((uint16_t)(table + tile * 16 + 8 + i)) != hi) return false;
+    return true;
+}
+
+static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
+{
+    static int debug = -1;
+    if (debug < 0) debug = getenv("DW4_WIDE_DEBUG") != NULL;
+    if (!P.have || ++P.frames > 240) { P.have = false; return 0; }
+    /* still the map picture: its tiles, or ones turned to one colour (the spiral) */
+    uint16_t table = cyc_render_line_bg_table(120);
+    int same = 0, flat = 0, other = 0;
+    static double times[30 * 32];
+    for (int j = 0; j < 30; j++)
+        for (int k = 0; k < 32; k++) {
+            uint8_t g = nt_tile(P.tx0 + k, mod(P.ty0 + j, 30));
+            if (g == P.nt[j][k]) same++;
+            else if (flat_tile(g, table)) times[flat++] = spiral_time(k + 0.5 - 16, j + 0.5 - 15);
+            else other++;
+        }
+    int lit = 0;
+    for (int i = 0; i < 256 * 240; i += 7) {
+        uint32_t c = native[i];
+        lit += ((c >> 16 & 255) > 24) || ((c >> 8 & 255) > 24) || ((c & 255) > 24);
+    }
+    if (debug) fprintf(stderr, "dw4_wide: hold %d same %d flat %d other %d lit %d\n", P.frames, same, flat, other, lit);
+    if (other > 96 || lit < 40) { P.have = false; return 0; }   /* another screen, or black */
+    static uint8_t skip[MAX_SIDE];
+    memset(skip, 0, (size_t)P.nheld);
+    if (flat > 8) {
+        /* the spiral: how far it has come, from the tiles it has turned */
+        for (int i = 1; i < flat; i++)                                   /* sort (small) */
+            for (int j = i; j > 0 && times[j] < times[j - 1]; j--) { double x = times[j]; times[j] = times[j - 1]; times[j - 1] = x; }
+        double now = times[flat * 9 / 10];
+        for (int i = 0; i < P.nheld; i++) {
+            const SideTile *t = &P.held[i];
+            skip[i] = spiral_time((t->x - x0 + 4) / 8.0 - 16, (t->y + 4) / 8.0 - 15) <= now;
+        }
+    }
+    paint(out, width, x0, native, P.held, P.nheld, skip, true, false);
+    return 1;
+}
+
 static bool check_wide;
 
 static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
 {
     (void)user; (void)height;
-    if (!E.valid) return 0;                                /* not a map: pillarboxed */
+    if (!E.valid) return hold(out, width, x0, native);    /* not a map: the last one fading, or pillarboxed */
     static int ck = -1;
     if (ck < 0) ck = getenv("DW4_WIDE_CHECK") != NULL;
     check_wide = ck;
@@ -457,25 +588,20 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
     locate(E.need_search, &fx, &fy, &tx0, &ty0, &wx0, &wy0);
     E.need_search = false;
     uint16_t table = cyc_render_line_bg_table(120);
-    uint32_t back = cyc_render_color(0);
-    for (int i = 0; i < width * 240; i++) out[i] = back;
+    P.n = 0;
     int k0 = floordiv(fx - x0, 8) - 1, k1 = floordiv(width - x0 + fx, 8) + 1;
     for (int j = 0; j <= 30; j++) {
         int cy = 8 * j - fy;
         for (int k = k0; k <= k1; k++) {
             int cx = x0 - fx + 8 * k;
-            if (cx + 8 <= 0 || cx >= width || (!full && cx >= x0 && cx + 8 <= x0 + 256)) continue;   /* only the margins */
+            /* the margins, and the native picture's first column (the game hides it;
+               a held picture shows it, see hold) */
+            if (cx + 8 <= 0 || cx >= width || (!full && cx >= x0 + 8 && cx + 8 <= x0 + 256)) continue;
             int t = map_quarter(wx0 + k, wy0 + j);
             if (t < 0) continue;
             uint16_t pattern = (uint16_t)(table + (t & 0xFF) * 16);
-            cyc_render_tile(out, width, 240, cx, cy, pattern, t >> 8, 0, NULL, NULL);
-            cyc_render_hd_tile(cx, cy, pattern, t >> 8);
+            side_tile(cx, cy, pattern, t >> 8, cx + 8 > x0 && cx < x0 + 8 ? EDGE_TILE : 0);
         }
-    }
-    for (int y = 0; y < 240; y++) {
-        if (!(cyc_render_line_mask(y) & 0x08))                  /* background off on this line */
-            for (int x = 0; x < width; x++) out[y * width + x] = 0xFF000000u;
-        if (!full) memcpy(out + y * width + x0, native + y * 256, 256 * sizeof(uint32_t));
     }
     if (check_wide) {
         /* the same formula over the native picture: how often it disagrees
@@ -492,6 +618,13 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
     }
     /* canvas pixel of map cell (0, 0)'s top-left: map tile column 0 is k = -wx0 */
     draw_characters(out, width, x0, x0 - fx - 8 * wx0 + CHAR_DX, -fy - 8 * wy0 + CHAR_DY);
+    paint(out, width, x0, native, P.t, P.n, NULL, false, full);
+    /* kept for the way out of this map */
+    memcpy(P.held, P.t, (size_t)P.n * sizeof P.t[0]); P.nheld = P.n;
+    P.tx0 = tx0; P.ty0 = ty0;
+    for (int j = 0; j < 30; j++)
+        for (int k = 0; k < 32; k++) P.nt[j][k] = nt_tile(tx0 + k, mod(ty0 + j, 30));
+    P.have = true; P.frames = 0;
     return 1;
 }
 
@@ -564,8 +697,7 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
             uint8_t t = fs[2 * k], a = fs[2 * k + 1];
             unsigned fl = (a & 0x40 ? CYC_TILE_HFLIP : 0) | (a & 0x80 ? CYC_TILE_VFLIP : 0);
             /* inside the native picture only where the game drew none of it (cut at the edge) */
-            cyc_render_tile(out, width, 240, sx, sy, (uint16_t)(table + t * 16), 4 + (a & 3), fl, NULL, NULL);
-            cyc_render_hd_sprite(sx, sy, (uint16_t)(table + t * 16), a & 3, fl);
+            side_tile(sx, sy, (uint16_t)(table + t * 16), 4 + (a & 3), fl);
         }
     }
     /* the walking step: what the characters on screen show, else 16 frames each */
@@ -591,7 +723,7 @@ static void power_on(void *ctx)
     (void)ctx;
     decode_worlds();
     memset(E.look, 0, sizeof E.look);
-    E.valid = false; E.key = 0; E.search_wait = 0;
+    E.valid = false; E.key = 0; E.search_wait = 0; P.have = false;
     cyc_ppu_set_bg_tile_hook(E.enabled ? bg_hook : NULL, NULL);
     cyc_ppu_set_show_left(false);
     cyc_render_set_compositor(compose, NULL);

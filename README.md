@@ -270,6 +270,18 @@ the frame was drawn with, and each map value in the look it has on screen
 that frame (animations, rooms shown or hidden). Screens that are not a map
 (the title, battles, menus, the casino tables) are pillarboxed.
 
+The sides are painted with the colours each line used (palette, greyscale,
+emphasis), so the battle's white (greyscale) flash and the damage floor's red
+flash cover them too. Leaving a map (doors, stairs, battles) the native
+picture fades or spirals out while it can no longer be matched as a map: the
+last map picture's side tiles are kept (with their CHR bytes, as the next
+screen loads other tiles) and shown with the colours of the moment until the
+native picture is black, or another screen replaces it. The battle's spiral is
+continued into the sides from a fit of when it reaches each tile (four arms
+turning, a little later further out; median error under 2 frames), placed by
+how far it has come in the native picture. Fading in, the new map is matched
+while still black, so the sides fade in with it.
+
 With the HD pack, every margin tile the compositor paints is recorded
 (`cyc_render_hd_tile`, nesrecomp patch 0026) and the HD presenter matches it
 with the pack's art like the native picture's tiles, so the sides are HD too:
@@ -492,6 +504,11 @@ They are framework bugs, kept here until they can go upstream:
 - `0027-cyc-hd-wide-sprites.patch` — the same for sprites a game compositor draws
   (`cyc_render_hd_sprite`): characters in the widescreen sides, and the parts
   of characters the game cut at the native edge, get the pack's sprite art.
+- `0028-cyc-render-held-tiles.patch` — `cyc_render_nes_color` (an NES colour
+  under a line's greyscale/emphasis), `cyc_render_hd_chr` (the CHR bytes of a
+  margin tile kept over a transition that loads other tiles), compositor tiles
+  over native pixels count as margin in HD, and greyscale lines (the battle
+  flash) are turned grey in the HD picture too.
 - `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
   same per-channel colour map as `rgb:` (patch 0011), applied while drawing
   instead of at load, so the entry shares the untouched decoded block. Used
