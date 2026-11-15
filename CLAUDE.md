@@ -128,6 +128,6 @@ README.md is the full reference; this file is the working summary.
 - `FUTURE.md` is the to-do list (what is left and the agreed approach): update it when work is decided or done.
 - Commit messages end with the attribution lines given in the session; push to `main`.
 - Checkpoint often (commit + update the project's STATUS doc); sessions can hit limits mid-task.
-- Widescreen is deferred; no Scenario.
+- Widescreen: View mode Native / 16:9 (README "Widescreen (16:9)"; compositor in src/dw4_edges.c, patch 0026). No Scenario.
 - Game facts (RAM addresses, banks, character table, intro timing) are in README.md and the
   project's STATUS doc — verify against the ROM/disassembly before relying on any.

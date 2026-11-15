@@ -256,6 +256,33 @@ How the characters are built (`tools/build_hd_pack.sh`):
 - Tiles are matched by their 16 CHR-RAM bytes and exact palettes.
   Bump `HD_VERSION` in `package_macos_app.sh` when the pack's content changes.
 
+## Widescreen (16:9)
+
+The in-game menu's **View mode** row switches between **Native** (the NES's
+256x240, the default) and **16:9** (426x240). The choice is saved in
+config.ini (`[Game] ViewMode`, 0 or 1); headless runs take `--view native|16:9`.
+
+The game still draws its own 256x240 picture; `src/dw4_edges.c` installs a
+compositor (nesrecomp `cyc_render.h`) that paints the 85 columns on each side
+from the map itself: the same map data and ring offset the edge repair finds
+each frame (towns from WRAM, overworlds from the ROM), placed with the scroll
+the frame was drawn with, and each map value in the look it has on screen
+that frame (animations, rooms shown or hidden). Screens that are not a map
+(the title, battles, menus, the casino tables) are pillarboxed.
+
+With the HD pack, every margin tile the compositor paints is recorded
+(`cyc_render_hd_tile`, nesrecomp patch 0026) and the HD presenter matches it
+with the pack's art like the native picture's tiles, so the sides are HD too:
+the HD picture is 4260x2400. Pillarboxed screens are the 2560x2400 HD picture
+centred.
+
+Checked headless: walking on the overworld and in a castle, consecutive 16:9
+frames match each other shifted by the scroll pixel for pixel, across the
+border between the sides and the native picture.
+
+Not yet: characters standing in the sides are not drawn (the game only makes
+sprites for the native 256), so people walking off the edge are cut there.
+
 ## Shared ground between map tiles
 
 The game builds one ground (grass, sand, a floor) out of several tiles: a
@@ -436,6 +463,10 @@ They are framework bugs, kept here until they can go upstream:
   the HD part of a state only holds the picture being drawn, so on a mismatch
   it is dropped and the next frame redraws it. Before, every new pack version
   made older quicksaves refuse to load.
+- `0026-cyc-hd-wide-picture.patch` — the HD presenter builds the wide picture:
+  a game compositor records the tiles it paints in the margins
+  (`cyc_render_hd_tile`), and those are matched with the pack like native
+  tiles; pillarboxed screens are centred.
 - `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
   same per-channel colour map as `rgb:` (patch 0011), applied while drawing
   instead of at load, so the entry shares the untouched decoded block. Used

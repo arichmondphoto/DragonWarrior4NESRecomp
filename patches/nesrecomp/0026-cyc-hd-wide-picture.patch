@@ -1,0 +1,215 @@
+diff --git a/runner/cyc/cyc_hdpack.c b/runner/cyc/cyc_hdpack.c
+index 35bf994..332979a 100644
+--- a/runner/cyc/cyc_hdpack.c
++++ b/runner/cyc/cyc_hdpack.c
+@@ -4,6 +4,7 @@
+ #endif
+ #include "cyc_core.h"
+ #include "cyc_render.h"
++#include "cyc_video.h"
+ #include "cyc_mod.h"
+ #include "hw_internal.h"
+ #include "hdpack.h"
+@@ -156,38 +157,91 @@ static unsigned main_index(const uint8_t *t) {
+     for(unsigned i=1;i<4;i++)if(n[i]>best){best=n[i];k=i;}
+     return k;
+ }
++static void fill_pixel(HdPixel *p,const HdRecordedPixel *r,uint32_t fallback) {
++    memset(p,0,sizeof(*p));
++    p->bg_index=r->bg_index;p->sp_index=r->sp_index;
++    p->bg_t16=r->bg_tile;p->sp_t16=r->sp_tile;
++    p->bg_has=r->flags&1;p->sp_has=(r->flags>>1)&1;
++    p->bg_p0=r->bg_pal[0];p->bg_p1=r->bg_pal[1];p->bg_p2=r->bg_pal[2];p->bg_p3=r->bg_pal[3];
++    p->sp_p1=r->sp_pal[0];p->sp_p2=r->sp_pal[1];p->sp_p3=r->sp_pal[2];
++    p->bg_ox=r->bg_x;p->bg_oy=r->bg_y;p->bg_ntx=r->bg_ntx;p->sp_ox=r->sp_x;p->sp_oy=r->sp_y;
++    p->sp_hm=(r->flags>>2)&1;p->sp_vm=(r->flags>>3)&1;p->sp_clear=p->sp_has&&!r->sp_color;
++    p->backdrop=color(r->bg_pal[0],r->mask);
++    p->bg_argb=color(r->bg_pal[r->bg_color],r->mask);
++    p->sp_argb=r->sp_color?color(r->sp_pal[r->sp_color-1],r->mask):fallback;
++    if(p->bg_has){unsigned k=main_index(r->bg_tile);p->bg_tint=k?color(r->bg_pal[k],r->mask):p->backdrop;}
++    if(p->sp_has){unsigned k=main_index(r->sp_tile);if(k)p->sp_tint=color(r->sp_pal[k-1],r->mask);}
++}
++static bool reserve(uint32_t **buf,size_t *cap,size_t count) {
++    if(count<=*cap)return true;
++    uint32_t *next=realloc(*buf,count*sizeof(*next));if(!next)return false;
++    *buf=next;*cap=count;return true;
++}
++/* Margin tiles a game compositor painted (cyc_render_hd_tile): their CHR bytes,
++ * one copy per distinct pattern address, for the side channel's pointers. */
++static uint8_t margin_bytes[512][16];
++static uint16_t margin_pattern[512];
++static unsigned margin_count;
++static const uint8_t *margin_tile(uint16_t pattern) {
++    for(unsigned i=0;i<margin_count;i++)if(margin_pattern[i]==pattern)return margin_bytes[i];
++    if(margin_count>=512)return NULL;
++    for(unsigned j=0;j<16;j++)margin_bytes[margin_count][j]=cyc_render_chr((uint16_t)(pattern+j));
++    margin_pattern[margin_count]=pattern;return margin_bytes[margin_count++];
++}
++static uint32_t *wide_out;static size_t wide_capacity;static int presented_width;
+ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height) {
+     *width=256;*height=240;if(!hdpack_active())return native;
++    /* the engine's picture at the presented width: the game compositor's wide
++     * one (margins painted, or the native picture pillarboxed) */
++    int w=256,h=240,origin=0;const uint32_t *canvas=native;
++    if(cyc_video_width()>256) canvas=cyc_render_present(&w,&h);
++    bool wide=w>256 && cyc_render_composed(&origin);
++    int s=hdpack_scale();
+     uint64_t generation=cyc_render_generation();
+-    if(presentation_valid && generation==presented_generation) {
+-        *width=256*hdpack_scale();*height=240*hdpack_scale();return upscaled;
++    if(presentation_valid && generation==presented_generation && w==presented_width) {
++        *width=w*s;*height=240*s;return w>256&&!wide?wide_out:upscaled;
+     }
+     /* A restored state can reuse a frame number with different RAM/tiles.
+      * Revision identity also keeps repeated paused presents inexpensive. */
+     hdpack_invalidate_conditions();
++    int pw=wide?w:256;
++    if(hdpack_resize(pw)<0)return native;
+     HdPixel *pixels=hdpack_pixels();
+-    for(unsigned i=0;i<256*240;i++) {
+-        const HdRecordedPixel *r=&recorded[i];HdPixel *p=&pixels[i];memset(p,0,sizeof(*p));
+-        p->bg_index=r->bg_index;p->sp_index=r->sp_index;
+-        p->bg_t16=r->bg_tile;p->sp_t16=r->sp_tile;
+-        p->bg_has=r->flags&1;p->sp_has=(r->flags>>1)&1;
+-        p->bg_p0=r->bg_pal[0];p->bg_p1=r->bg_pal[1];p->bg_p2=r->bg_pal[2];p->bg_p3=r->bg_pal[3];
+-        p->sp_p1=r->sp_pal[0];p->sp_p2=r->sp_pal[1];p->sp_p3=r->sp_pal[2];
+-        p->bg_ox=r->bg_x;p->bg_oy=r->bg_y;p->bg_ntx=r->bg_ntx;p->sp_ox=r->sp_x;p->sp_oy=r->sp_y;
+-        p->sp_hm=(r->flags>>2)&1;p->sp_vm=(r->flags>>3)&1;p->sp_clear=p->sp_has&&!r->sp_color;
+-        p->backdrop=color(r->bg_pal[0],r->mask);
+-        p->bg_argb=color(r->bg_pal[r->bg_color],r->mask);
+-        p->sp_argb=r->sp_color?color(r->sp_pal[r->sp_color-1],r->mask):native[i];
+-        if(p->bg_has){unsigned k=main_index(r->bg_tile);p->bg_tint=k?color(r->bg_pal[k],r->mask):p->backdrop;}
+-        if(p->sp_has){unsigned k=main_index(r->sp_tile);if(k)p->sp_tint=color(r->sp_pal[k-1],r->mask);}
++    margin_count=0;
++    for(int y=0;y<240;y++) {
++        uint8_t mask=recorded[y*256+128].mask;
++        for(int x=0;x<pw;x++) {
++            int nx=wide?x-origin:x;HdPixel *p=&pixels[y*pw+x];
++            if(nx>=0 && nx<256){fill_pixel(p,&recorded[y*256+nx],wide?canvas[y*w+x]:native[y*256+x]);continue;}
++            /* a margin pixel: the compositor's tile, else its flat colour */
++            memset(p,0,sizeof(*p));p->bg_index=-1;p->sp_index=-1;
++            uint16_t pattern;int pal,ox,oy;const uint8_t *t;
++            p->backdrop=p->bg_argb=canvas[y*w+x];
++            if(cyc_render_hd_cell(x,y,&pattern,&pal,&ox,&oy) && (t=margin_tile(pattern))) {
++                uint8_t pals[4]={cyc_render_palette(0),cyc_render_palette(pal*4+1),cyc_render_palette(pal*4+2),cyc_render_palette(pal*4+3)};
++                p->bg_t16=t;p->bg_has=1;p->bg_ox=(uint8_t)ox;p->bg_oy=(uint8_t)oy;
++                p->bg_p0=pals[0];p->bg_p1=pals[1];p->bg_p2=pals[2];p->bg_p3=pals[3];
++                p->backdrop=color(pals[0],mask);
++                unsigned k=main_index(t);p->bg_tint=k?color(pals[k],mask):p->backdrop;
++            }
++        }
+     }
+-    size_t count=(size_t)256*240*hdpack_scale()*hdpack_scale();
+-    if(count>upscaled_capacity) {
+-        uint32_t *next=realloc(upscaled,count*sizeof(*next));if(!next)return native;
+-        upscaled=next;upscaled_capacity=count;
++    if(!reserve(&upscaled,&upscaled_capacity,(size_t)pw*s*240*s))return native;
++    hdpack_upscale(wide?canvas:native,pw,upscaled);
++    presented_generation=generation;presented_width=w;presentation_valid=true;
++    *width=w*s;*height=240*s;
++    if(w>256 && !wide) {
++        /* a pillarboxed screen: the HD picture centred on black */
++        if(!reserve(&wide_out,&wide_capacity,(size_t)w*s*240*s))return native;
++        int ox=origin*s,W=w*s;
++        for(int y=0;y<240*s;y++) {
++            uint32_t *row=wide_out+(size_t)y*W;
++            for(int x=0;x<W;x++)row[x]=0xFF000000u;
++            memcpy(row+ox,upscaled+(size_t)y*256*s,(size_t)256*s*sizeof(uint32_t));
++        }
++        return wide_out;
+     }
+-    hdpack_upscale(native,256,upscaled);presented_generation=generation;presentation_valid=true;
+-    *width=256*hdpack_scale();*height=240*hdpack_scale();return upscaled;
++    return upscaled;
+ }
+ 
+ #define HD_STATE_PART(n) \
+diff --git a/runner/cyc/cyc_render.c b/runner/cyc/cyc_render.c
+index 63a1d65..661bf31 100644
+--- a/runner/cyc/cyc_render.c
++++ b/runner/cyc/cyc_render.c
+@@ -15,6 +15,39 @@ static int             s_composed_width;
+ static int             s_origin, s_origin_request;
+ static bool            s_origin_requested;
+ static CycRenderStats  s_stats;
++typedef struct { uint16_t pattern; int8_t pal; uint8_t oxy; } HdCell;
++static HdCell          s_hd[CYC_VIDEO_MAX_WIDTH * 240];
++static int             s_hd_width;
++static bool            s_painted;
++
++void cyc_render_hd_tile(int x, int y, uint16_t pattern, int palette)
++{
++    for (int r = 0; r < 8; ++r) {
++        int py = y + r;
++        if (py < 0 || py >= 240) continue;
++        for (int c = 0; c < 8; ++c) {
++            int px = x + c;
++            if (px < 0 || px >= s_hd_width) continue;
++            HdCell *h = &s_hd[py * s_hd_width + px];
++            h->pattern = pattern; h->pal = (int8_t)(palette & 3); h->oxy = (uint8_t)(c | r << 4);
++        }
++    }
++}
++
++bool cyc_render_hd_cell(int x, int y, uint16_t *pattern, int *palette, int *ox, int *oy)
++{
++    if (x < 0 || y < 0 || x >= s_hd_width || y >= 240) return false;
++    const HdCell *h = &s_hd[y * s_hd_width + x];
++    if (h->pal < 0) return false;
++    *pattern = h->pattern; *palette = h->pal; *ox = h->oxy & 15; *oy = h->oxy >> 4;
++    return true;
++}
++
++bool cyc_render_composed(int *origin)
++{
++    if (origin) *origin = s_origin;
++    return s_painted;
++}
+ 
+ void cyc_render_set_compositor(CycCompositorFn fn, void *user)
+ {
+@@ -166,6 +199,7 @@ const uint32_t *cyc_render_present(int *width, int *height)
+     *height = 240;
+     if (w <= 256) {
+         *width = 256;
++        s_painted = false;
+         if (s_composed_generation != s_generation || s_composed_width != 256) {
+             s_stats.native++;
+             s_composed_generation = s_generation;
+@@ -179,8 +213,11 @@ const uint32_t *cyc_render_present(int *width, int *height)
+     int x0 = (w - 256) / 2;
+     for (int i = 0; i < w * 240; ++i) s_canvas[i] = 0xFF000000u;
+     s_origin_requested = false;
++    s_hd_width = w;
++    memset(s_hd, 0xFF, (size_t)w * 240 * sizeof s_hd[0]);
+     int painted = s_fn ? s_fn(s_canvas, w, 240, x0, native, s_user) : 0;
+     s_origin = x0;
++    s_painted = painted != 0;
+     if (!painted) {
+         for (int y = 0; y < 240; ++y) memcpy(&s_canvas[y * w + x0], &native[y * 256], 256 * sizeof(uint32_t));
+         s_stats.pillarboxed++;
+diff --git a/runner/cyc/cyc_render.h b/runner/cyc/cyc_render.h
+index 8a54396..13c694a 100644
+--- a/runner/cyc/cyc_render.h
++++ b/runner/cyc/cyc_render.h
+@@ -67,6 +67,20 @@ extern bool cyc_background_enabled;
+ extern uint8_t cyc_background_pipe[4];
+ void cyc_render_background_output(unsigned pixel, unsigned emphasis, bool grey);
+ 
++/* ---- HD texture packs in the wide picture ----
++ * A compositor that paints background tiles in the margins says which tile it
++ * put where, so the HD presenter can replace them with the pack's art like the
++ * native picture's tiles: (x, y) the tile's top-left canvas pixel, pattern its
++ * pattern address (table + tile * 16), palette 0-3 (background). Recorded for
++ * the picture being painted; cleared at the start of each compose. */
++void cyc_render_hd_tile(int x, int y, uint16_t pattern, int palette);
++/* The tile recorded at canvas pixel (x, y) of the last composed picture:
++ * false if none; *ox, *oy the pixel's place inside the tile. */
++bool cyc_render_hd_cell(int x, int y, uint16_t *pattern, int *palette, int *ox, int *oy);
++/* Whether the last wide picture was painted by the compositor (true, *origin
++ * the canvas column of native column 0) or pillarboxed (false). */
++bool cyc_render_composed(int *origin);
++
+ /* ---- what the frame used ---- */
+ /* The background's X at native column 0 of visible line y, 0-511 across the
+  * two nametables side by side, and its Y, 0-479 with the lower nametables'

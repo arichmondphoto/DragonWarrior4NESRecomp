@@ -35,12 +35,23 @@
  *    its map cell should show, and the left 8 pixels are unmasked. Tiles that
  *    are not map tiles (windows, text) are left alone.
  *
+ * Widescreen (the runtime menu's "View mode": Native or 16:9, saved in
+ * config.ini [Game] ViewMode; headless --view native|16:9): a compositor
+ * (cyc_render.h) paints the columns left and right of the 256 from the same
+ * map, with the look each map value has on screen this frame, and records
+ * every margin tile for the HD presenter (nesrecomp patch 0026) so the pack's
+ * art covers the margins too. Screens that are not a map (battles, the title,
+ * menus, the casino tables) are pillarboxed. Characters outside the native 256
+ * are not drawn.
+ *
  * Presentation only: the game's memories are never written. Developer
  * option: --no-edge-repair.
  */
 #include "cyc_host_extras.h"
 #include "cyc_core.h"
 #include "cyc_mod.h"
+#include "cyc_render.h"
+#include "cyc_video.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -72,6 +83,8 @@ static struct {
     unsigned key;           /* what was learned belongs to this map */
     int search_wait;
     Look look[256][LOOKS];  /* per map value, most seen first after learn() */
+    int8_t cur[256];        /* the look each value shows on screen this frame, or -1 */
+    int view;               /* 0 native, 1 16:9 */
     uint8_t map_tile[256];  /* tile numbers that belong to the map */
     const uint8_t *ram, *wram, *ciram;
 } E = { .enabled = true };
@@ -212,6 +225,7 @@ static void map_tiles(void)
 
 static void learn(void)
 {
+    memset(E.cur, -1, sizeof E.cur);
     /* the middle of the screen, where the game has drawn everything right */
     for (int y = E.hy - 5; y <= E.hy + 5; y++)
         for (int x = E.hx - 6; x <= E.hx + 6; x++) {
@@ -229,7 +243,11 @@ static void learn(void)
                 j = LOOKS - 1;
                 memcpy(l[j].q, q, 4); l[j].pal = pal; l[j].conf = 1;
             }
-            while (j > 0 && l[j].conf > l[j - 1].conf) { Look t = l[j]; l[j] = l[j - 1]; l[j - 1] = t; j--; }
+            while (j > 0 && l[j].conf > l[j - 1].conf) {
+                Look t = l[j]; l[j] = l[j - 1]; l[j - 1] = t;
+                j--;
+            }
+            E.cur[c] = (int8_t)j;
         }
     map_tiles();
 }
@@ -315,6 +333,65 @@ static int bg_hook(void *ctx, int line, int x, uint16_t v, uint8_t tile)
     return d ? d[q] | pal << 8 : -1;
 }
 
+/* ---- widescreen ---- */
+
+/* The tile and palette of map tile column wx, row wy (2 per map cell). */
+static int map_quarter(int wx, int wy)
+{
+    int c = cell_key(floordiv(wx, 2), floordiv(wy, 2)), q = (wx & 1) | (wy & 1) << 1, pal;
+    const Look *l = E.look[c];
+    if (E.cur[c] >= 0 && l[E.cur[c]].conf > 0) return l[E.cur[c]].q[q] | l[E.cur[c]].pal << 8;
+    if (l[0].conf > 0) return l[0].q[q] | l[0].pal << 8;
+    const uint8_t *d = plain(c, &pal);
+    return d ? d[q] | pal << 8 : -1;
+}
+
+static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
+{
+    (void)user; (void)height;
+    if (!E.valid) return 0;                                /* not a map: pillarboxed */
+    /* the background's place at native column 0 of line 0 (maps don't split) */
+    int sx = cyc_render_line_scroll_x(120), sy = mod(cyc_render_line_scroll_y(120) - 120, 240);
+    int tx0 = sx >> 3, fx = sx & 7, ty0 = sy >> 3, fy = sy & 7;
+    int wx0 = mod(tx0 - E.dx, 64), wy0 = mod(ty0 - E.dy, 30);
+    int ex = 2 * E.hx + floordiv(-HERO_X, 8), ey = 2 * E.hy + floordiv(-HERO_Y, 8);
+    wx0 += 64 * floordiv(ex - wx0 + 32, 64);
+    wy0 += 30 * floordiv(ey - wy0 + 15, 30);
+    uint16_t table = cyc_render_line_bg_table(120);
+    uint32_t back = cyc_render_color(0);
+    for (int i = 0; i < width * 240; i++) out[i] = back;
+    int k0 = floordiv(fx - x0, 8) - 1, k1 = floordiv(width - x0 + fx, 8) + 1;
+    for (int j = 0; j <= 30; j++) {
+        int cy = 8 * j - fy;
+        for (int k = k0; k <= k1; k++) {
+            int cx = x0 - fx + 8 * k;
+            if (cx + 8 <= 0 || cx >= width || (cx >= x0 && cx + 8 <= x0 + 256)) continue;   /* only the margins */
+            int t = map_quarter(wx0 + k, wy0 + j);
+            if (t < 0) continue;
+            uint16_t pattern = (uint16_t)(table + (t & 0xFF) * 16);
+            cyc_render_tile(out, width, 240, cx, cy, pattern, t >> 8, 0, NULL, NULL);
+            cyc_render_hd_tile(cx, cy, pattern, t >> 8);
+        }
+    }
+    for (int y = 0; y < 240; y++) {
+        if (!(cyc_render_line_mask(y) & 0x08))                  /* background off on this line */
+            for (int x = 0; x < width; x++) out[y * width + x] = 0xFF000000u;
+        memcpy(out + y * width + x0, native + y * 256, 256 * sizeof(uint32_t));
+    }
+    return 1;
+}
+
+static int get_view_mode(void *ctx) { (void)ctx; return E.view; }
+
+static bool set_view_mode(void *ctx, int mode)
+{
+    (void)ctx;
+    if (mode != 0 && mode != 1) return false;
+    E.view = mode;
+    cyc_video_set_mode(mode ? NES_VIDEO_16_9 : NES_VIDEO_STOCK);
+    return true;
+}
+
 static void power_on(void *ctx)
 {
     (void)ctx;
@@ -323,18 +400,25 @@ static void power_on(void *ctx)
     E.valid = false; E.key = 0; E.search_wait = 0;
     cyc_ppu_set_bg_tile_hook(E.enabled ? bg_hook : NULL, NULL);
     cyc_ppu_set_show_left(false);
+    cyc_render_set_compositor(compose, NULL);
 }
 
 static void state_loaded(void *ctx) { power_on(ctx); }
 
 static const CycHostOption options[] = {
     { "--no-edge-repair", false, "draw the map's edge rows as the game left them (as on a TV without overscan)" },
+    { "--view", true, "native | 16:9: the picture's width (widescreen draws the map's sides)" },
 };
 
 static bool option(void *ctx, const char *name, const char *value)
 {
     (void)ctx; (void)value;
     if (!strcmp(name, "--no-edge-repair")) { E.enabled = false; cyc_ppu_set_bg_tile_hook(NULL, NULL); return true; }
+    if (!strcmp(name, "--view")) {
+        if (!strcmp(value, "native")) return set_view_mode(NULL, 0);
+        if (!strcmp(value, "16:9")) return set_view_mode(NULL, 1);
+        return false;
+    }
     return false;
 }
 
@@ -345,6 +429,9 @@ static const CycHostExtras extras = {
     .option_count = sizeof options / sizeof options[0],
     .option = option,
     .state_loaded = state_loaded,
+    .view_modes = 1u << 0 | 1u << 1,      /* RECOMP_RUNTIME_UI_VIEW_MODE_NATIVE | _FIXED_16_9 */
+    .get_view_mode = get_view_mode,
+    .set_view_mode = set_view_mode,
 };
 
 const CycHostExtras *cyc_host_extras(void) { return &extras; }
