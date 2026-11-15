@@ -91,6 +91,7 @@ static struct {
     int cam_px, cam_py;     /* map pixel at native (0, 0) last presented (compose) */
     unsigned cam_key; bool cam_ok, need_search;
     int recheck;            /* frames since the town offset was last checked against the others */
+    int valid_frames;       /* frames the map has been matched in a row */
     int step, step_count;   /* the walking step on screen, and frames since it changed */
     uint8_t map_tile[256];  /* tile numbers that belong to the map */
     const uint8_t *ram, *wram, *ciram;
@@ -264,12 +265,27 @@ static void learn(void)
         mx0 = floordiv(E.cam_px + 24, 16); mx1 = floordiv(E.cam_px + 232, 16) - 1;
         my0 = floordiv(E.cam_py + 24, 16); my1 = floordiv(E.cam_py + 216, 16) - 1;
     }
+    /* a screen still being drawn (entering a map: cleared, then filled in) is
+       mostly flat: its blank cells are not looks in the first frames then */
+    int flats = 0, cells = 0;
+    for (int y = my0; y <= my1; y++)
+        for (int x = mx0; x <= mx1; x++) {
+            int tx = 2 * x + E.dx, ty = mod(2 * y + E.dy, 30);
+            uint8_t a = nt_tile(tx, ty);
+            cells++;
+            flats += a == nt_tile(tx + 1, ty) && a == nt_tile(tx, ty + 1) && a == nt_tile(tx + 1, ty + 1);
+        }
+    bool flat_ok = E.valid_frames >= 30 || flats * 2 < cells;
     for (int y = my0; y <= my1; y++)
         for (int x = mx0; x <= mx1; x++) {
             int c = cell_key(x, y), tx = 2 * x + E.dx, ty = mod(2 * y + E.dy, 30);
             uint8_t q[4] = { nt_tile(tx, ty), nt_tile(tx + 1, ty), nt_tile(tx, ty + 1), nt_tile(tx + 1, ty + 1) };
             if (!E.map_tile[q[0]] || !E.map_tile[q[1]] || !E.map_tile[q[2]] || !E.map_tile[q[3]]) continue;  /* a window */
             uint8_t pal = nt_pal(tx, ty);
+            if (!flat_ok && q[0] == q[1] && q[1] == q[2] && q[2] == q[3]) {
+                int pp2; const uint8_t *d2 = plain(E.overworld || !(c >> 5) ? c : c & 31, &pp2);
+                if (!d2 || memcmp(d2, q, 4)) continue;
+            }
             Look *l = E.look[c];
             /* a flat cell (four equal tiles) that isn't the value's own metatile
                inside a window (its blank inside: window tiles further along the
@@ -367,6 +383,8 @@ static void frame_begin(void *ctx)
                 if (v > best) { best = v; bdx = dx; bdy = dy; }
             }
         if (best >= cur + cur / 4 + 4 && (bdx != E.dx || bdy != E.dy)) {
+            if (getenv("DW4_EDGES_DEBUG"))
+                fprintf(stderr, "dw4_edges: recheck %d,%d (%d) -> %d,%d (%d) hero %d,%d\n", E.dx, E.dy, cur, bdx, bdy, best, E.hx, E.hy);
             E.dx = bdx; E.dy = bdy;
             memset(E.look, 0, sizeof E.look); was = false;
         }
@@ -375,8 +393,9 @@ static void frame_begin(void *ctx)
         /* where the camera looked in the frame just drawn (compose follows it
            frame by frame; searched again when the map was matched anew) */
         if (!was || !E.cam_ok) { E.cam_ok = false; E.need_search = true; }
+        E.valid_frames = was ? E.valid_frames + 1 : 0;
         learn();
-    }
+    } else E.valid_frames = 0;
     if (E.valid != was && getenv("DW4_EDGES_DEBUG"))
         fprintf(stderr, "dw4_edges: %s %s offset %d,%d hero %d,%d\n", E.valid ? "on" : "off",
                 E.overworld ? worlds[E.world].name : "town/dungeon", E.dx, E.dy, E.hx, E.hy);
@@ -421,18 +440,13 @@ static int map_quarter(int wx, int wy)
     int c = cell_key(floordiv(wx, 2), floordiv(wy, 2)), q = (wx & 1) | (wy & 1) << 1, pal;
     const Look *l = E.look[c];
     if (E.cur[c] >= 0 && l[E.cur[c]].conf > 0) return l[E.cur[c]].q[q] | l[E.cur[c]].pal << 8;
+    if (l[0].conf > 0) return l[0].q[q] | l[0].pal << 8;   /* the look seen most */
+    /* never seen: inside a room (the hero's cell has room bits) the other
+       rooms are black; anything else as its metatile (rooms open) */
     if (!E.overworld) {
-        /* not on screen now. Inside a room (the hero's cell has room bits) the
-           game shows that room's cells and blacks out everything else */
         int hr = cell_key(E.hx, E.hy) >> 5;
-        if (hr) {
-            if ((c >> 5) != hr) return -1;
-            const uint8_t *d = plain(c & 31, &pal);
-            return d ? d[q] | pal << 8 : -1;
-        }
+        if (hr && (c >> 5) && (c >> 5) != hr) return -1;
     }
-    if (l[0].conf > 0) return l[0].q[q] | l[0].pal << 8;
-    /* never seen: a room's cells open (the hero outside every room) */
     const uint8_t *d = plain(E.overworld ? c : c & 31, &pal);
     return d ? d[q] | pal << 8 : -1;
 }
@@ -450,10 +464,18 @@ static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *w
     int tx0 = sx >> 3, fx = sx & 7, ty0 = sy >> 3, fy = sy & 7;
     int wx0 = mod(tx0 - E.dx, 64), wy0 = mod(ty0 - E.dy, 30);
     bool cam = !search && E.cam_ok && E.cam_key == E.key && !E.overworld;
-    int ex = cam ? floordiv(E.cam_px, 8) : 2 * E.hx + floordiv(-HERO_X, 8);
-    int ey = cam ? floordiv(E.cam_py, 8) : 2 * E.hy + floordiv(-HERO_Y, 8);
+    int hx = 2 * E.hx + floordiv(-HERO_X, 8), hy = 2 * E.hy + floordiv(-HERO_Y, 8);
+    int ex = cam ? floordiv(E.cam_px, 8) : hx;
+    int ey = cam ? floordiv(E.cam_py, 8) : hy;
+    int cwx = wx0 + 64 * floordiv(hx - wx0 + 32, 64), cwy = wy0 + 30 * floordiv(hy - wy0 + 15, 30);
     wx0 += 64 * floordiv(ex - wx0 + 32, 64);
     wy0 += 30 * floordiv(ey - wy0 + 15, 30);
+    /* following the camera, it has gone to another copy of the ring than the
+       one near the hero: one of them is wrong - ask the picture */
+    if (cam && (cwx != wx0 || cwy != wy0)) {
+        if (getenv("DW4_EDGES_DEBUG")) fprintf(stderr, "dw4_wide: camera %d,%d vs hero %d,%d: search\n", wx0, wy0, cwx, cwy);
+        search = true;
+    }
     if (search && !E.overworld) {
         int best = -1, bx = wx0, by = wy0;
         for (int n = -2; n <= 2; n++)
@@ -792,7 +814,10 @@ static void power_on(void *ctx)
     (void)ctx;
     decode_worlds();
     memset(E.look, 0, sizeof E.look);
+    /* (also after loading a state: nothing seen before it holds) */
     E.valid = false; E.key = 0; E.search_wait = 0; P.have = false;
+    E.cam_ok = false; E.need_search = false; E.recheck = 0;
+    memset(E.cur, -1, sizeof E.cur);
     cyc_ppu_set_bg_tile_hook(E.enabled ? bg_hook : NULL, NULL);
     cyc_ppu_set_show_left(false);
     cyc_render_set_compositor(compose, NULL);
