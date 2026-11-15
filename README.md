@@ -311,13 +311,18 @@ the pack's character art (`cyc_render_hd_sprite`, nesrecomp patch 0027).
 Where the camera is: the ring offset only gives the map position modulo
 64x30 tiles; the copy is picked near the hero, and when a map is matched anew
 (or a scene looks away from the hero) by which copy best explains the
-nametable that frame (cells of the border's value don't count). Debug:
+nametable that frame (cells of the border's value don't count). Every frame the formula is also checked on the native picture: where it
+disagrees with more than half of the map tiles (a battle can leave the map in
+the nametable), the frame is treated as no map (held, or pillarboxed). Debug:
 `DW4_WIDE_CHECK=1` prints per frame how many tiles of the native picture the
 same formula gets wrong, `DW4_WIDE_FULL=1` draws the native 256 from the map
 too, `DW4_WIDE_DEBUG=1` the camera search and each character's match.
 Rooms: inside a room (the hero's cell has room bits, key >> 5) the game shows
 only that room's cells and blacks out the rest, so cells not on screen follow
-that rule (outside every room, a room cell never seen is shown open); black looks are learned like any other (not inside windows: the
+that rule. Each room's state (open, or hidden: black or its roof, with that
+look) is taken from its cells on screen; cells not on screen show as their
+room does, a room not seen yet as hidden (the last hidden room's roof, else
+black: caves keep rooms dark until entered), the hero's own room open. black looks are learned like any other (not inside windows: the
 window's blank). Towns re-check their ring offset every 8 frames (room cells
 only count where they show, so an offset matched while the screen was half
 drawn could otherwise stay). Checked over all 279 areas by warp: 8 differ by

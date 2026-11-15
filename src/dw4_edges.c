@@ -92,6 +92,11 @@ static struct {
     unsigned cam_key; bool cam_ok, need_search;
     int recheck;            /* frames since the town offset was last checked against the others */
     int valid_frames;       /* frames the map has been matched in a row */
+    /* towns: how each room (cell key >> 5; 0 = not in a room) shows now, from
+       its cells on screen: open (its metatiles) or hidden (black, a roof:
+       that look). Cells never seen take their room's state */
+    struct { uint8_t state, q[4], pal; } room[8];
+    int room_last;          /* the room (1-7) whose state was seen last */
     int step, step_count;   /* the walking step on screen, and frames since it changed */
     uint8_t map_tile[256];  /* tile numbers that belong to the map */
     const uint8_t *ram, *wram, *ciram;
@@ -310,12 +315,28 @@ static void learn(void)
     /* the look each value shows most on screen now */
     static uint16_t cnt[256][LOOKS];
     memset(cnt, 0, sizeof cnt);
+    int open_n[8] = { 0 }, hid_n[8] = { 0 };
     for (int y = my0; y <= my1; y++)
         for (int x = mx0; x <= mx1; x++) {
             int c = cell_key(x, y), tx = 2 * x + E.dx, ty = mod(2 * y + E.dy, 30);
             uint8_t q[4] = { nt_tile(tx, ty), nt_tile(tx + 1, ty), nt_tile(tx, ty + 1), nt_tile(tx + 1, ty + 1) };
             for (int j = 0; j < LOOKS; j++)
                 if (E.look[c][j].conf > 0 && !memcmp(E.look[c][j].q, q, 4)) { cnt[c][j]++; break; }
+            if (E.overworld || x < 0 || y < 0 || x >= E.w || y >= E.h) continue;
+            if (!E.map_tile[q[0]] || !E.map_tile[q[1]] || !E.map_tile[q[2]] || !E.map_tile[q[3]]) continue;
+            if (q[0] == q[1] && q[1] == q[2] && q[2] == q[3] && in_window(tx, ty, q[0])) continue;
+            int r = c >> 5, pp; const uint8_t *d = plain(c & 31, &pp);
+            if (!d) continue;
+            if (!memcmp(d, q, 4)) open_n[r]++;
+            else {
+                hid_n[r]++;
+                memcpy(E.room[r].q, q, 4); E.room[r].pal = nt_pal(tx, ty);
+            }
+        }
+    for (int r = 0; r < 8; r++)
+        if (open_n[r] + hid_n[r] >= 2) {
+            E.room[r].state = hid_n[r] > open_n[r] ? 2 : 1;
+            if (r) E.room_last = r;
         }
     for (int c = 0; c < 256; c++) {
         int b = -1;
@@ -349,7 +370,7 @@ static void frame_begin(void *ctx)
     if (ow != E.overworld || key != E.key) {
         E.overworld = ow; E.key = key;
         E.cam_ok = false;
-        memset(E.look, 0, sizeof E.look); E.search_wait = 0; was = false;
+        memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; E.search_wait = 0; was = false;
     }
     map_tiles();
     int total, s = was ? score(E.dx, E.dy, &total) : 0;
@@ -368,7 +389,7 @@ static void frame_begin(void *ctx)
                 E.valid = search();
             }
         } else E.valid = search();
-        if (E.valid) memset(E.look, 0, sizeof E.look);
+        if (E.valid) { memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; }
         else E.search_wait = 8;
     }
     if (E.valid && was && !ow && ++E.recheck >= 8) {
@@ -386,7 +407,7 @@ static void frame_begin(void *ctx)
             if (getenv("DW4_EDGES_DEBUG"))
                 fprintf(stderr, "dw4_edges: recheck %d,%d (%d) -> %d,%d (%d) hero %d,%d\n", E.dx, E.dy, cur, bdx, bdy, best, E.hx, E.hy);
             E.dx = bdx; E.dy = bdy;
-            memset(E.look, 0, sizeof E.look); was = false;
+            memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; was = false;
         }
     }
     if (E.valid) {
@@ -440,13 +461,23 @@ static int map_quarter(int wx, int wy)
     int c = cell_key(floordiv(wx, 2), floordiv(wy, 2)), q = (wx & 1) | (wy & 1) << 1, pal;
     const Look *l = E.look[c];
     if (E.cur[c] >= 0 && l[E.cur[c]].conf > 0) return l[E.cur[c]].q[q] | l[E.cur[c]].pal << 8;
-    if (l[0].conf > 0) return l[0].q[q] | l[0].pal << 8;   /* the look seen most */
-    /* never seen: inside a room (the hero's cell has room bits) the other
-       rooms are black; anything else as its metatile (rooms open) */
     if (!E.overworld) {
-        int hr = cell_key(E.hx, E.hy) >> 5;
-        if (hr && (c >> 5) && (c >> 5) != hr) return -1;
+        /* not on screen now: as its room shows */
+        int r = c >> 5, st = E.room[r].state;
+        if (r && r == cell_key(E.hx, E.hy) >> 5) st = 1;   /* the hero's room is open */
+        if (!st && r) {
+            /* a room not seen yet: hidden, like the room seen last (its roof)
+               or black (caves are dark until a room is entered) */
+            if (!E.room_last || E.room[E.room_last].state != 2) return -1;
+            r = E.room_last; st = 2;
+        }
+        if (st == 2) return E.room[r].q[q] | E.room[r].pal << 8;
+        if (st == 1) {
+            const uint8_t *d = plain(c & 31, &pal);
+            if (d) return d[q] | pal << 8;
+        }
     }
+    if (l[0].conf > 0) return l[0].q[q] | l[0].pal << 8;   /* the look seen most */
     const uint8_t *d = plain(E.overworld ? c : c & 31, &pal);
     return d ? d[q] | pal << 8 : -1;
 }
@@ -657,6 +688,19 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
     int fx, fy, tx0, ty0, wx0, wy0;
     locate(E.need_search, &fx, &fy, &tx0, &ty0, &wx0, &wy0);
     E.need_search = false;
+    /* does the native picture show this map here? (a battle can leave the
+       map's tiles in the nametable while the screen shows the battle) */
+    {
+        int n = 0, bad = 0;
+        for (int j = 2; j < 28; j += 2)
+            for (int k = 2; k < 30; k += 2) {
+                int t = map_quarter(wx0 + k, wy0 + j);
+                uint8_t g = nt_tile(tx0 + k, mod(ty0 + j, 30));
+                if (t < 0 || !E.map_tile[g]) continue;
+                n++; bad += (t & 0xFF) != g;
+            }
+        if (n < 20 || bad * 2 > n) return hold(out, width, x0, native);
+    }
     uint16_t table = cyc_render_line_bg_table(120);
     P.n = 0;
     int k0 = floordiv(fx - x0, 8) - 1, k1 = floordiv(width - x0 + fx, 8) + 1;
@@ -813,7 +857,7 @@ static void power_on(void *ctx)
 {
     (void)ctx;
     decode_worlds();
-    memset(E.look, 0, sizeof E.look);
+    memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0;
     /* (also after loading a state: nothing seen before it holds) */
     E.valid = false; E.key = 0; E.search_wait = 0; P.have = false;
     E.cam_ok = false; E.need_search = false; E.recheck = 0;
