@@ -48,8 +48,8 @@ README.md is the full reference; this file is the working summary.
 - `NESRECOMP_HDPACK_DEBUG=1`: unmatched BG pixels draw magenta, unmatched sprites cyan.
 - Install a pack for the host: package it with `nesrecomp/tools/package_hdpack.py` into
   `MODS/packages/dragon-warrior-4.hd-text/<ver>/` and enable it in `MODS/state.toml`.
-- Save states (`--save-state F:path`, `--load-state`) are fingerprinted to the installed pack:
-  remake them after reinstalling. A state loaded at frame N continues at N+1.
+- Save states (`--save-state F:path`, `--load-state`) load across HD packs (patch 0025: a pack mismatch only
+  drops the HD picture record). A state loaded at frame N continues at N+1.
 - Battery saves: `--save-file COPY.sav` (it writes back — always use a copy; omit `--no-save`).
 - Always pass an empty `--mods-root` to capture runs (the host otherwise opens the user's catalog).
 - `tools/render_monsters_hd.py HOST MODS OUT ID...` forces battles to check monster art.

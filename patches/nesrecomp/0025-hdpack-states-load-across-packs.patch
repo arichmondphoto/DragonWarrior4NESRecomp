@@ -1,0 +1,69 @@
+diff --git a/runner/cyc/cyc_hdpack_state.inc b/runner/cyc/cyc_hdpack_state.inc
+index 0eda38e..4799e80 100644
+--- a/runner/cyc/cyc_hdpack_state.inc
++++ b/runner/cyc/cyc_hdpack_state.inc
+@@ -56,12 +56,19 @@ static bool valid_pixel(const HdRecordedPixel *p) {
+     for(unsigned j=0;j<3;j++)if(p->sp_pal[j]>63)return false;
+     return true;
+ }
++static bool same_pack(const HdStateHeader *h) {
++    return h->active==(unsigned)(hdpack_active()!=0) && h->scale==(unsigned)hdpack_scale() && !memcmp(h->fingerprint,fingerprint,sizeof fingerprint);
++}
+ static int validate_part(unsigned part,const uint8_t *buf,int len) {
+     size_t size=part==4?sizeof pipeline:sizeof(recorded)/4;
+     if(!buf || len<(int)sizeof(HdStateHeader))return 0;
+     HdStateHeader h;memcpy(&h,buf,sizeof h);
+     bool compact=h.version==3;
+-    if((h.version!=2 && !compact) || h.part!=part || h.active!=(unsigned)(hdpack_active()!=0) || h.scale!=(unsigned)hdpack_scale() || memcmp(h.fingerprint,fingerprint,sizeof fingerprint))return 0;
++    if((h.version!=2 && !compact) || h.part!=part)return 0;
++    /* Saved with the HD pack off, another pack or another version of it: the
++     * record only holds the picture being drawn, which the next frame
++     * redraws, so the state still loads (load_part drops the record). */
++    if(!same_pack(&h))return compact ? len==(int)sizeof h : len==(int)(sizeof h+size);
+     if(compact)return !h.active && len==(int)sizeof h;
+     if(len!=(int)(sizeof h+size))return 0;
+     if(part==4) {
+@@ -80,6 +87,6 @@ static int load_part(unsigned part,const uint8_t *buf,int len) {
+     size_t size=part==4?sizeof pipeline:sizeof(recorded)/4;
+     void *payload=part==4?(void *)&pipeline:(void *)&recorded[part*256*60];
+     HdStateHeader h;memcpy(&h,buf,sizeof h);
+-    if(h.version==3)memset(payload,0,size);else memcpy(payload,buf+sizeof h,size);
++    if(h.version==3 || !same_pack(&h))memset(payload,0,size);else memcpy(payload,buf+sizeof h,size);
+     presentation_valid=false;return 1;
+ }
+diff --git a/runner/cyc/tests/hdpack_state_selftest.c b/runner/cyc/tests/hdpack_state_selftest.c
+index cd23441..5eb5857 100644
+--- a/runner/cyc/tests/hdpack_state_selftest.c
++++ b/runner/cyc/tests/hdpack_state_selftest.c
+@@ -41,9 +41,14 @@ int main(void) {
+             if(field==3)bad.part=part+1;
+             if(field==4)bad.fingerprint[19]^=1;
+             memcpy(buf,&bad,sizeof bad);memset(data,1,size);memcpy(expected,data,size);
+-            assert(!load_part(part,buf,n));assert(!memcmp(expected,data,size));
++            if(field==0 || field==3) {          /* malformed: rejected, nothing touched */
++                assert(!load_part(part,buf,n));assert(!memcmp(expected,data,size));
++            } else {                            /* another pack or none: loads, record dropped */
++                assert(load_part(part,buf,n));memset(expected,0,size);assert(!memcmp(expected,data,size));
++            }
+         }
+-        memcpy(buf,&good,sizeof good);active=1;assert(!load_part(part,buf,n));active=0;
++        memcpy(buf,&good,sizeof good);active=1;memset(data,1,size);
++        assert(load_part(part,buf,n));memset(expected,0,size);assert(!memcmp(expected,data,size));active=0;
+         /* Both ends, word boundaries, and scattered native-byte changes must
+          * force the full representation, including bytes in struct padding. */
+         const size_t fixed[]={0,1,7,8,9,15,16};
+diff --git a/runner/cyc/tests/hdpack_state_selftest.c b/runner/cyc/tests/hdpack_state_selftest.c
+index 5eb5857..1bd0783 100644
+--- a/runner/cyc/tests/hdpack_state_selftest.c
++++ b/runner/cyc/tests/hdpack_state_selftest.c
+@@ -65,7 +65,9 @@ int main(void) {
+         active=1;memset(data,0,size);
+         int full=save_part(part,buf,1024*1024);assert(full==(int)(sizeof(HdStateHeader)+size));
+         HdStateHeader h;memcpy(&h,buf,sizeof h);assert(h.version==2 && h.active==1);
+-        assert(load_part(part,buf,full));active=0;assert(!load_part(part,buf,full));
++        assert(load_part(part,buf,full));active=0;
++        memset(data,1,size);assert(load_part(part,buf,full));                /* HD now off: loads, record dropped */
++        memset(expected,0,size);assert(!memcmp(data,expected,size));
+     }
+     printf("HD state exact_payload_roundtrips=210 full_bytes=%zu compact_bytes=%zu saved_bytes=%zu\n",full_total,compact_total,full_total-compact_total);
+     free(buf);free(again);free(expected);return 0;

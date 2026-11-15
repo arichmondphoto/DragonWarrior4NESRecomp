@@ -431,6 +431,11 @@ They are framework bugs, kept here until they can go upstream:
   same colour map as `rgb:` / `rgbd:` but on the art's brightness (each channel =
   L*G + O), for palettes that change the hue a lot (green grass drawn in the
   Endor arena's pale-yellow sand palette came out coral-pink with a per-channel map).
+- `0025-hdpack-states-load-across-packs.patch` — save states (quicksaves) load
+  whatever HD pack state they were made with (HD off, an older pack version):
+  the HD part of a state only holds the picture being drawn, so on a mismatch
+  it is dropped and the next frame redraws it. Before, every new pack version
+  made older quicksaves refuse to load.
 - `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
   same per-channel colour map as `rgb:` (patch 0011), applied while drawing
   instead of at load, so the entry shares the untouched decoded block. Used
