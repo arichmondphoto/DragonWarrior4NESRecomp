@@ -801,6 +801,8 @@ static int uniform(uint32_t *out, int width, int x0, const uint32_t *native)
 static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
 {
     (void)user; (void)height;
+    /* nothing read from the game yet (the first frames; edge repair off) */
+    if (!E.enabled || !E.ram || !E.wram || !E.ciram) return 0;
     if (!E.valid) {                                        /* not a map: one tile everywhere, the last one fading, or pillarboxed */
         if (P.have) { int h = hold(out, width, x0, native); if (h) return h; }
         return uniform(out, width, x0, native);
