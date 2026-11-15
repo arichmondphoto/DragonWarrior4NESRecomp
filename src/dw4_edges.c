@@ -100,10 +100,13 @@ static struct {
     /* towns: the border around the map is drawn in a pattern (forests of two
        kinds, a tree's trunk), so its looks are kept by position (x, y mod 16) */
     struct { uint8_t q[4], pal, ok; } border[16][16];
+    int bpx, bpy;           /* the border pattern's period (smallest consistent with what was seen) */
+    bool border_new;        /* the border table changed since the period was worked out */
     /* towns: each cell as it looked when last on screen, with its room's state
        then (some maps draw cells of one value differently by place) */
     struct { uint8_t q[4], pal, st; } cellmem[128 * 128];
     uint8_t multi[256];     /* values showing more than one look on screen now */
+    uint8_t ram3e;          /* the hero's step counter at the start of the frame */
     int step, step_count;   /* the walking step on screen, and frames since it changed */
     uint8_t map_tile[256];  /* tile numbers that belong to the map */
     const uint8_t *ram, *wram, *ciram;
@@ -342,7 +345,9 @@ static void learn(void)
             if (x < 0 || y < 0 || x >= E.w || y >= E.h) {
                 if (E.valid_frames >= 30 || !(q[0] == q[1] && q[1] == q[2] && q[2] == q[3])) {
                     __typeof__(E.border[0][0]) *b = &E.border[x & 15][y & 15];
-                    memcpy(b->q, q, 4); b->pal = nt_pal(tx, ty); b->ok = 1;
+                    uint8_t bp = nt_pal(tx, ty);
+                    if (!b->ok || memcmp(b->q, q, 4) || b->pal != bp) E.border_new = true;
+                    memcpy(b->q, q, 4); b->pal = bp; b->ok = 1;
                 }
                 continue;
             }
@@ -371,6 +376,29 @@ static void learn(void)
         E.cur[c] = (int8_t)b;
         E.multi[c] = kinds > 1;
     }
+    if (!E.overworld && E.border_new) {
+        E.border_new = false;
+        static const int per[5] = { 1, 2, 4, 8, 16 };
+        E.bpx = E.bpy = 16;
+        int bestn = 16 * 16 + 1;
+        for (int a = 0; a < 5; a++)
+            for (int b = 0; b < 5; b++) {
+                int px = per[a], py = per[b];
+                if (px * py >= bestn) continue;
+                bool ok = true;
+                for (int i = 0; i < 256 && ok; i++) {
+                    int x = i & 15, y = i >> 4;
+                    if (!E.border[x][y].ok) continue;
+                    int rx = x % px, ry = y % py;
+                    for (int j = 0; j < 256 && ok; j++) {
+                        int x2 = j & 15, y2 = j >> 4;
+                        if (j <= i || !E.border[x2][y2].ok || x2 % px != rx || y2 % py != ry) continue;
+                        ok = !memcmp(E.border[x][y].q, E.border[x2][y2].q, 4) && E.border[x][y].pal == E.border[x2][y2].pal;
+                    }
+                }
+                if (ok) { bestn = px * py; E.bpx = px; E.bpy = py; }
+            }
+    }
     (void)cellxy;
     map_tiles();
 }
@@ -384,6 +412,7 @@ static void frame_begin(void *ctx)
     /* the characters as the frame about to be drawn shows them: the game
        builds its sprites from the object table one frame behind */
     if (E.wram && n >= 0x1600) memcpy(objsnap + 0xF60, E.wram + 0xF60, 0x1600 - 0xF60);
+    if (E.ram) E.ram3e = E.ram[0x3E];
     E.ciram = cyc_ppu_ciram(&n);
     bool was = E.valid;
     E.valid = false;
@@ -508,8 +537,14 @@ static int map_quarter(int wx, int wy)
 {
     int x = floordiv(wx, 2), y = floordiv(wy, 2);
     int c = cell_key(x, y), q = (wx & 1) | (wy & 1) << 1, pal;
-    if (!E.overworld && (x < 0 || y < 0 || x >= E.w || y >= E.h) && E.border[x & 15][y & 15].ok)
-        return E.border[x & 15][y & 15].q[q] | E.border[x & 15][y & 15].pal << 8;
+    if (!E.overworld && (x < 0 || y < 0 || x >= E.w || y >= E.h)) {
+        if (E.border[x & 15][y & 15].ok) return E.border[x & 15][y & 15].q[q] | E.border[x & 15][y & 15].pal << 8;
+        /* a place never seen: the pattern's same place seen elsewhere */
+        int px = E.bpx ? E.bpx : 16, py = E.bpy ? E.bpy : 16;
+        for (int by = (y & 15) % py; by < 16; by += py)
+            for (int bx = (x & 15) % px; bx < 16; bx += px)
+                if (E.border[bx][by].ok) return E.border[bx][by].q[q] | E.border[bx][by].pal << 8;
+    }
     const Look *l = E.look[c];
     /* the cell as last seen: where its value shows several looks on screen
        now (looks by place), or its room still shows as it did then */
@@ -880,9 +915,12 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
     for (int i = 0; i < OBJS; i++) {
         const uint8_t *w = objsnap;
         int X = w[0xF60 + i], Y = w[0xF80 + i], PX = w[0xFA0 + i], PY = w[0xFC0 + i];
-        if (w[0x1020 + i] & 0x80) continue;                  /* hidden */
+        /* the game's own rule (bank $3E $E0CF/$E16F): drawn when $7020 has
+           neither bit 7 nor bit 4, and the room it stands in ($7140 bits 5-7)
+           is the hero's ($46): people in a roofed or dark room stay hidden */
+        if (w[0x1020 + i] & 0x90) continue;
+        if ((w[0x1140 + i] & 0xE0) != (E.ram[0x46] & 0xE0)) continue;
         if (E.overworld) {
-            if (w[0x1020 + i] & 0x40) continue;              /* left over from the town: the game doesn't draw it here */
             /* world cells (a byte each way): the copy nearest the hero */
             int dx = (int8_t)(uint8_t)(X - E.hx), dy = (int8_t)(uint8_t)(Y - E.hy);
             int pdx = (int8_t)(uint8_t)(PX - X), pdy = (int8_t)(uint8_t)(PY - Y);
@@ -922,8 +960,23 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
                 int ddx = o[3] - nx, ddy = o[0] + 1 - cy;
                 if (abs(ddx) + abs(ddy) < bd) { bd = abs(ddx) + abs(ddy); bx = ddx; by = ddy; }
             }
-            fprintf(stderr, "dw4_wide: dpos %d %d %d moving %d X %02X PX %02X Y %02X PY %02X off %02X %02X\n", i, bx, by, rem,
-                    X, PX, Y, PY, w[0x1100 + i], w[0x1120 + i]);
+            fprintf(stderr, "dw4_wide: dpos %d %d %d moving %d X %02X PX %02X Y %02X PY %02X off %02X %02X 3E %02X/%02X slot %02X 7000 %02X 7040 %02X\n", i, bx, by, rem,
+                    X, PX, Y, PY, w[0x1100 + i], w[0x1120 + i], E.ram3e, E.ram[0x3E], w[0xFE0 + i], w[0x1000 + i], w[0x1040 + i]);
+        }
+        /* a character the game also draws (part of it on its screen): take its
+           exact place from the game's sprites, so the two halves meet (a lag
+           frame can leave the game's sprite a pixel behind the table) */
+        if (shown >= 0) {
+            const uint8_t *fs = frame_sprites(i, shown);
+            int bd = 99, bx = 0, by = 0;
+            for (int k = 0; k < 4; k++)
+                for (int s2 = 0; s2 < 64; s2++) {
+                    const uint8_t *o = oam + 4 * s2;
+                    if (o[0] >= 0xEF || o[1] != fs[2 * k] || (o[2] & 0xC3) != (fs[2 * k + 1] & 0xC3)) continue;
+                    int ddx = o[3] - (nx + 8 * (k & 1)), ddy = o[0] + 1 - (cy + 8 * (k >> 1));
+                    if (abs(ddx) <= 2 && abs(ddy) <= 2 && abs(ddx) + abs(ddy) < bd) { bd = abs(ddx) + abs(ddy); bx = ddx; by = ddy; }
+                }
+            if (bd < 99) { cx += bx; cy += by; nx += bx; }
         }
         /* both steps alike (the frames share their sprites): no say on the step */
         bool step_known = shown >= 0 && hits[shown ^ 1] < hits[shown];

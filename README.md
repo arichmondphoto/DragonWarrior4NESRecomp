@@ -297,7 +297,10 @@ Characters in the sides: the game only makes sprites for the native 256, so
 the compositor draws the map's other people itself from the object table (WRAM
 `$6F60` cell X, `$6F80` Y, `$6FA0`/`$6FC0` the cell they come from, `$6FE0`
 low nibble their character slot, `$7000` low 2 bits their facing (0 up,
-1 right, 2 down, 3 left), `$7020` bit 7 hidden; frames at `$7200 + slot*64`;
+1 right, 2 down, 3 left); drawn by the game's own rule (bank $3E $E0CF and
+$E16F): `$7020` has neither bit 7 nor bit 4 and the room the character stands
+in (`$7140` bits 5-7) is the hero's (`$46`), so people in a roofed or dark
+room stay hidden; frames at `$7200 + slot*64`;
 a walking character's place is the left/upper of its two cells plus its
 own progress in 1/16 pixels, `$7100` (X) and `$7120` (Y), read from the
 table as it stood at the start of the frame (the game builds its sprites one
@@ -305,8 +308,13 @@ frame behind);
 sprites sit 4 pixels above their cell in towns, in it on the overworld). The
 walking step follows the characters on screen (the frame whose sprites match
 best). On the overworld the cells are world cells (a byte each way, the copy
-nearest the hero) and objects with `$7020` bit 6 are town leftovers the game
-doesn't draw there. The game leaves out characters only partly inside its
+nearest the hero). Characters the game also draws (part of them on its screen)
+take their exact place from its sprites, so the two halves meet. Vehicles are
+characters too (types $09 horse, $0A wagon, $0B ship, $0C/$0D balloon): tested
+by pointing a town's people at those types (as `tools/capture_types.py` does)
+and by placing loaded characters on the overworld in a save state. Where the
+map's surroundings were never on screen, the border's pattern period (worked
+out from what was seen) fills them in. The game leaves out characters only partly inside its
 picture; in 16:9 those are drawn too. With the HD pack they are drawn with
 the pack's character art (`cyc_render_hd_sprite`, nesrecomp patch 0027).
 
