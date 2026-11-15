@@ -181,7 +181,9 @@ the waterfall, one piece just over the threshold).
   the overworld, real facing (`$7000`), all areas checked by warp (README).
   Not checked (no save that far): the wagon and a parked ship or balloon on
   the overworld in 16:9. Done: fades, the battle flash and spiral, damage
-  flash in the sides (README). Optional phase 4: wider title and battle art. 21:9 and Fit would exceed the 8192-pixel HD picture limit at 10x.
+  flash in the sides; rooms and interiors; HD art in the sides of every area
+  (README). Left: flat fields and tiny rooms are pillarboxed (nothing to
+  match on). Optional phase 4: wider title and battle art. 21:9 and Fit would exceed the 8192-pixel HD picture limit at 10x.
 
 ## Done
 

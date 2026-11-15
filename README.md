@@ -321,7 +321,9 @@ only count where they show, so an offset matched while the screen was half
 drawn could otherwise stay). Checked over all 279 areas by warp: 8 differ by
 more than 2% (windows, tiles events change); 28 are not matched (small rooms
 with the outside black, flat fields, the balloon's sky: pillarboxed);
-Gottside and the Underworld by walking out of their towns.
+Gottside and the Underworld by walking out of their towns. With the HD pack
+(`NESRECOMP_HDPACK_DEBUG=1`, every area): no side tile without HD art outside
+black-on-black.
 
 ## Shared ground between map tiles
 
