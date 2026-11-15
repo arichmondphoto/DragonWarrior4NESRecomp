@@ -87,7 +87,8 @@ static struct {
     Look look[256][LOOKS];  /* per map value, most seen first after learn() */
     int8_t cur[256];        /* the look each value shows on screen this frame, or -1 */
     int view;               /* 0 native, 1 16:9 */
-    int8_t face[32];        /* each map object's facing (0 up 1 right 2 down 3 left) last seen */
+    int cam_px, cam_py;     /* map pixel at native (0, 0) last presented (compose) */
+    unsigned cam_key; bool cam_ok, need_search;
     int step, step_count;   /* the walking step on screen, and frames since it changed */
     uint8_t map_tile[256];  /* tile numbers that belong to the map */
     const uint8_t *ram, *wram, *ciram;
@@ -182,7 +183,11 @@ static int score(int dx, int dy, int *total)
     for (int y = E.hy - 5; y <= E.hy + 5; y++)
         for (int x = E.hx - 6; x <= E.hx + 6; x++) {
             if (!E.overworld && (x < 0 || y < 0 || x >= E.w || y >= E.h)) continue;
-            const uint8_t *d = plain(cell_key(x, y), &pal);
+            int key = cell_key(x, y);
+            /* a room or roof cell (upper bits) shows its base metatile when the
+               room is open: it counts when it does (inside buildings every cell is one) */
+            bool room = !E.overworld && (key >> 5);
+            const uint8_t *d = plain(room ? key & 31 : key, &pal);
             /* only cells that say something: a metatile of four equal tiles
                (blank, flat colour) matches any blank screen */
             if (!d || (d[0] == d[1] && d[1] == d[2] && d[2] == d[3])) continue;
@@ -190,8 +195,10 @@ static int score(int dx, int dy, int *total)
             uint8_t a = nt_tile(tx, ty), b = nt_tile(tx + 1, ty), c = nt_tile(tx, ty + 1), e = nt_tile(tx + 1, ty + 1);
             /* a window or text over the cell says nothing about the map */
             if (!E.map_tile[a] || !E.map_tile[b] || !E.map_tile[c] || !E.map_tile[e]) continue;
+            bool hit = a == d[0] && b == d[1] && c == d[2] && e == d[3];
+            if (room && !hit) continue;
             t++;
-            n += a == d[0] && b == d[1] && c == d[2] && e == d[3];
+            n += hit;
         }
     *total = t;
     return n;
@@ -227,17 +234,30 @@ static void map_tiles(void)
                 for (int k = 0; k < 4; k++) E.map_tile[E.look[i][j].q[k]] = 1;
 }
 
+static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *wx0_, int *wy0_);
+
 static void learn(void)
 {
     memset(E.cur, -1, sizeof E.cur);
-    /* the middle of the screen, where the game has drawn everything right */
-    for (int y = E.hy - 5; y <= E.hy + 5; y++)
-        for (int x = E.hx - 6; x <= E.hx + 6; x++) {
+    /* the middle of the screen, where the game has drawn everything right:
+       around the camera when compose found it (scenes look away from the
+       hero), else around the hero */
+    int mx0 = E.hx - 6, mx1 = E.hx + 6, my0 = E.hy - 5, my1 = E.hy + 5;
+    if (E.cam_ok && E.cam_key == E.key && !E.overworld) {
+        mx0 = floordiv(E.cam_px + 24, 16); mx1 = floordiv(E.cam_px + 232, 16) - 1;
+        my0 = floordiv(E.cam_py + 24, 16); my1 = floordiv(E.cam_py + 216, 16) - 1;
+    }
+    for (int y = my0; y <= my1; y++)
+        for (int x = mx0; x <= mx1; x++) {
             int c = cell_key(x, y), tx = 2 * x + E.dx, ty = mod(2 * y + E.dy, 30);
             uint8_t q[4] = { nt_tile(tx, ty), nt_tile(tx + 1, ty), nt_tile(tx, ty + 1), nt_tile(tx + 1, ty + 1) };
             if (!E.map_tile[q[0]] || !E.map_tile[q[1]] || !E.map_tile[q[2]] || !E.map_tile[q[3]]) continue;  /* a window */
             uint8_t pal = nt_pal(tx, ty);
             Look *l = E.look[c];
+            /* a flat cell (four equal tiles) that isn't the value's own metatile:
+               a window's blank inside, a dark scene - not a look of the map */
+            int pp; const uint8_t *d = plain(E.overworld || !(c >> 5) ? c : c & 31, &pp);
+            if (q[0] == q[1] && q[1] == q[2] && q[2] == q[3] && d && memcmp(d, q, 4)) continue;
             /* every look a value shows (animation frames, rooms shown and
                hidden), counted; the least seen one makes room for a new one */
             int j = 0;
@@ -251,8 +271,22 @@ static void learn(void)
                 Look t = l[j]; l[j] = l[j - 1]; l[j - 1] = t;
                 j--;
             }
-            E.cur[c] = (int8_t)j;
         }
+    /* the look each value shows most on screen now */
+    static uint16_t cnt[256][LOOKS];
+    memset(cnt, 0, sizeof cnt);
+    for (int y = my0; y <= my1; y++)
+        for (int x = mx0; x <= mx1; x++) {
+            int c = cell_key(x, y), tx = 2 * x + E.dx, ty = mod(2 * y + E.dy, 30);
+            uint8_t q[4] = { nt_tile(tx, ty), nt_tile(tx + 1, ty), nt_tile(tx, ty + 1), nt_tile(tx + 1, ty + 1) };
+            for (int j = 0; j < LOOKS; j++)
+                if (E.look[c][j].conf > 0 && !memcmp(E.look[c][j].q, q, 4)) { cnt[c][j]++; break; }
+        }
+    for (int c = 0; c < 256; c++) {
+        int b = -1;
+        for (int j = 0; j < LOOKS; j++) if (cnt[c][j] && (b < 0 || cnt[c][j] > cnt[c][b])) b = j;
+        E.cur[c] = (int8_t)b;
+    }
     map_tiles();
 }
 
@@ -279,7 +313,7 @@ static void frame_begin(void *ctx)
     }
     if (ow != E.overworld || key != E.key) {
         E.overworld = ow; E.key = key;
-        memset(E.face, 2, sizeof E.face);
+        E.cam_ok = false;
         memset(E.look, 0, sizeof E.look); E.search_wait = 0; was = false;
     }
     map_tiles();
@@ -302,7 +336,12 @@ static void frame_begin(void *ctx)
         if (E.valid) memset(E.look, 0, sizeof E.look);
         else E.search_wait = 8;
     }
-    if (E.valid) learn();
+    if (E.valid) {
+        /* where the camera looked in the frame just drawn (compose follows it
+           frame by frame; searched again when the map was matched anew) */
+        if (!was || !E.cam_ok) { E.cam_ok = false; E.need_search = true; }
+        learn();
+    }
     if (E.valid != was && getenv("DW4_EDGES_DEBUG"))
         fprintf(stderr, "dw4_edges: %s %s offset %d,%d hero %d,%d\n", E.valid ? "on" : "off",
                 E.overworld ? worlds[E.world].name : "town/dungeon", E.dx, E.dy, E.hx, E.hy);
@@ -321,6 +360,7 @@ static int bg_hook(void *ctx, int line, int x, uint16_t v, uint8_t tile)
     /* the map tile column/row this nametable tile stands for, nearest to the hero */
     int wx = mod(tx - E.dx, 64), wy = mod(ty - E.dy, 30);
     int ex = 2 * E.hx + floordiv(x - HERO_X, 8), ey = 2 * E.hy + floordiv(line - HERO_Y, 8);
+    if (E.cam_ok && E.cam_key == E.key && !E.overworld) { ex = floordiv(E.cam_px + x, 8); ey = floordiv(E.cam_py + line, 8); }
     wx += 64 * floordiv(ex - wx + 32, 64);
     wy += 30 * floordiv(ey - wy + 15, 30);
     int c = cell_key(floordiv(wx, 2), floordiv(wy, 2)), q = (wx & 1) | (wy & 1) << 1, pal;
@@ -352,18 +392,70 @@ static int map_quarter(int wx, int wy)
 }
 
 static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy);
+/* Where the camera is: the map tile column/row at native (0, 0) of the frame
+ * just drawn (wx0, wy0, and the fine scroll fx, fy), from that frame's scroll
+ * and the ring offset. The ring only says it modulo 64 x 30 tiles: the copy
+ * is the one near the camera found before, else (search) the one whose map
+ * best explains the picture (scenes look away from the hero), else near the
+ * hero (the overworld's camera always follows the hero). */
+static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *wx0_, int *wy0_)
+{
+    int sx = cyc_render_line_scroll_x(120), sy = mod(cyc_render_line_scroll_y(120) - 120, 240);
+    int tx0 = sx >> 3, fx = sx & 7, ty0 = sy >> 3, fy = sy & 7;
+    int wx0 = mod(tx0 - E.dx, 64), wy0 = mod(ty0 - E.dy, 30);
+    bool cam = !search && E.cam_ok && E.cam_key == E.key && !E.overworld;
+    int ex = cam ? floordiv(E.cam_px, 8) : 2 * E.hx + floordiv(-HERO_X, 8);
+    int ey = cam ? floordiv(E.cam_py, 8) : 2 * E.hy + floordiv(-HERO_Y, 8);
+    wx0 += 64 * floordiv(ex - wx0 + 32, 64);
+    wy0 += 30 * floordiv(ey - wy0 + 15, 30);
+    if (search && !E.overworld) {
+        int best = -1, bx = wx0, by = wy0;
+        for (int n = -2; n <= 2; n++)
+            for (int m = -3; m <= 3; m++) {
+                int cx_ = wx0 + 64 * n, cy_ = wy0 + 30 * m, v = 0;
+                if (cx_ + 32 < -4 || cx_ > 2 * E.w + 4 || cy_ + 30 < -4 || cy_ > 2 * E.h + 4) continue;
+                for (int j = 3; j < 27; j += 2)
+                    for (int k = 3; k < 29; k += 2) {
+                        int x = cx_ + k, y = cy_ + j;
+                        int c = cell_key(floordiv(x, 2), floordiv(y, 2)), q = (x & 1) | (y & 1) << 1, pal;
+                        uint8_t g = nt_tile(tx0 + k, mod(ty0 + j, 30));
+                        if (!E.map_tile[g]) continue;
+                        /* the border's value (all around the map, often inside
+                           too) says nothing about which copy this is */
+                        if (c == E.ram[0x520]) continue;
+                        /* any look of the cell, or its (base) metatile */
+                        bool hit = false;
+                        for (int L = 0; L < LOOKS && !hit; L++) hit = E.look[c][L].conf > 0 && E.look[c][L].q[q] == g;
+                        const uint8_t *d = plain(E.overworld || !(c >> 5) ? c : c & 31, &pal);
+                        if (!hit && d) hit = d[q] == g;
+                        v += hit ? 2 : -1;
+                    }
+                v = v * 16 - (abs(n) + abs(m));                   /* ties: nearest the hero */
+                if (v > best) { best = v; bx = cx_; by = cy_; }
+            }
+        if (getenv("DW4_WIDE_DEBUG"))
+            fprintf(stderr, "dw4_wide: search %d,%d -> %d,%d (score %d) hero %d,%d off %d,%d\n", wx0, wy0, bx, by, best, E.hx, E.hy, E.dx, E.dy);
+        if (best > 0) { wx0 = bx; wy0 = by; }               /* else nothing to go by: near the hero */
+    }
+    E.cam_px = 8 * wx0 + fx; E.cam_py = 8 * wy0 + fy; E.cam_key = E.key; E.cam_ok = true;
+    *fx_ = fx; *fy_ = fy; *tx0_ = tx0; *ty0_ = ty0; *wx0_ = wx0; *wy0_ = wy0;
+}
+
+static bool check_wide;
 
 static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
 {
     (void)user; (void)height;
     if (!E.valid) return 0;                                /* not a map: pillarboxed */
-    /* the background's place at native column 0 of line 0 (maps don't split) */
-    int sx = cyc_render_line_scroll_x(120), sy = mod(cyc_render_line_scroll_y(120) - 120, 240);
-    int tx0 = sx >> 3, fx = sx & 7, ty0 = sy >> 3, fy = sy & 7;
-    int wx0 = mod(tx0 - E.dx, 64), wy0 = mod(ty0 - E.dy, 30);
-    int ex = 2 * E.hx + floordiv(-HERO_X, 8), ey = 2 * E.hy + floordiv(-HERO_Y, 8);
-    wx0 += 64 * floordiv(ex - wx0 + 32, 64);
-    wy0 += 30 * floordiv(ey - wy0 + 15, 30);
+    static int ck = -1;
+    if (ck < 0) ck = getenv("DW4_WIDE_CHECK") != NULL;
+    check_wide = ck;
+    static int fl = -1;
+    if (fl < 0) fl = getenv("DW4_WIDE_FULL") != NULL;     /* debug: draw the native 256 from the map too */
+    bool full = fl;
+    int fx, fy, tx0, ty0, wx0, wy0;
+    locate(E.need_search, &fx, &fy, &tx0, &ty0, &wx0, &wy0);
+    E.need_search = false;
     uint16_t table = cyc_render_line_bg_table(120);
     uint32_t back = cyc_render_color(0);
     for (int i = 0; i < width * 240; i++) out[i] = back;
@@ -372,7 +464,7 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
         int cy = 8 * j - fy;
         for (int k = k0; k <= k1; k++) {
             int cx = x0 - fx + 8 * k;
-            if (cx + 8 <= 0 || cx >= width || (cx >= x0 && cx + 8 <= x0 + 256)) continue;   /* only the margins */
+            if (cx + 8 <= 0 || cx >= width || (!full && cx >= x0 && cx + 8 <= x0 + 256)) continue;   /* only the margins */
             int t = map_quarter(wx0 + k, wy0 + j);
             if (t < 0) continue;
             uint16_t pattern = (uint16_t)(table + (t & 0xFF) * 16);
@@ -383,7 +475,20 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
     for (int y = 0; y < 240; y++) {
         if (!(cyc_render_line_mask(y) & 0x08))                  /* background off on this line */
             for (int x = 0; x < width; x++) out[y * width + x] = 0xFF000000u;
-        memcpy(out + y * width + x0, native + y * 256, 256 * sizeof(uint32_t));
+        if (!full) memcpy(out + y * width + x0, native + y * 256, 256 * sizeof(uint32_t));
+    }
+    if (check_wide) {
+        /* the same formula over the native picture: how often it disagrees
+           with what the game drew (map tiles only, not the edge rows) */
+        int n = 0, bad = 0;
+        for (int j = 2; j < 28; j++)
+            for (int k = 2; k < 30; k++) {
+                int t = map_quarter(wx0 + k, wy0 + j);
+                uint8_t g = nt_tile(tx0 + k, mod(ty0 + j, 30));
+                if (t < 0 || !E.map_tile[g]) continue;
+                n++; bad += (t & 0xFF) != g;
+            }
+        fprintf(stderr, "dw4_wide: check %s %d/%d differ\n", E.overworld ? worlds[E.world].name : "town", bad, n);
     }
     /* canvas pixel of map cell (0, 0)'s top-left: map tile column 0 is k = -wx0 */
     draw_characters(out, width, x0, x0 - fx - 8 * wx0 + CHAR_DX, -fy - 8 * wy0 + CHAR_DY);
@@ -403,23 +508,33 @@ static const uint8_t *frame_sprites(int i, int f) { return E.wram + 0x1200 + 64 
 
 static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
 {
-    if (E.overworld) return;      /* the overworld's objects use world cells (> $80): only towns and dungeons */
     static int debug = -1;
     if (debug < 0) debug = getenv("DW4_WIDE_DEBUG") != NULL;
     const uint8_t *oam = cyc_render_oam();
     uint16_t table = cyc_render_line_sprite_table(120);
     int steps[2] = { 0, 0 };
+    /* the overworld's characters stand 4 pixels lower in their cells than in towns */
+    if (E.overworld) oy += 4;
     for (int i = 0; i < OBJS; i++) {
         const uint8_t *w = E.wram;
         int X = w[0xF60 + i], Y = w[0xF80 + i], PX = w[0xFA0 + i], PY = w[0xFC0 + i];
-        if (X >= 0x80 || Y >= 0x80 || (w[0x1020 + i] & 0x80)) continue;
+        if (w[0x1020 + i] & 0x80) continue;                  /* hidden */
+        if (E.overworld) {
+            if (w[0x1020 + i] & 0x40) continue;              /* left over from the town: the game doesn't draw it here */
+            /* world cells (a byte each way): the copy nearest the hero */
+            int dx = (int8_t)(uint8_t)(X - E.hx), dy = (int8_t)(uint8_t)(Y - E.hy);
+            int pdx = (int8_t)(uint8_t)(PX - X), pdy = (int8_t)(uint8_t)(PY - Y);
+            X = E.hx + dx; Y = E.hy + dy;
+            /* the previous cell only counts when it is next door (it also holds where the party came out) */
+            if (abs(pdx) + abs(pdy) == 1) { PX = X + pdx; PY = Y + pdy; } else { PX = X; PY = Y; }
+        } else if (X >= 0x80 || Y >= 0x80) continue;        /* not on the map */
         int rem = (X != PX || Y != PY) ? (E.ram[0x3E] + 1 > 16 ? 16 : E.ram[0x3E] + 1) : 0;
-        if (rem) E.face[i] = (int8_t)(X > PX ? 1 : X < PX ? 3 : Y > PY ? 2 : 0);
+        int face = w[0x1000 + i] & 3;                      /* 0 up 1 right 2 down 3 left */
         /* top-left of the character in canvas pixels (CHAR_DX/DY: where the game puts sprites in a cell) */
         int cx = ox + 16 * X + rem * (PX - X), cy = oy + 16 * Y + rem * (PY - Y);
         /* what the game drew: the frame whose four sprites are in OAM at this place */
-        int nx = cx - x0, shown = -1;
-        for (int f = 0; f < 8 && shown < 0; f++) {
+        int nx = cx - x0, shown = -1, hits[8];
+        for (int f = 0; f < 8; f++) {
             const uint8_t *fs = frame_sprites(i, f);
             int hit = 0;
             for (int k = 0; k < 4; k++)
@@ -429,15 +544,20 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
                     int sx = o[3], sy = o[0] + 1;
                     if (abs(sx - (nx + 8 * (k & 1))) <= 2 && abs(sy - (cy + 8 * (k >> 1))) <= 2) { hit++; break; }
                 }
-            if (hit >= 2) shown = f;
+            hits[f] = hit;
+            if (hit >= 2 && (shown < 0 || hit > hits[shown])) shown = f;
         }
+        /* both steps alike (the frames share their sprites): no say on the step */
+        bool step_known = shown >= 0 && hits[shown ^ 1] < hits[shown];
         if (debug && nx >= 8 && nx + 16 <= 248 && cy >= 16 && cy + 16 <= 224)
             fprintf(stderr, "dw4_wide: obj %d %s face %d/%d step %d/%d moving %d at %d %d\n", i, shown >= 0 ? "found" : "MISSING",
-                    E.face[i], shown >= 0 ? shown >> 1 : -1, E.step, shown >= 0 ? shown & 1 : -1, rem != 0, nx, cy);
-        if (shown >= 0) { E.face[i] = (int8_t)(shown >> 1); steps[shown & 1]++; }
+                    face, shown >= 0 ? shown >> 1 : -1, E.step, shown >= 0 ? shown & 1 : -1, rem != 0, nx, cy);
+        if (step_known) steps[shown & 1]++;
         if (cx + 16 <= 0 || cx >= width) continue;
-        if (nx >= 0 && nx + 16 <= 256) continue;               /* inside the 256: the game's own drawing */
-        int f = E.face[i] * 2 + E.step;
+        /* inside the 256: the game's own drawing, except at its side columns,
+           where the game leaves out characters that are only partly on screen */
+        if (nx >= 0 && nx + 16 <= 256 && (shown >= 0 || (nx >= 16 && nx + 16 <= 240))) continue;
+        int f = face * 2 + E.step;
         const uint8_t *fs = frame_sprites(i, f);
         for (int k = 0; k < 4; k++) {
             int sx = cx + 8 * (k & 1), sy = cy + 8 * (k >> 1);

@@ -280,20 +280,30 @@ Checked headless: walking on the overworld and in a castle, consecutive 16:9
 frames match each other shifted by the scroll pixel for pixel, across the
 border between the sides and the native picture.
 
-Characters in the sides (towns, castles, dungeons): the game only makes
-sprites for the native 256, so the compositor draws the map's other people
-itself from the object table (WRAM `$6F60` cell X, `$6F80` Y, `$6FA0`/`$6FC0`
-the cell they come from, `$6FE0` low nibble their character slot, `$7020`
-bit 7 hidden; frames at `$7200 + slot*64`; everyone walks in step with RAM
-`$3E` counting the 16-pixel step down; sprites sit 4 pixels above their cell).
-The game keeps no facing we could find, so a walking character faces where it
-goes and a standing one keeps the facing it last showed on screen (down if
-never seen); the walking step follows the characters on screen. Characters cut
-at the native edge are completed. With the HD pack they are drawn with the
-pack's character art (`cyc_render_hd_sprite`, nesrecomp patch 0027).
-Measured on characters inside the 256: the game's sprites are where the
-formula puts them, the predicted facing is right 99.8% and the step 96% of the
-time. The overworld's objects use world cells and are not drawn yet.
+Characters in the sides: the game only makes sprites for the native 256, so
+the compositor draws the map's other people itself from the object table (WRAM
+`$6F60` cell X, `$6F80` Y, `$6FA0`/`$6FC0` the cell they come from, `$6FE0`
+low nibble their character slot, `$7000` low 2 bits their facing (0 up,
+1 right, 2 down, 3 left), `$7020` bit 7 hidden; frames at `$7200 + slot*64`;
+everyone walks in step with RAM `$3E` counting the 16-pixel step down;
+sprites sit 4 pixels above their cell in towns, in it on the overworld). The
+walking step follows the characters on screen (the frame whose sprites match
+best). On the overworld the cells are world cells (a byte each way, the copy
+nearest the hero) and objects with `$7020` bit 6 are town leftovers the game
+doesn't draw there. The game leaves out characters only partly inside its
+picture; in 16:9 those are drawn too. With the HD pack they are drawn with
+the pack's character art (`cyc_render_hd_sprite`, nesrecomp patch 0027).
+
+Where the camera is: the ring offset only gives the map position modulo
+64x30 tiles; the copy is picked near the hero, and when a map is matched anew
+(or a scene looks away from the hero) by which copy best explains the
+nametable that frame (cells of the border's value don't count). Debug:
+`DW4_WIDE_CHECK=1` prints per frame how many tiles of the native picture the
+same formula gets wrong, `DW4_WIDE_FULL=1` draws the native 256 from the map
+too, `DW4_WIDE_DEBUG=1` the camera search and each character's match.
+Checked over all 279 areas by warp: 20 differ by more than 2%, all a scene
+the check can't reproduce (the warp's reveal frozen half-way, rooms shown or
+hidden, windows); Gottside and the Underworld by walking out of their towns.
 
 ## Shared ground between map tiles
 

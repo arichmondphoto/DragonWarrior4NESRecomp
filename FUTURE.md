@@ -177,10 +177,10 @@ the waterfall, one piece just over the threshold).
 - Done (phases 1-2): View mode Native / 16:9 in the in-game menu, saved in
   config.ini; map sides drawn from the map, in 8-bit and HD (README
   "Widescreen (16:9)"); other screens pillarboxed.
-- Done (phase 3): characters in the sides of towns, castles and dungeons
-  (README). Left: objects on the overworld (wagon, ships?) use world cells;
-  facing of standing characters never seen is a guess (down). Optional
-  phase 4: wider title and battle art. 21:9 and Fit would exceed the 8192-pixel HD picture limit at 10x.
+- Done (phase 3): characters in the sides of towns, castles, dungeons and
+  the overworld, real facing (`$7000`), all areas checked by warp (README).
+  Not checked (no save that far): the wagon and a parked ship or balloon on
+  the overworld in 16:9. Optional phase 4: wider title and battle art. 21:9 and Fit would exceed the 8192-pixel HD picture limit at 10x.
 
 ## Done
 
