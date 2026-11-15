@@ -97,6 +97,13 @@ static struct {
        that look). Cells never seen take their room's state */
     struct { uint8_t state, q[4], pal; } room[8];
     int room_last;          /* the room (1-7) whose state was seen last */
+    /* towns: the border around the map is drawn in a pattern (forests of two
+       kinds, a tree's trunk), so its looks are kept by position (x, y mod 16) */
+    struct { uint8_t q[4], pal, ok; } border[16][16];
+    /* towns: each cell as it looked when last on screen, with its room's state
+       then (some maps draw cells of one value differently by place) */
+    struct { uint8_t q[4], pal, st; } cellmem[128 * 128];
+    uint8_t multi[256];     /* values showing more than one look on screen now */
     int step, step_count;   /* the walking step on screen, and frames since it changed */
     uint8_t map_tile[256];  /* tile numbers that belong to the map */
     const uint8_t *ram, *wram, *ciram;
@@ -240,6 +247,9 @@ static void map_tiles(void)
         for (int j = 0; j < LOOKS; j++)
             if (E.look[i][j].conf > 0)
                 for (int k = 0; k < 4; k++) E.map_tile[E.look[i][j].q[k]] = 1;
+    /* tiles $01-$8B are text and window frames, never in a map's metatiles
+       (all town, dungeon and world metatile sets checked) */
+    for (int i = 1; i <= 0x8B; i++) E.map_tile[i] = 0;
 }
 
 static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *wx0_, int *wy0_);
@@ -267,10 +277,11 @@ static void learn(void)
     /* the middle of the screen, where the game has drawn everything right:
        around the camera when compose found it (scenes look away from the
        hero), else around the hero */
-    int mx0 = E.hx - 6, mx1 = E.hx + 6, my0 = E.hy - 5, my1 = E.hy + 5;
+    int mx0 = E.hx - 7, mx1 = E.hx + 7, my0 = E.hy - 6, my1 = E.hy + 6;
     if (E.cam_ok && E.cam_key == E.key && !E.overworld) {
-        mx0 = floordiv(E.cam_px + 24, 16); mx1 = floordiv(E.cam_px + 232, 16) - 1;
-        my0 = floordiv(E.cam_py + 24, 16); my1 = floordiv(E.cam_py + 216, 16) - 1;
+        /* the whole picture but its outer 8 pixels (a scrolling edge being drawn) and the bottom rows */
+        mx0 = floordiv(E.cam_px + 8 + 15, 16); mx1 = floordiv(E.cam_px + 248, 16) - 1;
+        my0 = floordiv(E.cam_py + 8 + 15, 16); my1 = floordiv(E.cam_py + 224, 16) - 1;
     }
     /* a screen still being drawn (entering a map: cleared, then filled in) is
        mostly flat: its blank cells are not looks in the first frames then */
@@ -318,16 +329,30 @@ static void learn(void)
     static uint16_t cnt[256][LOOKS];
     memset(cnt, 0, sizeof cnt);
     int open_n[8] = { 0 }, hid_n[8] = { 0 };
+    static int16_t cellxy[512][2]; int ncell = 0;
     for (int y = my0; y <= my1; y++)
         for (int x = mx0; x <= mx1; x++) {
             int c = cell_key(x, y), tx = 2 * x + E.dx, ty = mod(2 * y + E.dy, 30);
             uint8_t q[4] = { nt_tile(tx, ty), nt_tile(tx + 1, ty), nt_tile(tx, ty + 1), nt_tile(tx + 1, ty + 1) };
             for (int j = 0; j < LOOKS; j++)
                 if (E.look[c][j].conf > 0 && !memcmp(E.look[c][j].q, q, 4)) { cnt[c][j]++; break; }
-            if (E.overworld || x < 0 || y < 0 || x >= E.w || y >= E.h) continue;
+            if (E.overworld) continue;
             if (!E.map_tile[q[0]] || !E.map_tile[q[1]] || !E.map_tile[q[2]] || !E.map_tile[q[3]]) continue;
             if (q[0] == q[1] && q[1] == q[2] && q[2] == q[3] && in_window(tx, ty, q[0])) continue;
+            if (x < 0 || y < 0 || x >= E.w || y >= E.h) {
+                if (E.valid_frames >= 30 || !(q[0] == q[1] && q[1] == q[2] && q[2] == q[3])) {
+                    __typeof__(E.border[0][0]) *b = &E.border[x & 15][y & 15];
+                    memcpy(b->q, q, 4); b->pal = nt_pal(tx, ty); b->ok = 1;
+                }
+                continue;
+            }
             int r = c >> 5, pp; const uint8_t *d = plain(c & 31, &pp);
+            if (E.w <= 128 && E.h <= 128 && (E.valid_frames >= 30 || !(q[0] == q[1] && q[1] == q[2] && q[2] == q[3]))) {
+                __typeof__(E.cellmem[0]) *m = &E.cellmem[y * 128 + x];
+                memcpy(m->q, q, 4); m->pal = nt_pal(tx, ty);
+                m->st = (uint8_t)(d && !memcmp(d, q, 4) ? 1 : 2) | 4;    /* open/hidden then; 4 = known */
+                cellxy[ncell][0] = (int16_t)x; cellxy[ncell][1] = (int16_t)y; if (ncell < 511) ncell++;
+            }
             if (!d) continue;
             if (!memcmp(d, q, 4)) open_n[r]++;
             else {
@@ -341,10 +366,12 @@ static void learn(void)
             if (r) E.room_last = r;
         }
     for (int c = 0; c < 256; c++) {
-        int b = -1;
-        for (int j = 0; j < LOOKS; j++) if (cnt[c][j] && (b < 0 || cnt[c][j] > cnt[c][b])) b = j;
+        int b = -1, kinds = 0;
+        for (int j = 0; j < LOOKS; j++) if (cnt[c][j]) { kinds++; if (b < 0 || cnt[c][j] > cnt[c][b]) b = j; }
         E.cur[c] = (int8_t)b;
+        E.multi[c] = kinds > 1;
     }
+    (void)cellxy;
     map_tiles();
 }
 
@@ -375,7 +402,7 @@ static void frame_begin(void *ctx)
     if (ow != E.overworld || key != E.key) {
         E.overworld = ow; E.key = key;
         E.cam_ok = false;
-        memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; E.search_wait = 0; was = false;
+        memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; memset(E.border, 0, sizeof E.border); memset(E.cellmem, 0, sizeof E.cellmem); E.search_wait = 0; was = false;
     }
     map_tiles();
     int total, s = was ? score(E.dx, E.dy, &total) : 0;
@@ -393,8 +420,24 @@ static void frame_begin(void *ctx)
                 E.world = wi;
                 E.valid = search();
             }
-        } else E.valid = search();
-        if (E.valid) { memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; }
+        } else {
+            E.valid = search();
+            if (!E.valid && E.ram[0x3E] == 0) {
+                /* nothing on screen to match (a plain floor or field, a dark
+                   room): with the hero standing still, its cell is drawn at
+                   screen tile (16, 14) - take the ring offset from the scroll.
+                   compose still checks the picture agrees every frame */
+                int sx = cyc_render_line_scroll_x(120), sy = mod(cyc_render_line_scroll_y(120) - 120, 240);
+                if (getenv("DW4_EDGES_DEBUG")) fprintf(stderr, "dw4_edges: hero offset try scroll %d,%d\n", sx, sy);
+                if (!(sx & 7) && !(sy & 7)) {
+                    int t2, s2;
+                    int dx = mod((sx >> 3) + 16 - 2 * E.hx, 64), dy = mod((sy >> 3) + 14 - 2 * E.hy, 30);
+                    s2 = score(dx, dy, &t2);
+                    if (2 * s2 >= t2) { E.dx = dx; E.dy = dy; E.valid = true; }
+                }
+            }
+        }
+        if (E.valid) { memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; memset(E.border, 0, sizeof E.border); memset(E.cellmem, 0, sizeof E.cellmem); }
         else E.search_wait = 8;
     }
     if (E.valid && was && !ow && ++E.recheck >= 8) {
@@ -412,7 +455,7 @@ static void frame_begin(void *ctx)
             if (getenv("DW4_EDGES_DEBUG"))
                 fprintf(stderr, "dw4_edges: recheck %d,%d (%d) -> %d,%d (%d) hero %d,%d\n", E.dx, E.dy, cur, bdx, bdy, best, E.hx, E.hy);
             E.dx = bdx; E.dy = bdy;
-            memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; was = false;
+            memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; memset(E.border, 0, sizeof E.border); memset(E.cellmem, 0, sizeof E.cellmem); was = false;
         }
     }
     if (E.valid) {
@@ -463,9 +506,19 @@ static int bg_hook(void *ctx, int line, int x, uint16_t v, uint8_t tile)
 /* The tile and palette of map tile column wx, row wy (2 per map cell). */
 static int map_quarter(int wx, int wy)
 {
-    int c = cell_key(floordiv(wx, 2), floordiv(wy, 2)), q = (wx & 1) | (wy & 1) << 1, pal;
+    int x = floordiv(wx, 2), y = floordiv(wy, 2);
+    int c = cell_key(x, y), q = (wx & 1) | (wy & 1) << 1, pal;
+    if (!E.overworld && (x < 0 || y < 0 || x >= E.w || y >= E.h) && E.border[x & 15][y & 15].ok)
+        return E.border[x & 15][y & 15].q[q] | E.border[x & 15][y & 15].pal << 8;
     const Look *l = E.look[c];
+    /* the cell as last seen: where its value shows several looks on screen
+       now (looks by place), or its room still shows as it did then */
+    const __typeof__(E.cellmem[0]) *m = NULL;
+    if (!E.overworld && x >= 0 && y >= 0 && x < E.w && y < E.h && x < 128 && y < 128 && (E.cellmem[y * 128 + x].st & 4))
+        m = &E.cellmem[y * 128 + x];
+    if (m && E.cur[c] >= 0 && E.multi[c]) return m->q[q] | m->pal << 8;
     if (E.cur[c] >= 0 && l[E.cur[c]].conf > 0) return l[E.cur[c]].q[q] | l[E.cur[c]].pal << 8;
+    if (m && (E.room[c >> 5].state == 0 || E.room[c >> 5].state == (m->st & 3))) return m->q[q] | m->pal << 8;
     if (!E.overworld) {
         /* not on screen now: as its room shows */
         int r = c >> 5, st = E.room[r].state;
@@ -680,10 +733,43 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
 
 static bool check_wide;
 
+/* A picture of one tile everywhere (a plain field the game fills without its
+ * map, a cleared screen): the sides continue it. Windows don't count. */
+static int uniform(uint32_t *out, int width, int x0, const uint32_t *native)
+{
+    int sx = cyc_render_line_scroll_x(120), sy = mod(cyc_render_line_scroll_y(120) - 120, 240);
+    int tx0 = sx >> 3, ty0 = sy >> 3, fx = sx & 7, fy = sy & 7;
+    int t = -1, pal = -1, n = 0;
+    for (int j = 2; j < 28; j++)
+        for (int k = 1; k < 31; k++) {
+            uint8_t g = nt_tile(tx0 + k, mod(ty0 + j, 30));
+            if (g >= 1 && g <= 0x8B) continue;                         /* window, text */
+            if (g == 0 && in_window(tx0 + k, mod(ty0 + j, 30), 0)) continue;
+            int p = nt_pal(tx0 + k, mod(ty0 + j, 30));
+            if (t < 0) { t = g; pal = p; }
+            else if (g != t || p != pal) return 0;
+            n++;
+        }
+    if (n < 200) return 0;
+    uint16_t table = cyc_render_line_bg_table(120);
+    P.n = 0;
+    for (int j = 0; j <= 30; j++)
+        for (int cx = x0 - fx - 8 * ((x0 + 7) / 8 + 1); cx < width; cx += 8) {
+            if (cx + 8 <= 0 || (cx >= x0 + 8 && cx + 8 <= x0 + 256)) continue;
+            side_tile(cx, 8 * j - fy, (uint16_t)(table + t * 16), pal, cx + 8 > x0 && cx < x0 + 8 ? EDGE_TILE : 0);
+        }
+    paint(out, width, x0, native, P.t, P.n, NULL, false, false);
+    P.have = false;
+    return 1;
+}
+
 static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
 {
     (void)user; (void)height;
-    if (!E.valid) return hold(out, width, x0, native);    /* not a map: the last one fading, or pillarboxed */
+    if (!E.valid) {                                        /* not a map: one tile everywhere, the last one fading, or pillarboxed */
+        if (P.have) { int h = hold(out, width, x0, native); if (h) return h; }
+        return uniform(out, width, x0, native);
+    }
     static int ck = -1;
     if (ck < 0) ck = getenv("DW4_WIDE_CHECK") != NULL;
     check_wide = ck;
@@ -701,10 +787,14 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
             for (int k = 2; k < 30; k += 2) {
                 int t = map_quarter(wx0 + k, wy0 + j);
                 uint8_t g = nt_tile(tx0 + k, mod(ty0 + j, 30));
-                if (t < 0 || !E.map_tile[g]) continue;
+                if (t < 0 || !E.map_tile[g] || (g == 0 && in_window(tx0 + k, mod(ty0 + j, 30), 0))) continue;
                 n++; bad += (t & 0xFF) != g;
             }
-        if (n < 20 || bad * 2 > n) return hold(out, width, x0, native);
+        if (n < 20 || bad * 4 > n) {
+            if (getenv("DW4_EDGES_DEBUG")) fprintf(stderr, "dw4_wide: picture disagrees %d/%d\n", bad, n);
+            if (P.have) { int h = hold(out, width, x0, native); if (h) return h; }
+            return uniform(out, width, x0, native);
+        }
     }
     uint16_t table = cyc_render_line_bg_table(120);
     P.n = 0;
@@ -730,9 +820,26 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
             for (int k = 2; k < 30; k++) {
                 int t = map_quarter(wx0 + k, wy0 + j);
                 uint8_t g = nt_tile(tx0 + k, mod(ty0 + j, 30));
-                if (t < 0 || !E.map_tile[g]) continue;
+                if (t < 0 || !E.map_tile[g] || (g == 0 && in_window(tx0 + k, mod(ty0 + j, 30), 0))) continue;
                 n++; bad += (t & 0xFF) != g;
+                if ((t & 0xFF) != g && getenv("DW4_WIDE_CHECK")[0] == '2' && !(k & 1) && !(j & 1)) {
+                    int wx = wx0 + k, wy = wy0 + j, c = cell_key(floordiv(wx, 2), floordiv(wy, 2));
+                    fprintf(stderr, "  diff k%d j%d cell %d,%d key %02X cur %d room %d/%d nt %02X%02X%02X%02X looks",
+                            k, j, floordiv(wx, 2), floordiv(wy, 2), c, E.cur[c], c >> 5, E.room[c >> 5].state,
+                            nt_tile(tx0 + k, mod(ty0 + j, 30)), nt_tile(tx0 + k + 1, mod(ty0 + j, 30)),
+                            nt_tile(tx0 + k, mod(ty0 + j + 1, 30)), nt_tile(tx0 + k + 1, mod(ty0 + j + 1, 30)));
+                    { int bx = floordiv(wx, 2) & 15, by = floordiv(wy, 2) & 15;
+                      fprintf(stderr, " border[%d][%d] %d %02X%02X", bx, by, E.border[bx][by].ok, E.border[bx][by].q[0], E.border[bx][by].q[1]); }
+                    for (int l = 0; l < LOOKS; l++) if (E.look[c][l].conf)
+                        fprintf(stderr, " %02X%02X%02X%02X:%d", E.look[c][l].q[0], E.look[c][l].q[1], E.look[c][l].q[2], E.look[c][l].q[3], E.look[c][l].conf);
+                    fprintf(stderr, "\n");
+                }
             }
+        if (getenv("DW4_WIDE_CHECK")[0] == '2') {
+            fprintf(stderr, "  hero screen tile %d,%d fine %d,%d 3E %d\n", mod(2 * E.hx + E.dx - tx0, 64), mod(2 * E.hy + E.dy - ty0, 30), fx, fy, E.ram[0x3E]);
+            int nb = 0; for (int a = 0; a < 256; a++) nb += E.border[a >> 4][a & 15].ok;
+            fprintf(stderr, "  border looks %d cam %d,%d valid_frames %d\n", nb, E.cam_px, E.cam_py, E.valid_frames);
+        }
         fprintf(stderr, "dw4_wide: check %s %d/%d differ\n", E.overworld ? worlds[E.world].name : "town", bad, n);
     }
     /* canvas pixel of map cell (0, 0)'s top-left: map tile column 0 is k = -wx0 */
@@ -874,7 +981,7 @@ static void power_on(void *ctx)
 {
     (void)ctx;
     decode_worlds();
-    memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0;
+    memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; memset(E.border, 0, sizeof E.border); memset(E.cellmem, 0, sizeof E.cellmem);
     /* (also after loading a state: nothing seen before it holds) */
     E.valid = false; E.key = 0; E.search_wait = 0; P.have = false;
     E.cam_ok = false; E.need_search = false; E.recheck = 0;

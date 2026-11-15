@@ -314,8 +314,21 @@ Where the camera is: the ring offset only gives the map position modulo
 64x30 tiles; the copy is picked near the hero, and when a map is matched anew
 (or a scene looks away from the hero) by which copy best explains the
 nametable that frame (cells of the border's value don't count). Every frame the formula is also checked on the native picture: where it
-disagrees with more than half of the map tiles (a battle can leave the map in
-the nametable), the frame is treated as no map (held, or pillarboxed). Debug:
+disagrees with more than a quarter of the map tiles (a battle can leave the
+map in the nametable), the frame is treated as no map (held, or pillarboxed).
+Tiles $01-$8B are text and window frames (never in any map's metatiles), and
+a window's blank inside is found by the window tiles along its row: neither is
+learned or checked. The border around a map is drawn in a pattern (two kinds
+of forest, a tree's trunk), so its looks are kept by position (x, y mod 16);
+every cell's last look on screen is kept too, used where its value shows
+several looks at once (looks by place) or its room still shows as it did.
+With nothing on screen to match (a plain floor, a dark room) and the hero
+standing still, the ring offset comes from the scroll (the hero's cell is at
+screen tile 16, 14); a picture of one tile everywhere (a field the game fills
+without its map) is continued as is. All-maps check by warp: 3 areas over 2%
+(two where the warp leaves the screen half drawn, fine when walking; a dark
+mine's edge column), 10 unmatched (rooms with the outside black, and two warp
+leftovers). Debug:
 `DW4_WIDE_CHECK=1` prints per frame how many tiles of the native picture the
 same formula gets wrong, `DW4_WIDE_FULL=1` draws the native 256 from the map
 too, `DW4_WIDE_DEBUG=1` the camera search and each character's match.
@@ -327,9 +340,7 @@ room does, a room not seen yet as hidden (the last hidden room's roof, else
 black: caves keep rooms dark until entered), the hero's own room open. black looks are learned like any other (not inside windows: the
 window's blank). Towns re-check their ring offset every 8 frames (room cells
 only count where they show, so an offset matched while the screen was half
-drawn could otherwise stay). Checked over all 279 areas by warp: 8 differ by
-more than 2% (windows, tiles events change); 28 are not matched (small rooms
-with the outside black, flat fields, the balloon's sky: pillarboxed);
+drawn could otherwise stay). Checked over all 279 areas by warp (see above);
 Gottside and the Underworld by walking out of their towns. With the HD pack
 (`NESRECOMP_HDPACK_DEBUG=1`, every area): no side tile without HD art outside
 black-on-black.
