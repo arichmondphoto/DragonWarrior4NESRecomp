@@ -1,0 +1,113 @@
+diff --git a/runner/cyc/cyc_hdpack.c b/runner/cyc/cyc_hdpack.c
+index 332979a..3542086 100644
+--- a/runner/cyc/cyc_hdpack.c
++++ b/runner/cyc/cyc_hdpack.c
+@@ -189,6 +189,20 @@ static const uint8_t *margin_tile(uint16_t pattern) {
+     margin_pattern[margin_count]=pattern;return margin_bytes[margin_count++];
+ }
+ static uint32_t *wide_out;static size_t wide_capacity;static int presented_width;
++/* A sprite pixel the compositor drew (cyc_render_hd_sprite): sampled like a
++ * recorded one (the row in CHR order, hm/vm flip within the HD block). */
++static void add_sprite(HdPixel *p,int x,int y,uint8_t mask,uint32_t drawn) {
++    uint16_t pattern;int pal,ox,oy;unsigned flags;const uint8_t *t;
++    if(!cyc_render_hd_sprite_cell(x,y,&pattern,&pal,&ox,&oy,&flags) || !(t=margin_tile(pattern)))return;
++    int row=(flags&2)?7-oy:oy,col=(flags&1)?7-ox:ox;
++    unsigned v=((t[row]>>(7-col))&1)|(((t[row+8]>>(7-col))&1)<<1);
++    if(!v && !hdpack_sprite_cells())return;
++    p->sp_t16=t;p->sp_index=-1;p->sp_has=1;p->sp_ox=(uint8_t)ox;p->sp_oy=(uint8_t)row;
++    p->sp_hm=(uint8_t)(flags&1);p->sp_vm=(uint8_t)((flags>>1)&1);p->sp_clear=!v;
++    p->sp_p1=cyc_render_palette(16+pal*4+1);p->sp_p2=cyc_render_palette(16+pal*4+2);p->sp_p3=cyc_render_palette(16+pal*4+3);
++    p->sp_argb=v?color(cyc_render_palette(16+pal*4+v),mask):drawn;
++    unsigned k=main_index(t);if(k)p->sp_tint=color(cyc_render_palette(16+pal*4+k),mask);
++}
+ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height) {
+     *width=256;*height=240;if(!hdpack_active())return native;
+     /* the engine's picture at the presented width: the game compositor's wide
+@@ -212,7 +226,11 @@ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height
+         uint8_t mask=recorded[y*256+128].mask;
+         for(int x=0;x<pw;x++) {
+             int nx=wide?x-origin:x;HdPixel *p=&pixels[y*pw+x];
+-            if(nx>=0 && nx<256){fill_pixel(p,&recorded[y*256+nx],wide?canvas[y*w+x]:native[y*256+x]);continue;}
++            if(nx>=0 && nx<256){
++                fill_pixel(p,&recorded[y*256+nx],wide?canvas[y*w+x]:native[y*256+x]);
++                if(wide && !p->sp_has)add_sprite(p,x,y,mask,canvas[y*w+x]);   /* a character the compositor completed */
++                continue;
++            }
+             /* a margin pixel: the compositor's tile, else its flat colour */
+             memset(p,0,sizeof(*p));p->bg_index=-1;p->sp_index=-1;
+             uint16_t pattern;int pal,ox,oy;const uint8_t *t;
+@@ -224,6 +242,7 @@ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height
+                 p->backdrop=color(pals[0],mask);
+                 unsigned k=main_index(t);p->bg_tint=k?color(pals[k],mask):p->backdrop;
+             }
++            add_sprite(p,x,y,mask,canvas[y*w+x]);
+         }
+     }
+     if(!reserve(&upscaled,&upscaled_capacity,(size_t)pw*s*240*s))return native;
+diff --git a/runner/cyc/cyc_render.c b/runner/cyc/cyc_render.c
+index 661bf31..98775e8 100644
+--- a/runner/cyc/cyc_render.c
++++ b/runner/cyc/cyc_render.c
+@@ -16,7 +16,7 @@ static int             s_origin, s_origin_request;
+ static bool            s_origin_requested;
+ static CycRenderStats  s_stats;
+ typedef struct { uint16_t pattern; int8_t pal; uint8_t oxy; } HdCell;
+-static HdCell          s_hd[CYC_VIDEO_MAX_WIDTH * 240];
++static HdCell          s_hd[CYC_VIDEO_MAX_WIDTH * 240], s_hd_sp[CYC_VIDEO_MAX_WIDTH * 240];
+ static int             s_hd_width;
+ static bool            s_painted;
+ 
+@@ -34,6 +34,29 @@ void cyc_render_hd_tile(int x, int y, uint16_t pattern, int palette)
+     }
+ }
+ 
++void cyc_render_hd_sprite(int x, int y, uint16_t pattern, int palette, unsigned flags)
++{
++    for (int r = 0; r < 8; ++r) {
++        int py = y + r;
++        if (py < 0 || py >= 240) continue;
++        for (int c = 0; c < 8; ++c) {
++            int px = x + c;
++            if (px < 0 || px >= s_hd_width) continue;
++            HdCell *h = &s_hd_sp[py * s_hd_width + px];
++            h->pattern = pattern; h->pal = (int8_t)((palette & 3) | (flags & 3) << 2); h->oxy = (uint8_t)(c | r << 4);
++        }
++    }
++}
++
++bool cyc_render_hd_sprite_cell(int x, int y, uint16_t *pattern, int *palette, int *ox, int *oy, unsigned *flags)
++{
++    if (x < 0 || y < 0 || x >= s_hd_width || y >= 240) return false;
++    const HdCell *h = &s_hd_sp[y * s_hd_width + x];
++    if (h->pal < 0) return false;
++    *pattern = h->pattern; *palette = h->pal & 3; *flags = (unsigned)(h->pal >> 2) & 3; *ox = h->oxy & 15; *oy = h->oxy >> 4;
++    return true;
++}
++
+ bool cyc_render_hd_cell(int x, int y, uint16_t *pattern, int *palette, int *ox, int *oy)
+ {
+     if (x < 0 || y < 0 || x >= s_hd_width || y >= 240) return false;
+@@ -215,6 +238,7 @@ const uint32_t *cyc_render_present(int *width, int *height)
+     s_origin_requested = false;
+     s_hd_width = w;
+     memset(s_hd, 0xFF, (size_t)w * 240 * sizeof s_hd[0]);
++    memset(s_hd_sp, 0xFF, (size_t)w * 240 * sizeof s_hd_sp[0]);
+     int painted = s_fn ? s_fn(s_canvas, w, 240, x0, native, s_user) : 0;
+     s_origin = x0;
+     s_painted = painted != 0;
+diff --git a/runner/cyc/cyc_render.h b/runner/cyc/cyc_render.h
+index 13c694a..23f26f1 100644
+--- a/runner/cyc/cyc_render.h
++++ b/runner/cyc/cyc_render.h
+@@ -74,6 +74,11 @@ void cyc_render_background_output(unsigned pixel, unsigned emphasis, bool grey);
+  * pattern address (table + tile * 16), palette 0-3 (background). Recorded for
+  * the picture being painted; cleared at the start of each compose. */
+ void cyc_render_hd_tile(int x, int y, uint16_t pattern, int palette);
++/* The same for an 8x8 sprite the compositor drew (palette 0-3 of the sprite
++ * palettes, flags CYC_TILE_HFLIP / CYC_TILE_VFLIP), in the margins or over the
++ * native picture where the game drew none (a character cut at its edge). */
++void cyc_render_hd_sprite(int x, int y, uint16_t pattern, int palette, unsigned flags);
++bool cyc_render_hd_sprite_cell(int x, int y, uint16_t *pattern, int *palette, int *ox, int *oy, unsigned *flags);
+ /* The tile recorded at canvas pixel (x, y) of the last composed picture:
+  * false if none; *ox, *oy the pixel's place inside the tile. */
+ bool cyc_render_hd_cell(int x, int y, uint16_t *pattern, int *palette, int *ox, int *oy);

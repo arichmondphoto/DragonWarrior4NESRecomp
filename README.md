@@ -280,8 +280,20 @@ Checked headless: walking on the overworld and in a castle, consecutive 16:9
 frames match each other shifted by the scroll pixel for pixel, across the
 border between the sides and the native picture.
 
-Not yet: characters standing in the sides are not drawn (the game only makes
-sprites for the native 256), so people walking off the edge are cut there.
+Characters in the sides (towns, castles, dungeons): the game only makes
+sprites for the native 256, so the compositor draws the map's other people
+itself from the object table (WRAM `$6F60` cell X, `$6F80` Y, `$6FA0`/`$6FC0`
+the cell they come from, `$6FE0` low nibble their character slot, `$7020`
+bit 7 hidden; frames at `$7200 + slot*64`; everyone walks in step with RAM
+`$3E` counting the 16-pixel step down; sprites sit 4 pixels above their cell).
+The game keeps no facing we could find, so a walking character faces where it
+goes and a standing one keeps the facing it last showed on screen (down if
+never seen); the walking step follows the characters on screen. Characters cut
+at the native edge are completed. With the HD pack they are drawn with the
+pack's character art (`cyc_render_hd_sprite`, nesrecomp patch 0027).
+Measured on characters inside the 256: the game's sprites are where the
+formula puts them, the predicted facing is right 99.8% and the step 96% of the
+time. The overworld's objects use world cells and are not drawn yet.
 
 ## Shared ground between map tiles
 
@@ -467,6 +479,9 @@ They are framework bugs, kept here until they can go upstream:
   a game compositor records the tiles it paints in the margins
   (`cyc_render_hd_tile`), and those are matched with the pack like native
   tiles; pillarboxed screens are centred.
+- `0027-cyc-hd-wide-sprites.patch` — the same for sprites a game compositor draws
+  (`cyc_render_hd_sprite`): characters in the widescreen sides, and the parts
+  of characters the game cut at the native edge, get the pack's sprite art.
 - `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
   same per-channel colour map as `rgb:` (patch 0011), applied while drawing
   instead of at load, so the entry shares the untouched decoded block. Used

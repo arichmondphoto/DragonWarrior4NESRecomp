@@ -62,6 +62,8 @@
 #define EDGE_PIXELS 16      /* left and right pixels repaired */
 #define HERO_X 120          /* screen position of the hero's map cell (roughly) */
 #define HERO_Y 112
+#define CHAR_DX 0           /* a character's top-left sprite relative to its map cell */
+#define CHAR_DY (-4)
 #define SEA_KEYS 32         /* overworld look keys: tile, or SEA_KEYS + shore mask for sea */
 
 typedef struct { uint8_t q[4], pal; int8_t conf; } Look;
@@ -85,6 +87,8 @@ static struct {
     Look look[256][LOOKS];  /* per map value, most seen first after learn() */
     int8_t cur[256];        /* the look each value shows on screen this frame, or -1 */
     int view;               /* 0 native, 1 16:9 */
+    int8_t face[32];        /* each map object's facing (0 up 1 right 2 down 3 left) last seen */
+    int step, step_count;   /* the walking step on screen, and frames since it changed */
     uint8_t map_tile[256];  /* tile numbers that belong to the map */
     const uint8_t *ram, *wram, *ciram;
 } E = { .enabled = true };
@@ -275,6 +279,7 @@ static void frame_begin(void *ctx)
     }
     if (ow != E.overworld || key != E.key) {
         E.overworld = ow; E.key = key;
+        memset(E.face, 2, sizeof E.face);
         memset(E.look, 0, sizeof E.look); E.search_wait = 0; was = false;
     }
     map_tiles();
@@ -346,6 +351,8 @@ static int map_quarter(int wx, int wy)
     return d ? d[q] | pal << 8 : -1;
 }
 
+static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy);
+
 static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
 {
     (void)user; (void)height;
@@ -378,7 +385,74 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
             for (int x = 0; x < width; x++) out[y * width + x] = 0xFF000000u;
         memcpy(out + y * width + x0, native + y * 256, 256 * sizeof(uint32_t));
     }
+    /* canvas pixel of map cell (0, 0)'s top-left: map tile column 0 is k = -wx0 */
+    draw_characters(out, width, x0, x0 - fx - 8 * wx0 + CHAR_DX, -fy - 8 * wy0 + CHAR_DY);
     return 1;
+}
+
+/* ---- characters in the sides ----
+ * The map's objects (WRAM $6F60.. 32 entries): cell X $6F60, Y $6F80, the
+ * cell they come from $6FA0/$6FC0 (equal when standing), $81 = not on the map;
+ * $6FE0 low nibble = the character slot whose frames are at $7200 + slot*64
+ * (4 directions x 2 steps x 4 sprites: tile, attribute); $7020 bit 7 = hidden.
+ * Everyone walks in step: RAM $3E counts a 16-pixel step down. The game keeps
+ * no facing we could find: a walking character faces where it goes, a
+ * standing one keeps what it showed on screen last (down if never seen). */
+#define OBJS 32
+static const uint8_t *frame_sprites(int i, int f) { return E.wram + 0x1200 + 64 * (E.wram[0xFE0 + i] & 15) + f * 8; }
+
+static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
+{
+    if (E.overworld) return;      /* the overworld's objects use world cells (> $80): only towns and dungeons */
+    static int debug = -1;
+    if (debug < 0) debug = getenv("DW4_WIDE_DEBUG") != NULL;
+    const uint8_t *oam = cyc_render_oam();
+    uint16_t table = cyc_render_line_sprite_table(120);
+    int steps[2] = { 0, 0 };
+    for (int i = 0; i < OBJS; i++) {
+        const uint8_t *w = E.wram;
+        int X = w[0xF60 + i], Y = w[0xF80 + i], PX = w[0xFA0 + i], PY = w[0xFC0 + i];
+        if (X >= 0x80 || Y >= 0x80 || (w[0x1020 + i] & 0x80)) continue;
+        int rem = (X != PX || Y != PY) ? (E.ram[0x3E] + 1 > 16 ? 16 : E.ram[0x3E] + 1) : 0;
+        if (rem) E.face[i] = (int8_t)(X > PX ? 1 : X < PX ? 3 : Y > PY ? 2 : 0);
+        /* top-left of the character in canvas pixels (CHAR_DX/DY: where the game puts sprites in a cell) */
+        int cx = ox + 16 * X + rem * (PX - X), cy = oy + 16 * Y + rem * (PY - Y);
+        /* what the game drew: the frame whose four sprites are in OAM at this place */
+        int nx = cx - x0, shown = -1;
+        for (int f = 0; f < 8 && shown < 0; f++) {
+            const uint8_t *fs = frame_sprites(i, f);
+            int hit = 0;
+            for (int k = 0; k < 4; k++)
+                for (int s = 0; s < 64; s++) {
+                    const uint8_t *o = oam + 4 * s;
+                    if (o[0] >= 0xEF || o[1] != fs[2 * k] || (o[2] & 0xC3) != (fs[2 * k + 1] & 0xC3)) continue;
+                    int sx = o[3], sy = o[0] + 1;
+                    if (abs(sx - (nx + 8 * (k & 1))) <= 2 && abs(sy - (cy + 8 * (k >> 1))) <= 2) { hit++; break; }
+                }
+            if (hit >= 2) shown = f;
+        }
+        if (debug && nx >= 8 && nx + 16 <= 248 && cy >= 16 && cy + 16 <= 224)
+            fprintf(stderr, "dw4_wide: obj %d %s face %d/%d step %d/%d moving %d at %d %d\n", i, shown >= 0 ? "found" : "MISSING",
+                    E.face[i], shown >= 0 ? shown >> 1 : -1, E.step, shown >= 0 ? shown & 1 : -1, rem != 0, nx, cy);
+        if (shown >= 0) { E.face[i] = (int8_t)(shown >> 1); steps[shown & 1]++; }
+        if (cx + 16 <= 0 || cx >= width) continue;
+        if (nx >= 0 && nx + 16 <= 256) continue;               /* inside the 256: the game's own drawing */
+        int f = E.face[i] * 2 + E.step;
+        const uint8_t *fs = frame_sprites(i, f);
+        for (int k = 0; k < 4; k++) {
+            int sx = cx + 8 * (k & 1), sy = cy + 8 * (k >> 1);
+            uint8_t t = fs[2 * k], a = fs[2 * k + 1];
+            unsigned fl = (a & 0x40 ? CYC_TILE_HFLIP : 0) | (a & 0x80 ? CYC_TILE_VFLIP : 0);
+            /* inside the native picture only where the game drew none of it (cut at the edge) */
+            cyc_render_tile(out, width, 240, sx, sy, (uint16_t)(table + t * 16), 4 + (a & 3), fl, NULL, NULL);
+            cyc_render_hd_sprite(sx, sy, (uint16_t)(table + t * 16), a & 3, fl);
+        }
+    }
+    /* the walking step: what the characters on screen show, else 16 frames each */
+    if (steps[0] || steps[1]) {
+        int s = steps[1] > steps[0];
+        if (s != E.step) { E.step = s; E.step_count = 0; }
+    } else if (++E.step_count >= 16) { E.step ^= 1; E.step_count = 0; }
 }
 
 static int get_view_mode(void *ctx) { (void)ctx; return E.view; }
