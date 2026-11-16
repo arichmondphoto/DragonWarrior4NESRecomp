@@ -86,10 +86,13 @@ static struct {
     unsigned key;           /* what was learned belongs to this map */
     int search_wait;
     Look look[256][LOOKS];  /* per map value, most seen first after learn() */
+    uint8_t ow_tile[256];   /* the map's metatile (and shore) tiles */
     int8_t cur[256];        /* the look each value shows on screen this frame, or -1 */
     int view;               /* 0 native, 1 16:9 */
     int cam_px, cam_py;     /* map pixel at native (0, 0) last presented (compose) */
     unsigned cam_key; bool cam_ok, need_search, cam_hero;
+    bool shown;                    /* the matched map is what the screen shows (not a battle over its tiles) */
+    bool blanking;                 /* the screen is going blank over the map (the battle spiral) */
     int room46;                    /* the room ($46) the picture on screen was drawn for */
     int room_alt, alt_frames, alt, screen_miss;      /* the other room while the game redraws the screen for a new one */
     int row_tag[32]; int8_t row_alt[32];
@@ -310,6 +313,40 @@ static int room_miss(void)
     return miss;
 }
 
+static bool black_tile(uint8_t tile, int pal, uint16_t table);
+static int map_quarter(int wx, int wy);
+/* Whether the screen shows the matched map: enough of its cells around the
+ * hero are drawn as the map draws them and not black. A battle leaves the
+ * map's tiles in the nametable and blacks out their colours (its monster in
+ * other colours over them): the screen edges and the sides then drew map
+ * tiles with the battle's graphics. */
+static bool map_visible(void)
+{
+    /* the nametable tiles the frame just drawn showed (its scroll at the
+       middle line): a battle can be drawn in the other half of the ring,
+       the map left whole in this one, which still matches */
+    int sx = cyc_render_line_scroll_x(120), sy = mod(cyc_render_line_scroll_y(120) - 120, 240);
+    int stx = sx >> 3, sty = sy >> 3, drawn = 0, cleared = 0;
+    uint16_t tb = cyc_render_line_bg_table(120);
+    for (int j = 2; j < 28; j++)
+        for (int k = 2; k < 30; k++) {
+            int tx = mod(stx + k, 64), ty = mod(sty + j, 30);
+            /* the map tile column/row there, the copy nearest the hero */
+            int wx = mod(tx - E.dx, 64), wy = mod(ty - E.dy, 30);
+            wx += 64 * floordiv(2 * E.hx - wx + 32, 64);
+            wy += 30 * floordiv(2 * E.hy - wy + 15, 30);
+            int t = map_quarter(wx, wy);
+            uint8_t g = nt_tile(tx, ty);
+            /* the blank where the map has a picture, away from the edges the
+               game writes late: the battle spiral or a screen being cleared */
+            if (t >= 0 && g == 0 && (t & 0xFF) != 0 && !in_window(tx, ty, 0)) cleared++;
+            if (t < 0 || (t & 0xFF) != g || !map_shown(tx, ty, g)) continue;
+            if (!black_tile(g, nt_pal(tx, ty), tb)) drawn++;
+        }
+    E.blanking = cleared >= 4;
+    return drawn >= 24;
+}
+
 /* The best ring offset; true if it explains at least 60% of the cells. */
 static bool search(void)
 {
@@ -334,6 +371,7 @@ static void map_tiles(void)
     memset(E.map_tile, 0, sizeof E.map_tile);
     for (int i = 0; i < (E.overworld ? 32 : 34) * 4; i++) E.map_tile[E.wram[0x1600 + i]] = 1;
     if (E.overworld) for (int i = 0; i < 16 * 4; i++) E.map_tile[E.wram[0x1680 + i]] = 1;
+    memcpy(E.ow_tile, E.map_tile, sizeof E.ow_tile);       /* (the metatiles' own, before what was learned) */
     for (int i = 0; i < 256; i++)
         for (int j = 0; j < LOOKS; j++)
             if (E.look[i][j].conf > 0)
@@ -394,6 +432,17 @@ static void learn(void)
             /* a window or text (tiles $01-$8B; not "a tile no metatile has":
                a roof's tile is in none, and roofs were never learned) */
             if (WIN(q[0]) || WIN(q[1]) || WIN(q[2]) || WIN(q[3])) continue;
+            /* the overworld has no roofs: every quarter is one of its metatiles'
+               or shores' tiles (a window's blank inside, tile 0, is not; it
+               was learned as the look of the sea cells under the window) */
+            if (E.overworld && (!E.ow_tile[q[0]] || !E.ow_tile[q[1]] || !E.ow_tile[q[2]] || !E.ow_tile[q[3]])) continue;
+            /* nor the blank tile 0 where the cell's own metatile has none: a
+               window's inside, the battle spiral's black, a cleared screen */
+            if (E.overworld && (!q[0] || !q[1] || !q[2] || !q[3])) {
+                int pp0; const uint8_t *d0 = plain(c, &pp0);
+                if (!d0 || (d0[0] && d0[1] && d0[2] && d0[3])) continue;
+            }
+            if (!map_shown(tx, ty, q[0]) || !map_shown(tx + 1, ty, q[1]) || !map_shown(tx, mod(ty + 1, 30), q[2]) || !map_shown(tx + 1, mod(ty + 1, 30), q[3])) continue;
             uint8_t pal = nt_pal(tx, ty);
             if (!flat_ok && q[0] == q[1] && q[1] == q[2] && q[2] == q[3]) {
                 int pp2; const uint8_t *d2 = plain(E.overworld || !(c >> 5) ? c : c & 31, &pp2);
@@ -476,6 +525,10 @@ static void learn(void)
         for (int j = 0; j < LOOKS; j++) if (cnt[c][j]) { kinds++; if (b < 0 || cnt[c][j] > cnt[c][b]) b = j; }
         E.cur[c] = (int8_t)b;
         E.multi[c] = kinds > 1;
+        if (b >= 0 && getenv("DW4_LOOK_LOG")) {
+            const uint8_t *lq = E.look[c][b].q;
+            if (!lq[0] || !lq[1] || !lq[2] || !lq[3]) fprintf(stderr, "dw4_wide: look of %02X now %02X%02X%02X%02X\n", c, lq[0], lq[1], lq[2], lq[3]);
+        }
     }
     if (!E.overworld && E.border_new) {
         E.border_new = false;
@@ -640,13 +693,16 @@ static void frame_begin(void *ctx)
             locate(E.need_search, &a, &b, &c, &d, &e, &f);
             E.need_search = false;
         }
-        if (E.overworld) learn();                           /* (towns and dungeons need none: town_meta) */
+        E.shown = map_visible();
+        if (E.overworld && E.shown) learn();                /* (towns and dungeons need none: town_meta) */
     } else E.valid_frames = 0;
+    if (!E.valid) E.shown = false;
+    if (E.valid && !E.shown && getenv("DW4_WIDE_DEBUG")) fprintf(stderr, "dw4_wide: f%d matched but not shown\n", dbg_frame);
     if (E.valid != was && getenv("DW4_EDGES_DEBUG"))
         fprintf(stderr, "dw4_edges: %s %s offset %d,%d hero %d,%d\n", E.valid ? "on" : "off",
                 E.overworld ? worlds[E.world].name : "town/dungeon", E.dx, E.dy, E.hx, E.hy);
 done:
-    cyc_ppu_set_show_left(E.valid);
+    cyc_ppu_set_show_left(E.valid && E.shown);
 }
 
 static int map_quarter(int wx, int wy);
@@ -654,7 +710,8 @@ static int map_quarter(int wx, int wy);
 static int bg_hook(void *ctx, int line, int x, uint16_t v, uint8_t tile)
 {
     (void)ctx;
-    if (!E.valid) return -1;
+    if (!E.valid || !E.shown) return -1;
+    if (tile == 0 && E.blanking) return -1;                 /* the spiral's black reaching the edge: keep it */
     if (line >= EDGE_LINES && line < 240 - EDGE_LINES && x >= EDGE_PIXELS && x < 256 - EDGE_PIXELS) return -1;
     if (!E.map_tile[tile]) return -1;                       /* a window or text */
     int tx = (v & 31) + ((v >> 10) & 1) * 32, ty = (v >> 5) & 31;
