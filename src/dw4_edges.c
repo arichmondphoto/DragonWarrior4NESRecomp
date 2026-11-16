@@ -90,6 +90,9 @@ static struct {
     int view;               /* 0 native, 1 16:9 */
     int cam_px, cam_py;     /* map pixel at native (0, 0) last presented (compose) */
     unsigned cam_key; bool cam_ok, need_search, cam_hero;
+    int room46;                    /* the room ($46) the picture on screen was drawn for */
+    int room_alt, alt_frames, alt, screen_miss;      /* the other room while the game redraws the screen for a new one */
+    int row_tag[32]; int8_t row_alt[32];
     int recheck;            /* frames since the town offset was last checked against the others */
     int valid_frames;       /* frames the map has been matched in a row */
     /* towns: how each room (cell key >> 5; 0 = not in a room) shows now, from
@@ -146,6 +149,7 @@ static void decode_worlds(void)
 
 /* ---- nametable ---- */
 
+#define WIN(g) ((g) >= 1 && (g) <= 0x8B)                 /* text and window frames */
 static inline uint8_t nt_tile(int tx, int ty)
 {
     tx &= 63;
@@ -177,8 +181,26 @@ static int cell_key(int x, int y)
         return SEA_KEYS | (world_tile(wd, x, y - 1) != 0) | (world_tile(wd, x + 1, y) != 0) << 1 |
                (world_tile(wd, x, y + 1) != 0) << 2 | (world_tile(wd, x - 1, y) != 0) << 3;
     }
-    if (x < 0 || y < 0 || x >= E.w || y >= E.h) return E.ram[0x520];   /* the map's border cell */
+    /* outside the map ($D3E6 -> $D459): the border cell $0520, or with
+       $0550 bit 7 a pattern of it and $058C, 8 cells each way */
+    if (x < 0 || y < 0 || x >= E.w || y >= E.h) {
+        static const uint8_t rows[8] = { 0x44, 0xEE, 0xEE, 0x44, 0x11, 0xBB, 0xBB, 0x11 };
+        if ((E.ram[0x550] & 0x80) && !((1 << (x & 7)) & rows[y & 7])) return E.ram[0x58C];
+        return E.ram[0x520];
+    }
     return E.wram[0x1800 + y * E.w + x];
+}
+
+/* The metatile a town/dungeon cell value is drawn with, the hero in room
+ * `room` ($46: the value's upper three bits). The game's own rule ($D4F3):
+ * a cell of the hero's room shows its metatile (the low five bits); any other
+ * shows metatile $20 from outside (a roof) or $21 from inside a room (the
+ * dark), but on maps of type 4 ($07BA) the border's value shows everywhere. */
+static int town_meta(int v, int room)
+{
+    if ((v & 0xE0) == room) return v & 0x1F;
+    if (E.ram[0x7BA] == 4 && (v & 0x1F) == E.ram[0x520]) return v & 0x1F;
+    return room ? 0x21 : 0x20;
 }
 
 /* The plain metatile of a key (its four tile numbers), or NULL; *pal its palette. */
@@ -202,10 +224,8 @@ static int score(int dx, int dy, int *total)
         for (int x = E.hx - 6; x <= E.hx + 6; x++) {
             if (!E.overworld && (x < 0 || y < 0 || x >= E.w || y >= E.h)) continue;
             int key = cell_key(x, y);
-            /* a room or roof cell (upper bits) shows its base metatile when the
-               room is open: it counts when it does (inside buildings every cell is one) */
-            bool room = !E.overworld && (key >> 5);
-            const uint8_t *d = plain(room ? key & 31 : key, &pal);
+            bool room = false;
+            const uint8_t *d = E.overworld ? plain(key, &pal) : E.wram + 0x1600 + 4 * town_meta(key, E.room46);
             /* only cells that say something: a metatile of four equal tiles
                (blank, flat colour) matches any blank screen */
             if (!d || (d[0] == d[1] && d[1] == d[2] && d[2] == d[3])) continue;
@@ -220,6 +240,22 @@ static int score(int dx, int dy, int *total)
         }
     *total = t;
     return n;
+}
+
+/* How many map tiles on screen are not what the map shows for room E.room46
+ * (the screen as the camera has it; around the hero before it is found). */
+static int room_miss(void)
+{
+    int miss = 0;
+    bool cam = E.cam_ok && E.cam_key == E.key;
+    int wx0 = cam ? floordiv(E.cam_px, 8) : 2 * E.hx - 14, wy0 = cam ? floordiv(E.cam_py, 8) : 2 * E.hy - 12;
+    for (int j = 2; j < 28; j += 2)
+        for (int k = 2; k < 30; k += 2) {
+            int wx = wx0 + k, wy = wy0 + j, m = town_meta(cell_key(floordiv(wx, 2), floordiv(wy, 2)), E.room46);
+            uint8_t g = nt_tile(wx + E.dx, mod(wy + E.dy, 30));
+            if (E.map_tile[g]) miss += g != E.wram[0x1600 + 4 * m + ((wx & 1) | (wy & 1) << 1)];
+        }
+    return miss;
 }
 
 /* The best ring offset; true if it explains at least 60% of the cells. */
@@ -244,7 +280,7 @@ static bool search(void)
 static void map_tiles(void)
 {
     memset(E.map_tile, 0, sizeof E.map_tile);
-    for (int i = 0; i < 32 * 4; i++) E.map_tile[E.wram[0x1600 + i]] = 1;
+    for (int i = 0; i < (E.overworld ? 32 : 34) * 4; i++) E.map_tile[E.wram[0x1600 + i]] = 1;
     if (E.overworld) for (int i = 0; i < 16 * 4; i++) E.map_tile[E.wram[0x1680 + i]] = 1;
     for (int i = 0; i < 256; i++)
         for (int j = 0; j < LOOKS; j++)
@@ -274,7 +310,6 @@ static bool in_window(int tx, int ty, uint8_t f)
     return side == 2;
 }
 
-#define WIN(g) ((g) >= 1 && (g) <= 0x8B)
 static int dbg_frame;
 static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *wx0_, int *wy0_);
 static void learn(void)
@@ -447,10 +482,36 @@ static void frame_begin(void *ctx)
     }
     if (ow != E.overworld || key != E.key) {
         E.overworld = ow; E.key = key;
-        E.cam_ok = false;
+        E.cam_ok = false; E.room46 = E.room_alt = E.ram[0x46] & 0xE0; E.alt_frames = 0;
         memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; memset(E.border, 0, sizeof E.border); memset(E.cellmem, 0, sizeof E.cellmem); E.search_wait = 0; was = false;
     }
     map_tiles();
+    /* The room the picture was drawn for: the hero's ($46), but the game
+       redraws the screen a little after it changes, and a scene can show
+       another: when the picture disagrees, the room that explains it best. */
+    if (!ow) {
+        int want = E.ram[0x46] & 0xE0, old = E.room46;
+        for (int i = 0; i < 32; i++) E.row_tag[i] = 0x7FFFFFFF;
+        E.screen_miss = 0;
+        if (!was) E.room46 = E.room_alt = want;
+        else {
+            E.room_alt = E.room46;                          /* (whole-screen: no rows of another room) */
+            int m0 = room_miss();
+            if (m0 || E.room46 != want) {
+                int best = m0, br = E.room46;
+                for (int i = 0; i < 9; i++) {
+                    E.room46 = i == 0 ? want : (i - 1) << 5;
+                    int v = room_miss();
+                    if (v < best || (v == best && i == 0)) { best = v; br = E.room46; }
+                }
+                E.room46 = br;
+            }
+            E.screen_miss = room_miss();
+            if (E.room46 != old) { E.alt = old; E.alt_frames = 90; }
+            else if (E.alt_frames > 0) E.alt_frames--;
+            E.room_alt = E.alt_frames > 0 ? E.alt : E.room46;
+        }
+    }
     int total, s = was ? score(E.dx, E.dy, &total) : 0;
     if (was && total >= 24 && 2 * s >= total) E.valid = true;
     else if (was && total < 24) E.valid = true;            /* mostly covered by windows: keep what we had */
@@ -519,7 +580,7 @@ static void frame_begin(void *ctx)
             locate(E.need_search, &a, &b, &c, &d, &e, &f);
             E.need_search = false;
         }
-        learn();
+        if (E.overworld) learn();                           /* (towns and dungeons need none: town_meta) */
     } else E.valid_frames = 0;
     if (E.valid != was && getenv("DW4_EDGES_DEBUG"))
         fprintf(stderr, "dw4_edges: %s %s offset %d,%d hero %d,%d\n", E.valid ? "on" : "off",
@@ -559,11 +620,44 @@ static int bg_hook(void *ctx, int line, int x, uint16_t v, uint8_t tile)
 
 /* ---- widescreen ---- */
 
+/* The room map row y is drawn for on screen: the game redraws the screen row
+ * by row over a few frames when the hero changes room, so each row is asked. */
+static int row_bad(int y, int room)
+{
+    int bad = 0, x0 = floordiv(E.cam_px, 16) + 1;
+    for (int x = x0; x < x0 + 14; x++) {
+        int m = town_meta(cell_key(x, y), room);
+        for (int q = 0; q < 4; q++) {
+            uint8_t g = nt_tile(2 * x + E.dx + (q & 1), mod(2 * y + E.dy + (q >> 1), 30));
+            if (E.map_tile[g]) bad += E.wram[0x1600 + 4 * m + q] != g;
+        }
+    }
+    return bad;
+}
+
+static int row_room(int y)
+{
+    if (!E.screen_miss || !E.cam_ok || E.cam_key != E.key) return E.room46;
+    int i = y & 31;
+    if (E.row_tag[i] != y) {
+        int best = row_bad(y, E.room46), br = E.room46;
+        /* (a row on screen only: rows off it take the screen's room) */
+        if (best && y >= floordiv(E.cam_py, 16) && y <= floordiv(E.cam_py + 239, 16))
+            if (E.room_alt != E.room46 && row_bad(y, E.room_alt) < best) br = E.room_alt;
+        E.row_tag[i] = y; E.row_alt[i] = (int8_t)(br >> 5);
+    }
+    return E.row_alt[i] << 5;
+}
+
 /* The tile and palette of map tile column wx, row wy (2 per map cell). */
 static int map_quarter(int wx, int wy)
 {
     int x = floordiv(wx, 2), y = floordiv(wy, 2);
     int c = cell_key(x, y), q = (wx & 1) | (wy & 1) << 1, pal;
+    if (!E.overworld) {                                     /* towns and dungeons: as the game draws it */
+        int m = town_meta(c, row_room(y));
+        return E.wram[0x1600 + 4 * m + q] | (E.wram[0x16C0 + m] & 3) << 8;
+    }
     if (!E.overworld && (x < 0 || y < 0 || x >= E.w || y >= E.h)) {
         if (E.border[x & 15][y & 15].ok) return E.border[x & 15][y & 15].q[q] | E.border[x & 15][y & 15].pal << 8;
         /* a place never seen: the pattern's same place seen elsewhere */
@@ -673,7 +767,6 @@ static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *w
         /* no copy with the hero on screen: a scene looking away, if the
            picture says clearly where; else nothing to go by: near the hero */
         if (best >= (hero_copy ? 1 : 16 * 48)) { wx0 = bx; wy0 = by; }
-        else { wx0 = cwx; wy0 = cwy; }
     }
     E.cam_px = 8 * wx0 + fx; E.cam_py = 8 * wy0 + fy; E.cam_key = E.key; E.cam_ok = true;
     E.cam_hero = 2 * E.hx >= wx0 && 2 * E.hx < wx0 + 32 && 2 * E.hy >= wy0 && 2 * E.hy < wy0 + 30;
@@ -883,12 +976,15 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
                 uint8_t g = nt_tile(tx0 + k, mod(ty0 + j, 30));
                 if (t < 0 || !E.map_tile[g] || (g == 0 && in_window(tx0 + k, mod(ty0 + j, 30), 0))) continue;
                 n++; bad += (t & 0xFF) != g;
+                if ((t & 0xFF) != g && getenv("DW4_WIDE_DEBUG") && getenv("DW4_WIDE_DEBUG")[0] == '3')
+                    fprintf(stderr, "  disagree cell %d,%d value %02X room %02X: map %02X screen %02X\n", floordiv(wx0 + k, 2), floordiv(wy0 + j, 2),
+                            cell_key(floordiv(wx0 + k, 2), floordiv(wy0 + j, 2)), E.room46, t & 0xFF, g);
                 /* tiles that show something: a battle's black screen agrees
                    with every dark cell of a cave (and the map's characters
                    were drawn in the sides, with the battle's tiles) */
                 drawn += (t & 0xFF) == g && !black_tile(g, t >> 8, tb);
             }
-        if (n < 20 || bad * 4 > n || drawn < 6) {
+        if (n < 20 || bad * (E.overworld ? 4 : 8) > n || drawn < 6) {
             if (getenv("DW4_EDGES_DEBUG")) fprintf(stderr, "dw4_wide: picture disagrees %d/%d\n", bad, n);
             if (P.have) { int h = hold(out, width, x0, native); if (h) return h; }
             return uniform(out, width, x0, native);
@@ -926,8 +1022,7 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
                             k, j, floordiv(wx, 2), floordiv(wy, 2), c, E.cur[c], c >> 5, E.room[c >> 5].state,
                             nt_tile(tx0 + k, mod(ty0 + j, 30)), nt_tile(tx0 + k + 1, mod(ty0 + j, 30)),
                             nt_tile(tx0 + k, mod(ty0 + j + 1, 30)), nt_tile(tx0 + k + 1, mod(ty0 + j + 1, 30)));
-                    { int bx = floordiv(wx, 2) & 15, by = floordiv(wy, 2) & 15;
-                      fprintf(stderr, " border[%d][%d] %d %02X%02X", bx, by, E.border[bx][by].ok, E.border[bx][by].q[0], E.border[bx][by].q[1]); }
+                    fprintf(stderr, " want %02X room46 %02X/%02X meta20 %02X meta21 %02X", t & 0xFF, E.room46, E.ram[0x46], E.wram[0x1680], E.wram[0x1684]);
                     for (int l = 0; l < LOOKS; l++) if (E.look[c][l].conf)
                         fprintf(stderr, " %02X%02X%02X%02X:%d", E.look[c][l].q[0], E.look[c][l].q[1], E.look[c][l].q[2], E.look[c][l].q[3], E.look[c][l].conf);
                     fprintf(stderr, "\n");
