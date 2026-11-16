@@ -89,7 +89,7 @@ static struct {
     int8_t cur[256];        /* the look each value shows on screen this frame, or -1 */
     int view;               /* 0 native, 1 16:9 */
     int cam_px, cam_py;     /* map pixel at native (0, 0) last presented (compose) */
-    unsigned cam_key; bool cam_ok, need_search;
+    unsigned cam_key; bool cam_ok, need_search, cam_hero;
     int recheck;            /* frames since the town offset was last checked against the others */
     int valid_frames;       /* frames the map has been matched in a row */
     /* towns: how each room (cell key >> 5; 0 = not in a room) shows now, from
@@ -274,6 +274,7 @@ static bool in_window(int tx, int ty, uint8_t f)
     return side == 2;
 }
 
+#define WIN(g) ((g) >= 1 && (g) <= 0x8B)
 static int dbg_frame;
 static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *wx0_, int *wy0_);
 static void learn(void)
@@ -303,7 +304,9 @@ static void learn(void)
         for (int x = mx0; x <= mx1; x++) {
             int c = cell_key(x, y), tx = 2 * x + E.dx, ty = mod(2 * y + E.dy, 30);
             uint8_t q[4] = { nt_tile(tx, ty), nt_tile(tx + 1, ty), nt_tile(tx, ty + 1), nt_tile(tx + 1, ty + 1) };
-            if (!E.map_tile[q[0]] || !E.map_tile[q[1]] || !E.map_tile[q[2]] || !E.map_tile[q[3]]) continue;  /* a window */
+            /* a window or text (tiles $01-$8B; not "a tile no metatile has":
+               a roof's tile is in none, and roofs were never learned) */
+            if (WIN(q[0]) || WIN(q[1]) || WIN(q[2]) || WIN(q[3])) continue;
             uint8_t pal = nt_pal(tx, ty);
             if (!flat_ok && q[0] == q[1] && q[1] == q[2] && q[2] == q[3]) {
                 int pp2; const uint8_t *d2 = plain(E.overworld || !(c >> 5) ? c : c & 31, &pp2);
@@ -342,9 +345,13 @@ static void learn(void)
             for (int j = 0; j < LOOKS; j++)
                 if (E.look[c][j].conf > 0 && !memcmp(E.look[c][j].q, q, 4)) { cnt[c][j]++; break; }
             if (E.overworld) continue;
-            if (!E.map_tile[q[0]] || !E.map_tile[q[1]] || !E.map_tile[q[2]] || !E.map_tile[q[3]]) continue;
+            if (WIN(q[0]) || WIN(q[1]) || WIN(q[2]) || WIN(q[3])) continue;
             if (q[0] == q[1] && q[1] == q[2] && q[2] == q[3] && in_window(tx, ty, q[0])) continue;
             if (x < 0 || y < 0 || x >= E.w || y >= E.h) {
+                /* (only with the camera found and the hero in its picture, a
+                   few frames on: a map just matched may still be half drawn
+                   at another offset, and what the border shows is kept) */
+                if (!(E.cam_ok && E.cam_key == E.key && E.cam_hero && E.valid_frames >= 8)) continue;
                 if (E.valid_frames >= 30 || !(q[0] == q[1] && q[1] == q[2] && q[2] == q[3])) {
                     __typeof__(E.border[0][0]) *b = &E.border[x & 15][y & 15];
                     uint8_t bp = nt_pal(tx, ty);
@@ -507,9 +514,10 @@ static void frame_begin(void *ctx)
            forward, a slower display; a camera left behind puts the learning
            window over cells off screen, whose nametable rows and columns hold
            other cells, and those were learned as the border's looks) */
-        if (was && E.cam_ok && !E.need_search && !E.overworld) {
+        if (!E.overworld) {
             int a, b, c, d, e, f;
-            locate(false, &a, &b, &c, &d, &e, &f);
+            locate(E.need_search, &a, &b, &c, &d, &e, &f);
+            E.need_search = false;
         }
         learn();
     } else E.valid_frames = 0;
@@ -580,8 +588,10 @@ static int map_quarter(int wx, int wy)
         if (!st && r) {
             /* a room not seen yet: hidden, like the room seen last (its roof)
                or black (caves are dark until a room is entered) */
-            if (!E.room_last || E.room[E.room_last].state != 2) return -1;
-            r = E.room_last; st = 2;
+            int h = E.room_last && E.room[E.room_last].state == 2 ? E.room_last : 0;
+            for (int i = 7; i > 0 && !h; i--) if (E.room[i].state == 2) h = i;   /* (a building of several rooms: one roof) */
+            if (!h) return -1;
+            r = h; st = 2;
         }
         if (st == 2) return E.room[r].q[q] | E.room[r].pal << 8;
         if (st == 1) {
@@ -621,6 +631,9 @@ static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *w
     }
     if (search && !E.overworld) {
         int best = -1, bx = wx0, by = wy0;
+        /* the copy that has the hero on screen (one at most; none in a scene
+           that looks away), and what the picture says for it */
+        int hero_v = 0, hbx = 0, hby = 0; bool hero_copy = false;
         for (int n = -2; n <= 2; n++)
             for (int m = -3; m <= 3; m++) {
                 int cx_ = wx0 + 64 * n, cy_ = wy0 + 30 * m, v = 0;
@@ -642,13 +655,28 @@ static void locate(bool search, int *fx_, int *fy_, int *tx0_, int *ty0_, int *w
                         v += hit ? 2 : -1;
                     }
                 v = v * 16 - (abs(n) + abs(m));                   /* ties: nearest the hero */
+                if (2 * E.hx >= cx_ && 2 * E.hx < cx_ + 32 && 2 * E.hy >= cy_ && 2 * E.hy < cy_ + 30) {
+                    hero_copy = true; hero_v = v; hbx = cx_; hby = cy_;
+                }
                 if (v > best) { best = v; bx = cx_; by = cy_; }
             }
+        /* The hero is on screen but for a few scenes, so its copy is the one:
+           another needs the picture to say so clearly (a screen half drawn,
+           or mostly windows, matched a copy a ring away on a few tiles, and
+           the cells learned there - the border's looks among them - were the
+           town's own, drawn again in the grass beyond its edge) */
+        if (hero_copy && !(best >= 16 * 48 && best >= 2 * (hero_v > 0 ? hero_v : 0) + 16 * 24)) {
+            best = 1; bx = hbx; by = hby;
+        }
         if (getenv("DW4_WIDE_DEBUG"))
             fprintf(stderr, "dw4_wide: search %d,%d -> %d,%d (score %d) hero %d,%d off %d,%d\n", wx0, wy0, bx, by, best, E.hx, E.hy, E.dx, E.dy);
-        if (best > 0) { wx0 = bx; wy0 = by; }               /* else nothing to go by: near the hero */
+        /* no copy with the hero on screen: a scene looking away, if the
+           picture says clearly where; else nothing to go by: near the hero */
+        if (best >= (hero_copy ? 1 : 16 * 48)) { wx0 = bx; wy0 = by; }
+        else { wx0 = cwx; wy0 = cwy; }
     }
     E.cam_px = 8 * wx0 + fx; E.cam_py = 8 * wy0 + fy; E.cam_key = E.key; E.cam_ok = true;
+    E.cam_hero = 2 * E.hx >= wx0 && 2 * E.hx < wx0 + 32 && 2 * E.hy >= wy0 && 2 * E.hy < wy0 + 30;
     *fx_ = fx; *fy_ = fy; *tx0_ = tx0; *ty0_ = ty0; *wx0_ = wx0; *wy0_ = wy0;
 }
 
@@ -742,6 +770,15 @@ static bool flat_tile(uint8_t tile, uint16_t table)
     for (int i = 1; i < 8; i++)
         if (cyc_render_chr((uint16_t)(table + tile * 16 + i)) != lo || cyc_render_chr((uint16_t)(table + tile * 16 + 8 + i)) != hi) return false;
     return true;
+}
+
+/* A tile that shows as plain black. */
+static bool black_tile(uint8_t tile, int pal, uint16_t table)
+{
+    if (!flat_tile(tile, table)) return false;
+    int v = (cyc_render_chr((uint16_t)(table + tile * 16)) & 1) | (cyc_render_chr((uint16_t)(table + tile * 16 + 8)) & 1) << 1;
+    int c = cyc_render_palette(v ? (pal & 3) * 4 + v : 0) & 0x3F;
+    return (c & 0x0F) >= 0x0D || c == 0x0F;
 }
 
 static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
@@ -838,15 +875,20 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
     /* does the native picture show this map here? (a battle can leave the
        map's tiles in the nametable while the screen shows the battle) */
     {
-        int n = 0, bad = 0;
+        int n = 0, bad = 0, drawn = 0;
+        uint16_t tb = cyc_render_line_bg_table(120);
         for (int j = 2; j < 28; j += 2)
             for (int k = 2; k < 30; k += 2) {
                 int t = map_quarter(wx0 + k, wy0 + j);
                 uint8_t g = nt_tile(tx0 + k, mod(ty0 + j, 30));
                 if (t < 0 || !E.map_tile[g] || (g == 0 && in_window(tx0 + k, mod(ty0 + j, 30), 0))) continue;
                 n++; bad += (t & 0xFF) != g;
+                /* tiles that show something: a battle's black screen agrees
+                   with every dark cell of a cave (and the map's characters
+                   were drawn in the sides, with the battle's tiles) */
+                drawn += (t & 0xFF) == g && !black_tile(g, t >> 8, tb);
             }
-        if (n < 20 || bad * 4 > n) {
+        if (n < 20 || bad * 4 > n || drawn < 6) {
             if (getenv("DW4_EDGES_DEBUG")) fprintf(stderr, "dw4_wide: picture disagrees %d/%d\n", bad, n);
             if (P.have) { int h = hold(out, width, x0, native); if (h) return h; }
             return uniform(out, width, x0, native);
