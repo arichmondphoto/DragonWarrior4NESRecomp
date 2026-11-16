@@ -161,9 +161,7 @@ the waterfall, one piece just over the threshold).
 - macOS builds are Apple Silicon only; Intel or universal needs a universal
   SDL2.
 - The HD pack's own licence line says "Personal use; generated from your ROM"
-  while the repository is public under MIT. Decide what the pack's line should
-  say. The downloads contain ROM-derived material (recompiled code, graphics
-  upscaled from ROM tiles) even though the ROM itself is not included.
+  while the repository is public under MIT. It should say "MIT license". 
 - Releases are created on GitHub's website (the cloud session can't create
   releases or push tags). The version is `1.0.<commit count>`: build both
   platforms from the same commit.
