@@ -123,7 +123,9 @@ say "Compiling for Windows ($JOBS jobs)"
 cmake --build "$B" --parallel "$JOBS"
 [ -f "$B/$EXE.exe" ] || die "the build finished but $B/$EXE.exe is missing"
 OBJDUMP="$(command -v "$MINGW-objdump" || command -v objdump)"
-if ! "$OBJDUMP" -p "$B/$EXE.exe" | grep -qi 'DLL Name: SDL2.dll'; then
+# (Read the whole list first: grep -q stopping early fails the pipe under pipefail.)
+IMPORTS="$("$OBJDUMP" -p "$B/$EXE.exe" 2>&1 | grep -i 'DLL Name' || true)"
+if ! grep -qi 'DLL Name: SDL2.dll' <<<"$IMPORTS"; then
     echo "--- details for the bug report ---"
     echo "objdump: $OBJDUMP"
     "$OBJDUMP" -p "$B/$EXE.exe" 2>&1 | grep -i -E "DLL Name|format" | head -30
@@ -144,12 +146,24 @@ cp "$SDL_ROOT/bin/SDL2.dll" "$STAGE/"
 # Any other DLL the program needs that Windows itself doesn't have (MinGW's
 # thread library, for one) comes from the MinGW install.
 SEARCH=("$SDL_ROOT/bin" /usr/$MINGW/bin /usr/$MINGW/lib /usr/lib/gcc/$MINGW/*-posix /usr/lib/gcc/$MINGW/*)
-for dll in $("$OBJDUMP" -p "$B/$EXE.exe" | sed -n 's/.*DLL Name: //p' | tr -d '\r'); do
+# Windows' own DLLs stay out; any other one the program imports must be found.
+WINDOWS_DLLS=" kernel32.dll user32.dll gdi32.dll shell32.dll ole32.dll oleaut32.dll comdlg32.dll advapi32.dll \
+ ws2_32.dll opengl32.dll d2d1.dll dwrite.dll windowscodecs.dll msvcrt.dll ucrtbase.dll winmm.dll imm32.dll \
+ version.dll setupapi.dll shlwapi.dll dbghelp.dll bcrypt.dll crypt32.dll iphlpapi.dll dwmapi.dll uxtheme.dll \
+ hid.dll cfgmgr32.dll dinput8.dll xinput1_4.dll ntdll.dll "
+missing=""
+for dll in $(sed -n 's/.*DLL Name: //p' <<<"$IMPORTS" | tr -d '\r'); do
+    lc="$(tr 'A-Z' 'a-z' <<<"$dll")"
+    case "$WINDOWS_DLLS" in *" $lc "*) continue ;; esac
+    case "$lc" in api-ms-win-*) continue ;; esac
     [ -f "$STAGE/$dll" ] && continue
+    found=""
     for d in "${SEARCH[@]}"; do
-        if [ -f "$d/$dll" ]; then cp "$d/$dll" "$STAGE/"; echo "  + $dll"; break; fi
+        if [ -f "$d/$dll" ]; then cp "$d/$dll" "$STAGE/"; echo "  + $dll"; found=1; break; fi
     done
+    [ -n "$found" ] || missing="$missing $dll"
 done
+[ -z "$missing" ] || die "the game needs DLLs that weren't found to include:$missing"
 
 # The HD pack, switched on from the first run (Mods in the launcher turns it off).
 if [ -n "$NESMOD" ]; then
