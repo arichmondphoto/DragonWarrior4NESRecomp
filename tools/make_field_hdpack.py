@@ -278,12 +278,21 @@ def shared_ground(a, items, looks, versions, add_img):
     stats = collections.Counter()
     done, n = {}, 0
     by_id = {v['id']: v for v in versions}
+    ids = json.load(open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'hd', 'field', 'ids.json')))['ids']
+    ref = {fp: bytes.fromhex(pal) for fp, pal in ids.values()}
+    extra = {iid: ref[hashlib.sha1(bytes.fromhex(vs[0]['chr'])).hexdigest()[:16]] for iid, vs in items.items()
+             if hashlib.sha1(bytes.fromhex(vs[0]['chr'])).hexdigest()[:16] in EXTRA_GROUND_FP}
     for v in versions:
         if not v['real']: continue
         key = (v['item'], v['pal']); gk = pairs.get(key)
         if not gk or key not in looks or gk not in looks: continue
         g, gp = gk
-        m8 = ground_mask(px[v['item']], v['pal'], px[g], gp)
+        # a multi-colour ground (the open sea): the same pixels are water in
+        # every palette, so the mask comes from the art's own (day) palette -
+        # at night one of the sea's colours is black, which the colour test
+        # reads as outline, and most shore tiles kept their own water
+        sea = extra.get(g)
+        m8 = ground_mask(px[v['item']], sea, px[g], sea) if sea and v['pal'] == gp else ground_mask(px[v['item']], v['pal'], px[g], gp)
         share = m8.mean()
         if not GROUND_MIN <= share <= GROUND_MAX: continue
         if key not in done:
@@ -301,6 +310,7 @@ def shared_ground(a, items, looks, versions, add_img):
             # inside the 8-bit ground: swap unless clearly object paint;
             # on the rim outside it: swap only what looks like ground
             mask = ((big & ~(do < OBJ_KEEP * dg)) | (ring & (dg < do))).astype(float)
+            if sea: mask = (big | (ring & (dg < do))).astype(float)   # (water is never object paint)
             mask = ndimage.gaussian_filter(mask, 2.0, mode='nearest')
             out = T * (1 - mask[..., None]) + G * mask[..., None]
             # keep it only where it helps: the seams with the ground tile and
@@ -309,6 +319,7 @@ def shared_ground(a, items, looks, versions, add_img):
             ct, cg = col(v['pal'], px[v['item']]), col(gp, px[g])
             before, bl = seam_total(T, G, ct, cg); after, al_ = seam_total(out, G, ct, cg)
             ok = bl and (after < 0.8 * before or after <= 10) and all(y <= x + 12 for x, y in zip(bl, al_))
+            ok = bool(ok or sea)                 # the sea's shores always carry the sea's water, in every palette alike
             stats['helps' if ok else 'no gain'] += 1
             if GROUND_LOG: GROUND_LOG.write(f"{v['item']}\t{v['pal'].hex()}\t{g}\t{gp.hex()}\t{share:.2f}\t{before:.0f}\t{after:.0f}\t{ok}\n")
             if not ok: done[key] = None; continue
