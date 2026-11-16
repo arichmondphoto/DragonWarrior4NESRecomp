@@ -95,7 +95,7 @@ static struct {
     bool blanking;                 /* the screen is going blank over the map (the battle spiral) */
     int room46;                    /* the room ($46) the picture on screen was drawn for */
     int room_alt, alt_frames, alt, screen_miss;      /* the other room while the game redraws the screen for a new one */
-    int row_tag[32]; int8_t row_alt[32];
+    int row_tag[3][32]; int8_t row_alt[3][32];
     int recheck;            /* frames since the town offset was last checked against the others */
     int valid_frames;       /* frames the map has been matched in a row */
     /* towns: how each room (cell key >> 5; 0 = not in a room) shows now, from
@@ -580,10 +580,19 @@ static void frame_begin(void *ctx)
     } else {
         E.w = E.ram[0x3F]; E.h = E.ram[0x40]; E.hx = E.ram[0x44]; E.hy = E.ram[0x45];
         if (E.w < 4 || E.h < 4 || E.w * E.h > 0x800) goto done;
-        /* entering a map, the hero's cell is still the old map's for a few
-           frames (and the screen still the old picture) */
-        if (E.hx >= E.w || E.hy >= E.h) goto done;
         key = (unsigned)E.ram[0x63] << 24 | (unsigned)E.ram[0x64] << 16 | (unsigned)E.w << 8 | (unsigned)E.h;
+        if (E.hx >= E.w || E.hy >= E.h) {
+            /* walking off the map's edge (the hero's cell outside it, $FF
+               to the left or up): the same map, still on screen while it
+               fades - go on from its edge cell (the camera is the scroll's) */
+            if (was && key == E.key && E.cam_ok) {
+                E.hx = E.hx >= 0x80 ? 0 : E.hx >= E.w ? E.w - 1 : E.hx;
+                E.hy = E.hy >= 0x80 ? 0 : E.hy >= E.h ? E.h - 1 : E.hy;
+            }
+            /* entering a map, the hero's cell is still the old map's for a
+               few frames (and the screen still the old picture) */
+            else goto done;
+        }
     }
     if (ow != E.overworld || key != E.key) {
         E.overworld = ow; E.key = key;
@@ -597,13 +606,16 @@ static void frame_begin(void *ctx)
     if (!ow) {
         if (!was || ++isle_frames >= 30) { isle_frames = 0; islands(); }
         int want = E.ram[0x46] & 0xE0, old = E.room46;
-        for (int i = 0; i < 32; i++) E.row_tag[i] = 0x7FFFFFFF;
+        for (int i = 0; i < 32; i++) E.row_tag[0][i] = E.row_tag[1][i] = E.row_tag[2][i] = 0x7FFFFFFF;
         E.screen_miss = 0;
         if (!was) E.room46 = E.room_alt = want;
         else {
             E.room_alt = E.room46;                          /* (whole-screen: no rows of another room) */
             int m0 = room_miss();
-            if (m0 || E.room46 != want) {
+            /* (only from a picture of the map: a black screen is every
+               room's dark) */
+            if (!E.shown) E.room46 = want;
+            else if (m0 || E.room46 != want) {
                 int best = m0, br = E.room46;
                 for (int i = 0; i < 9; i++) {
                     E.room46 = i == 0 ? want : (i - 1) << 5;
@@ -656,10 +668,11 @@ static void frame_begin(void *ctx)
         if (E.valid) { memset(E.look, 0, sizeof E.look); memset(E.room, 0, sizeof E.room); E.room_last = 0; memset(E.border, 0, sizeof E.border); memset(E.cellmem, 0, sizeof E.cellmem); }
         else E.search_wait = 8;
     }
-    if (E.valid && was && !ow && ++E.recheck >= 8) {
-        /* towns: room cells only count where they show, so a wrong offset
-           matched early (the screen half drawn) can go on looking right;
-           every 8 frames, another offset that explains clearly more wins */
+    if (E.valid && was && ++E.recheck >= 8) {
+        /* a wrong offset matched early (the screen half drawn: after a battle
+           the world is drawn again at a new place in the ring) can go on
+           explaining most cells (towns: room cells only count where they
+           show); every 8 frames, another offset that explains clearly more wins */
         E.recheck = 0;
         /* (only an offset that leaves cells unexplained can be wrong: with
            windows open the right one explains the few cells left to see,
@@ -694,7 +707,7 @@ static void frame_begin(void *ctx)
             E.need_search = false;
         }
         E.shown = map_visible();
-        if (E.overworld && E.shown) learn();                /* (towns and dungeons need none: town_meta) */
+        if (E.overworld && E.shown && getenv("DW4_OW_LEARN")) learn();                /* (towns and dungeons need none: town_meta) */
     } else E.valid_frames = 0;
     if (!E.valid) E.shown = false;
     if (E.valid && !E.shown && getenv("DW4_WIDE_DEBUG")) fprintf(stderr, "dw4_wide: f%d matched but not shown\n", dbg_frame);
@@ -744,10 +757,13 @@ static int bg_hook(void *ctx, int line, int x, uint16_t v, uint8_t tile)
 
 /* The room map row y is drawn for on screen: the game redraws the screen row
  * by row over a few frames when the hero changes room, so each row is asked. */
-static int row_bad(int y, int room)
+/* How many of row y's tiles on screen are not what room `room` draws there:
+ * side 0 the two cells at the native picture's left edge, 1 its right edge,
+ * 2 the whole row. */
+static int row_bad(int y, int room, int side)
 {
-    int bad = 0, x0 = floordiv(E.cam_px, 16) + 1;
-    for (int x = x0; x < x0 + 14; x++) {
+    int bad = 0, x0 = floordiv(E.cam_px, 16) + 1, a = side == 1 ? x0 + 12 : x0, b = side == 0 ? x0 + 2 : x0 + 14;
+    for (int x = a; x < b; x++) {
         int m = town_meta(cell_key(x, y), room);
         for (int q = 0; q < 4; q++) {
             uint8_t g = nt_tile(2 * x + E.dx + (q & 1), mod(2 * y + E.dy + (q >> 1), 30));
@@ -757,18 +773,25 @@ static int row_bad(int y, int room)
     return bad;
 }
 
-static int row_room(int y)
+/* The room map row y is drawn for: the game redraws the screen for a new
+ * room over several frames (row by row, or darkening the rest in a sweep),
+ * so each row is asked - for a side, at the native picture's edge on that
+ * side, so the sides go on as the picture next to them does. */
+static int row_room(int y, int side)
 {
-    if (!E.screen_miss || !E.cam_ok || E.cam_key != E.key) return E.room46;
+    if ((!E.screen_miss && (E.ram[0x46] & 0xE0) == E.room46) || !E.cam_ok || E.cam_key != E.key) return E.room46;
     int i = y & 31;
-    if (E.row_tag[i] != y) {
-        int best = row_bad(y, E.room46), br = E.room46;
+    if (E.row_tag[side][i] != y) {
+        int best = row_bad(y, E.room46, side), br = E.room46;
         /* (a row on screen only: rows off it take the screen's room) */
         if (best && y >= floordiv(E.cam_py, 16) && y <= floordiv(E.cam_py + 239, 16))
-            if (E.room_alt != E.room46 && row_bad(y, E.room_alt) < best) br = E.room_alt;
-        E.row_tag[i] = y; E.row_alt[i] = (int8_t)(br >> 5);
+            for (int a = 0; a < 2; a++) {
+                int r = a ? E.ram[0x46] & 0xE0 : E.room_alt, v;          /* the room before, the hero's now */
+                if (r != E.room46 && r != br && (v = row_bad(y, r, side)) < best) { best = v; br = r; }
+            }
+        E.row_tag[side][i] = y; E.row_alt[side][i] = (int8_t)(br >> 5);
     }
-    return E.row_alt[i] << 5;
+    return E.row_alt[side][i] << 5;
 }
 
 /* The tile and palette of map tile column wx, row wy (2 per map cell). */
@@ -779,7 +802,9 @@ static int map_quarter(int wx, int wy)
     if (!E.overworld) {                                     /* towns and dungeons: as the game draws it */
         if (isle_apart && x >= 0 && y >= 0 && x < E.w && y < E.h && isle[y * E.w + x] && E.hx < E.w && E.hy < E.h &&
             isle[E.hy * E.w + E.hx] && isle[y * E.w + x] != isle[E.hy * E.w + E.hx]) c = E.ram[0x520];
-        int m = town_meta(c, row_room(y));
+        int side = 2;
+        if (E.cam_ok && E.cam_key == E.key) side = wx < floordiv(E.cam_px, 8) ? 0 : wx >= floordiv(E.cam_px, 8) + 32 ? 1 : 2;
+        int m = town_meta(c, row_room(y, side));
         return E.wram[0x1600 + 4 * m + q] | (E.wram[0x16C0 + m] & 3) << 8;
     }
     if (!E.overworld && (x < 0 || y < 0 || x >= E.w || y >= E.h)) {
@@ -914,6 +939,9 @@ static struct {
     uint8_t nt[30][32]; int tx0, ty0;       /* the native picture's tiles then */
     uint8_t ismap[30][32]; int maps;        /* which were map tiles (not windows, not flat), how many */
     bool have; int frames;
+    uint8_t ring[30][64], ringmap[30][64];  /* the whole nametable ring then, and its map tiles */
+    int sx, sy;                             /* its scroll (the picture may go on scrolling while it fades) */
+    uint8_t flipf[30][32];                  /* hold frame each screen tile turned to one colour (0: not yet) */
 } P;
 
 static void side_tile(int x, int y, uint16_t pattern, int pal, unsigned flags)
@@ -956,6 +984,16 @@ static void paint_tile(uint32_t *out, int width, const SideTile *t, const uint8_
 static double spiral_time(double dx, double dy)
 {
     double r = sqrt(dx * dx + dy * dy), ph = fmod(atan2(dy, dx) - 0.4712 - 0.1 * r, M_PI / 2);
+    if (ph < 0) ph += M_PI / 2;
+    return 6.30 + 12.54 * ph + 0.404 * r;
+}
+
+/* The same, its arms going on straight beyond a part f of the way out (the
+ * picture's edge): the angle where the tile is, the twist and the distance
+ * of that edge, so the sides are done when the middle is. */
+static double spiral_time_at(double dx, double dy, double f)
+{
+    double r = f * sqrt(dx * dx + dy * dy), ph = fmod(atan2(dy, dx) - 0.4712 - 0.1 * r, M_PI / 2);
     if (ph < 0) ph += M_PI / 2;
     return 6.30 + 12.54 * ph + 0.404 * r;
 }
@@ -1003,40 +1041,101 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
     static int debug = -1;
     if (debug < 0) debug = getenv("DW4_WIDE_DEBUG") != NULL;
     if (!P.have || ++P.frames > 240) { P.have = false; return 0; }
-    /* still the map picture: its tiles, or ones turned to one colour (the spiral) */
+    /* the screen now, by its scroll: a town left walking scrolls on while it
+       fades, and the sides scroll with it */
+    int sx = cyc_render_line_scroll_x(120), sy = mod(cyc_render_line_scroll_y(120) - 120, 240);
+    int ddx = mod(sx - P.sx + 256, 512) - 256, ddy = mod(sy - P.sy + 120, 240) - 120;
+    int stx = sx >> 3, sty = sy >> 3, fy = sy & 7;
+    /* still the map picture: its tiles, or ones turned to one colour (the
+       battle's spiral; a door's rows cleared) */
     uint16_t table = cyc_render_line_bg_table(120);
     int same = 0, flat = 0, other = 0, same_map = 0;
     static double times[30 * 32];
-    for (int j = 0; j < 30; j++)
+    static uint8_t vflat[30][32];
+    int rowflat[30], rowchg[30];
+    for (int j = 0; j < 30; j++) {
+        rowflat[j] = rowchg[j] = 0;
         for (int k = 0; k < 32; k++) {
-            uint8_t g = nt_tile(P.tx0 + k, mod(P.ty0 + j, 30));
-            if (g == P.nt[j][k]) { same++; same_map += P.ismap[j][k]; }
-            else if (g == 0 && in_window(P.tx0 + k, mod(P.ty0 + j, 30), 0)) same++;   /* a window opened: not the spiral */
-            else if (flat_tile(g, table)) times[flat++] = spiral_time(k + 0.5 - 16, j + 0.5 - 15);
+            int tx = mod(stx + k, 64), ty = mod(sty + j, 30);
+            uint8_t g = nt_tile(tx, ty), h = P.ring[ty][tx];
+            bool fl = flat_tile(g, table);
+            vflat[j][k] = 0;
+            rowflat[j] += fl;
+            if (g == h) { same++; same_map += P.ringmap[ty][tx]; }
+            else if (g == 0 && in_window(tx, ty, 0)) same++;     /* a window opened */
+            else if (fl) {
+                vflat[j][k] = 1; rowchg[j]++;
+                if (!P.flipf[j][k]) P.flipf[j][k] = (uint8_t)(P.frames < 255 ? P.frames : 255);
+                times[flat++] = spiral_time(k + 0.5 - 16, j + 0.5 - 15);
+            }
             else other++;
         }
+    }
     int lit = 0;
     for (int i = 0; i < 256 * 240; i += 7) {
         uint32_t c = native[i];
         lit += ((c >> 16 & 255) > 24) || ((c >> 8 & 255) > 24) || ((c & 255) > 24);
     }
-    if (debug) fprintf(stderr, "dw4_wide: hold %d same %d flat %d other %d lit %d\n", P.frames, same, flat, other, lit);
     /* another screen, black, or the map gone (the spiral done: windows such as
        the status may stay up into the battle) */
-    if (other > 96 || lit < 40 || same_map * 25 < P.maps) { P.have = false; return 0; }
-    static uint8_t skip[MAX_SIDE];
-    memset(skip, 0, (size_t)P.nheld);
+    if (other > 96 || lit < 40 || same_map * 25 < P.maps) {
+        if (debug) fprintf(stderr, "dw4_wide: hold %d ends: same %d flat %d other %d lit %d\n", P.frames, same, flat, other, lit);
+        P.have = false; return 0;
+    }
+    /* how it goes: the spiral (the tiles turned so far are the ones it has
+       reached), whole rows cleared, or neither (a fade: nothing left out) */
+    int mode = 0;
+    double off = 0;
     if (flat > 8) {
-        /* the spiral: how far it has come, from the tiles it has turned */
-        for (int i = 1; i < flat; i++)                                   /* sort (small) */
-            for (int j = i; j > 0 && times[j] < times[j - 1]; j--) { double x = times[j]; times[j] = times[j - 1]; times[j - 1] = x; }
-        double now = times[flat * 9 / 10];
-        for (int i = 0; i < P.nheld; i++) {
-            const SideTile *t = &P.held[i];
-            skip[i] = spiral_time((t->x - x0 + 4) / 8.0 - 16, (t->y + 4) / 8.0 - 15) <= now;
+        /* the spiral: the model's times (spiral_time) against the frames the
+           tiles turned, as an offset; it is the spiral when they agree */
+        static double d[30 * 32];
+        int n = 0, n1 = 0;
+        for (int pass = 0; pass < 2 && n < 8; pass++) {
+            n = 0;
+            for (int j = 0; j < 30; j++)
+                for (int k = 1; k < 31; k++)
+                    if (P.flipf[j][k] > (pass ? 0 : 1) && vflat[j][k]) d[n++] = P.flipf[j][k] - spiral_time(k + 0.5 - 16, j + 0.5 - 15);
+            if (!pass) n1 = n;
+        }
+        if (n >= 8) {
+            for (int a = 1; a < n; a++) for (int b = a; b > 0 && d[b] < d[b - 1]; b--) { double x = d[b]; d[b] = d[b - 1]; d[b - 1] = x; }
+            off = d[n / 2];
+            int good = 0;
+            for (int a = 0; a < n; a++) good += fabs(d[a] - off) <= 3;
+            if (debug) fprintf(stderr, "dw4_wide: spiral offset %.1f, %d of %d within 3 frames (%d after the start)\n", off, good, n, n1);
+            if (4 * good >= 3 * n) mode = 1;
+        }
+        if (!mode) {
+            int rows = 0;
+            for (int j = 0; j < 30; j++) if (rowchg[j] && rowflat[j] == 32) rows++;
+            if (rows) mode = 2;
         }
     }
-    paint(out, width, x0, native, P.held, P.nheld, skip, true, false);
+    if (debug) fprintf(stderr, "dw4_wide: hold %d same %d flat %d other %d lit %d mode %d scroll %+d,%+d\n", P.frames, same, flat, other, lit, mode, ddx, ddy);
+    static SideTile cur[MAX_SIDE];
+    static uint8_t skip[MAX_SIDE];
+    for (int i = 0; i < P.nheld; i++) {
+        SideTile *t = &cur[i];
+        *t = P.held[i]; t->x = (int16_t)(t->x - ddx); t->y = (int16_t)(t->y - ddy);
+        skip[i] = 0;
+        int j = floordiv(t->y + fy, 8);
+        if (mode == 2) skip[i] = j >= 0 && j < 30 && rowchg[j] && rowflat[j] == 32;
+        else if (mode == 1) {
+            /* the spiral has no shape beyond the native picture: a side tile
+               goes with its row's tile at the picture's edge (columns 1 and
+               30: the outermost are the edge repair's), a quarter frame later
+               per tile further out, so the arms run on across the seam and
+               the sides are done when the middle is; the model (offset
+               fitted on the native tiles) only says when that edge tile
+               should go if it has not been seen to */
+            double kx = (t->x - x0 + 4) / 8.0;
+            int c = kx < 16 ? 1 : 30, jr = j < 0 ? 0 : j > 29 ? 29 : j;
+            double dist = kx < 16 ? 1 - kx : kx - 30;
+            if (P.flipf[jr][c]) skip[i] = P.flipf[jr][c] + 0.25 * dist <= P.frames;
+        }
+    }
+    paint(out, width, x0, native, cur, P.nheld, skip, true, false);
     return 1;
 }
 
@@ -1112,6 +1211,13 @@ static int compose1(uint32_t *out, int width, int height, int x0, const uint32_t
                 int t = map_quarter(wx0 + k, wy0 + j);
                 uint8_t g = nt_tile(tx0 + k, mod(ty0 + j, 30));
                 if (t < 0 || !E.map_tile[g] || (g == 0 && in_window(tx0 + k, mod(ty0 + j, 30), 0))) continue;
+                /* (while the game redraws the screen for a new room, a tile
+                   of either room agrees) */
+                if ((t & 0xFF) != g && !E.overworld) {
+                    int c2 = cell_key(floordiv(wx0 + k, 2), floordiv(wy0 + j, 2)), q2 = ((wx0 + k) & 1) | ((wy0 + j) & 1) << 1;
+                    if (E.wram[0x1600 + 4 * town_meta(c2, E.room_alt) + q2] == g || E.wram[0x1600 + 4 * town_meta(c2, E.room46) + q2] == g ||
+                        E.wram[0x1600 + 4 * town_meta(c2, E.ram[0x46] & 0xE0) + q2] == g) t = (t & ~0xFF) | g;
+                }
                 n++; bad += (t & 0xFF) != g;
                 if ((t & 0xFF) != g && getenv("DW4_WIDE_DEBUG") && getenv("DW4_WIDE_DEBUG")[0] == '3')
                     fprintf(stderr, "  disagree cell %d,%d value %02X room %02X: map %02X screen %02X\n", floordiv(wx0 + k, 2), floordiv(wy0 + j, 2),
@@ -1184,6 +1290,13 @@ static int compose1(uint32_t *out, int width, int height, int x0, const uint32_t
     P.maps = 0;
     for (int j = 0; j < 30; j++)
         for (int k = 0; k < 32; k++) P.maps += P.ismap[j][k] = E.map_tile[P.nt[j][k]] && !flat_tile(P.nt[j][k], table);
+    for (int j = 0; j < 30; j++)
+        for (int k = 0; k < 64; k++) {
+            P.ring[j][k] = nt_tile(k, j);
+            P.ringmap[j][k] = E.map_tile[P.ring[j][k]] && !flat_tile(P.ring[j][k], table);
+        }
+    P.sx = cyc_render_line_scroll_x(120); P.sy = mod(cyc_render_line_scroll_y(120) - 120, 240);
+    memset(P.flipf, 0, sizeof P.flipf);
     P.have = true; P.frames = 0;
     return 1;
 }
