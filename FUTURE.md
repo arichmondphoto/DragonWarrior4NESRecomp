@@ -150,9 +150,10 @@ the waterfall, one piece just over the threshold).
 - **Done (untested on Windows):** `./build_windows.sh` cross-compiles on Linux
   with MinGW-w64 in a container (README "Build for Windows"). The owner keeps
   the ROM off GitHub, so no cloud build.
-- **Left:** the owner's first run on his Linux PC (expect a round of MinGW
-  compile fixes, sent back as errors); then a run check with Wine, and
-  ideally once on a real Windows PC.
+- **Builds** on the owner's Linux PC (2026-11-16, fd170da): compiled clean;
+  fixes were only in the script (SDL2 setup file, pipefail check, DLL copy).
+- **Left:** run check with Wine (launcher, HD on, sound/pad, widescreen,
+  battery save + states, ROM remembered), then once on a real Windows PC.
 
 ### 8. Release polish
 - The macOS app is ad-hoc signed: players need "Open Anyway". Removing that
