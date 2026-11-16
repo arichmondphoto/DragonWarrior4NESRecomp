@@ -70,6 +70,27 @@ cd DragonWarrior4NESRecomp
   `dist/DragonWarriorIV-linux-<arch>-<version>.tar.gz`.
 - The steps themselves are `linux/build_in_env.sh` (build dir `build-linux/`; the HD pack's captures are cached there).
 
+## Build for Windows (on Linux)
+The Windows version is cross-compiled on a Linux PC with MinGW-w64; no Windows machine is needed to build it,
+and the ROM stays on your computer. Requires Git and Podman or Docker.
+```sh
+./build_windows.sh "/path/to/Dragon Warrior IV (USA).nes"
+wine "build-windows/stage/Dragon Warrior IV/DragonWarrior4.exe"     # optional: try it with Wine
+```
+- Result: `dist/DragonWarriorIV-windows-x64-<version>.zip`, a folder with `DragonWarrior4.exe`, `SDL2.dll` (and any
+  other MinGW DLL the program imports), the launcher's assets, the HD pack with `mods/state.toml` (on by default)
+  and `READ ME FIRST.txt` (`windows/READ_ME_FIRST.txt`). Never the ROM. Saves, settings and the Mods selection
+  stay in that folder (the framework's default on Windows). 64-bit Windows 10/11.
+- The container (`windows/Dockerfile`) is Debian 12 with MinGW-w64 (posix threads); `--native` builds on the
+  host instead (it prints the packages each distro needs). Steps: `windows/build_in_env.sh`:
+  1. a Linux headless build (`build-win-host/`) supplies the recompiler (a cross build can't run the one it
+     would build: `-DDW4_RECOMPILER`) and plays the game for the HD pack's captures (cached there);
+  2. SDL2's official MinGW development release, fetched once into `build-windows/sdl2/`;
+  3. the Windows build (`build-windows/`, toolchain `windows/toolchain-mingw64.cmake`: `-Wa,-mbig-obj` for the
+     large generated code, static libgcc/libstdc++, `-mwindows` so no console window opens);
+  4. the zip.
+- The HD compositing uses every core on Windows too (patch 0030).
+
 ## Build (headless baseline)
 ```sh
 git submodule update --init
@@ -551,6 +572,9 @@ They are framework bugs, kept here until they can go upstream:
   the 16:9 view mode gets a **Widescreen** row in the launcher's Display
   settings (the launcher's game-defined aspect cycle), carrying `[Game]
   ViewMode`; the view mode is applied after the launcher even when off.
+- `0030-hdpack-windows-threads.patch` — patch 0016's bands on every core use
+  Windows threads on Windows (CreateThread; core count from GetSystemInfo),
+  where it used to fall back to one core. POSIX threads elsewhere, unchanged.
 - `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
   same per-channel colour map as `rgb:` (patch 0011), applied while drawing
   instead of at load, so the entry shares the untouched decoded block. Used

@@ -147,15 +147,12 @@ the waterfall, one piece just over the threshold).
   then whether ticking one should untick the other.
 
 ### 7. Windows build
-- **Why:** asked about, not started. The owner builds on macOS; the result must
-  run on Windows.
-- **How:** cross-compile with MinGW-w64 from the Mac (or try it first in the
-  cloud sandbox, which has the same compiler). Known work: a toolchain file;
-  whatever MinGW rejects in code written for Visual Studio; a Windows version
-  of the multi-threaded compositing (patch 0016 is pthread-only and falls back
-  to one core); `mods/state.toml` shipped in the zip so the HD pack starts on;
-  a Windows read-me (SmartScreen: "More info > Run anyway"). Testing needs a
-  Windows PC or VM.
+- **Done (untested on Windows):** `./build_windows.sh` cross-compiles on Linux
+  with MinGW-w64 in a container (README "Build for Windows"). The owner keeps
+  the ROM off GitHub, so no cloud build.
+- **Left:** the owner's first run on his Linux PC (expect a round of MinGW
+  compile fixes, sent back as errors); then a run check with Wine, and
+  ideally once on a real Windows PC.
 
 ### 8. Release polish
 - The macOS app is ad-hoc signed: players need "Open Anyway". Removing that

@@ -10,9 +10,18 @@ set(DW4_ROM "${CMAKE_SOURCE_DIR}/rom/DragonWarriorIV.nes" CACHE FILEPATH "Dragon
 # patches/nesrecomp/0002 raises the host's own limit to 10).
 add_compile_definitions(LNG_WINDOW_SCALE_MAX=10)
 
+# A cross build (windows/build_in_env.sh: Windows from Linux) can't run the
+# recompiler it would build, so it passes one built for the machine doing the build.
+set(DW4_RECOMPILER "" CACHE FILEPATH "Runnable NESRecomp for cross builds (empty: build one)")
+set(DW4_RECOMPILER_ARG)
+if(DW4_RECOMPILER)
+    set(DW4_RECOMPILER_ARG RECOMPILER "${DW4_RECOMPILER}")
+endif()
+
 include("${NESRECOMP_ROOT}/runner/cyc/project.cmake")
 nesrecomp_add_cycle_game(DragonWarrior4
     ROM "${DW4_ROM}"
+    ${DW4_RECOMPILER_ARG}
     GAME_CONFIG "${CMAKE_SOURCE_DIR}/game.toml"
     # Mods runtime with the shared Mesen HD pack provider (off until a pack is
     # installed and enabled in the launcher's Mods screen).

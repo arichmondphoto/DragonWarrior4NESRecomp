@@ -1,0 +1,76 @@
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 6bf49f1..4b76d6d 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -1459,20 +1459,42 @@ static void upscale_rows(const uint32_t *native_fb, int native_w, uint32_t *hd_b
+     }
+ }
+ 
+-#if !defined(_WIN32) && !defined(NESRECOMP_HDPACK_SINGLE_THREAD)
++#if !defined(NESRECOMP_HDPACK_SINGLE_THREAD)
++/* Bands on every core: POSIX threads, or Windows' own (MSVC has no pthreads).
++ * windows.h comes last in the file so its macros cannot touch the code above. */
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
++#define NOMINMAX
++#include <windows.h>
++typedef HANDLE hd_thread_t;
++#else
+ #include <pthread.h>
+ #include <unistd.h>
++typedef pthread_t hd_thread_t;
++#endif
+ #define HD_MAX_THREADS 16
+-static void *band_main(void *arg) {
+-    HdBand *b = (HdBand *)arg;
++static void band_run(HdBand *b) {
+     upscale_rows(b->native_fb, b->native_w, b->hd_buf, b->y0, b->y1);
+-    return NULL;
+ }
++#ifdef _WIN32
++static DWORD WINAPI band_main_w(LPVOID arg) { band_run((HdBand *)arg); return 0; }
++static int hd_thread_start(hd_thread_t *t, HdBand *b) {
++    *t = CreateThread(NULL, 0, band_main_w, b, 0, NULL);
++    return *t != NULL;
++}
++static void hd_thread_join(hd_thread_t t) { WaitForSingleObject(t, INFINITE); CloseHandle(t); }
++static long hd_cores(void) { SYSTEM_INFO si; GetSystemInfo(&si); return (long)si.dwNumberOfProcessors; }
++#else
++static void *band_main_p(void *arg) { band_run((HdBand *)arg); return NULL; }
++static int hd_thread_start(hd_thread_t *t, HdBand *b) { return pthread_create(t, NULL, band_main_p, b) == 0; }
++static void hd_thread_join(hd_thread_t t) { pthread_join(t, NULL); }
++static long hd_cores(void) { return sysconf(_SC_NPROCESSORS_ONLN); }
++#endif
+ static int hd_threads(void) {
+     static int n = 0;
+     if (!n) {
+         const char *e = getenv("NESRECOMP_HDPACK_THREADS");
+-        long c = e && *e ? atol(e) : sysconf(_SC_NPROCESSORS_ONLN);
++        long c = e && *e ? atol(e) : hd_cores();
+         n = c < 1 ? 1 : c > HD_MAX_THREADS ? HD_MAX_THREADS : (int)c;
+     }
+     return n;
+@@ -1511,17 +1533,17 @@ void hdpack_upscale(const uint32_t *native_fb, int native_w, uint32_t *hd_buf) {
+     for (int i = 0; i < s_cond_count; i++)
+         if (s_cond_all[i]->use_cache) cond_eval(s_cond_all[i], 0, 0, NULL, 0);
+ 
+-#if !defined(_WIN32) && !defined(NESRECOMP_HDPACK_SINGLE_THREAD)
++#if !defined(NESRECOMP_HDPACK_SINGLE_THREAD)
+     int n = hd_threads();
+     if (n > 1) {
+-        pthread_t th[HD_MAX_THREADS]; HdBand band[HD_MAX_THREADS]; int started[HD_MAX_THREADS];
++        hd_thread_t th[HD_MAX_THREADS]; HdBand band[HD_MAX_THREADS]; int started[HD_MAX_THREADS];
+         for (int i = 0; i < n; i++) {
+             band[i] = (HdBand){ native_fb, native_w, hd_buf, 240 * i / n, 240 * (i + 1) / n };
+-            started[i] = i > 0 && pthread_create(&th[i], NULL, band_main, &band[i]) == 0;
+-            if (i > 0 && !started[i]) band_main(&band[i]);      /* no thread: do it here */
++            started[i] = i > 0 && hd_thread_start(&th[i], &band[i]);
++            if (i > 0 && !started[i]) band_run(&band[i]);      /* no thread: do it here */
+         }
+-        band_main(&band[0]);
+-        for (int i = 1; i < n; i++) if (started[i]) pthread_join(th[i], NULL);
++        band_run(&band[0]);
++        for (int i = 1; i < n; i++) if (started[i]) hd_thread_join(th[i]);
+         return;
+     }
+ #endif

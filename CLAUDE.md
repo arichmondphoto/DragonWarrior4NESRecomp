@@ -31,6 +31,11 @@ README.md is the full reference; this file is the working summary.
   (patch 0017) to ~/.local/share/DragonWarrior4Recomp, finds the ROM, turns the HD pack on at first run.
   HD_VERSION is read from package_macos_app.sh (single source). Docker Hub is blocked from the cloud sandbox:
   the container path is only testable on the owner's machine; test natively here.
+- Windows (cross-compiled on Linux, MinGW-w64): `./build_windows.sh [--native] [ROM]` → `dist/DragonWarriorIV-windows-x64-*.zip`.
+  Container = `windows/Dockerfile`; steps = `windows/build_in_env.sh` (Linux headless helper `build-win-host/` gives the
+  recompiler via `-DDW4_RECOMPILER` and the HD pack captures; SDL2 MinGW devel fetched into `build-windows/sdl2/`;
+  toolchain `windows/toolchain-mingw64.cmake`). No MinGW here: only testable on the owner's Linux PC. The owner won't
+  put the ROM on GitHub (no cloud CI builds).
 - Linux headless host used for tests here (`build-hd/DragonWarrior4`, NESRECOMP_HEADLESS=ON, MODS + HD
   packs): `tools/apply_patches.sh && cmake --build build-hd`.
 - HD pack: `tools/build_hd_pack.sh HOST OUTDIR [PYTHON] [JOBS]` (e.g. `build-hd/DragonWarrior4 out/build7/pack python3 2`).
