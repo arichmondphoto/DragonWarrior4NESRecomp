@@ -191,6 +191,49 @@ static int cell_key(int x, int y)
     return E.wram[0x1800 + y * E.w + x];
 }
 
+/* Islands: on an upper floor every building is its own island in the sky,
+ * set so far apart that the 4:3 screen never shows two at once. A wider
+ * screen would; so on a map where no island can be seen from any other, only
+ * the hero's is drawn. An island is a group of touching cells that are not
+ * the border's value; "seen from" is by the screen's reach (8 cells) around
+ * its cells. */
+static uint8_t isle[0x800]; static bool isle_apart; static int isle_frames;
+static void islands(void)
+{
+    int w = E.w, h = E.h, n = 0, bord = E.ram[0x520];
+    static int16_t stack[0x800];
+    int box[64][8];                                         /* all cells x0 y0 x1 y1, inside cells x0 y0 x1 y1 */
+    memset(isle, 0, sizeof isle); isle_apart = false;
+    if (w * h > 0x800 || (E.ram[0x550] & 0x80)) return;
+    for (int i = 0; i < w * h; i++) {
+        if (isle[i] || E.wram[0x1800 + i] == bord) continue;
+        if (++n >= 64) return;                              /* a town's trees: not that kind of map */
+        int sp = 0, *b = box[n]; stack[sp++] = (int16_t)i; isle[i] = (uint8_t)n;
+        b[0] = b[4] = w; b[1] = b[5] = h; b[2] = b[6] = b[3] = b[7] = -1;
+        while (sp) {
+            int c = stack[--sp], x = c % w, y = c / w, in = 0;
+            if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (x > b[2]) b[2] = x; if (y > b[3]) b[3] = y;
+            for (int d = 0; d < 8; d++) {
+                int nx = x + (int[]){ 0, 1, 0, -1, 1, 1, -1, -1 }[d], ny = y + (int[]){ -1, 0, 1, 0, -1, 1, 1, -1 }[d];
+                if (nx < 0 || ny < 0 || nx >= w || ny >= h || E.wram[0x1800 + ny * w + nx] == bord) continue;
+                if (d < 4) in++;
+                if (!isle[ny * w + nx]) { isle[ny * w + nx] = (uint8_t)n; stack[sp++] = (int16_t)(ny * w + nx); }
+            }
+            if (in == 4) { if (x < b[4]) b[4] = x; if (y < b[5]) b[5] = y; if (x > b[6]) b[6] = x; if (y > b[7]) b[7] = y; }
+        }
+    }
+    if (n < 2) return;
+    for (int i = 1; i <= n; i++)
+        for (int j = 1; j <= n; j++) {
+            if (i == j) continue;
+            /* the screen shows columns x-8..x+7 and rows y-7..y+8 around the hero at x, y
+               (any cell of its island: what is hidden can never be on the 4:3 screen) */
+            if (box[j][2] >= box[i][0] - 8 && box[j][0] <= box[i][2] + 7 && box[j][3] >= box[i][1] - 7 && box[j][1] <= box[i][3] + 8) return;
+        }
+    isle_apart = true;
+    if (getenv("DW4_WIDE_DEBUG")) fprintf(stderr, "dw4_wide: islands apart (%d) map %08X\n", n, E.key);
+}
+
 /* The metatile a town/dungeon cell value is drawn with, the hero in room
  * `room` ($46: the value's upper three bits). The game's own rule ($D4F3):
  * a cell of the hero's room shows its metatile (the low five bits); any other
@@ -215,6 +258,15 @@ static const uint8_t *plain(int key, int *pal)
     return E.wram + 0x1600 + key * 4;
 }
 
+static bool in_window(int tx, int ty, uint8_t f);
+/* Whether nametable tile g at (tx, ty) is the map's: not a window's or text's
+ * tile, nor the blank inside a window (tile 0, which is also a map tile where
+ * a metatile is black: the dark outside a room). */
+static bool map_shown(int tx, int ty, uint8_t g)
+{
+    return E.map_tile[g] && !(g == 0 && in_window(tx, ty, 0));
+}
+
 /* How many cells around the hero the nametable shows as their plain
  * metatile, with map tile (0,0) at nametable tile (dx, dy). */
 static int score(int dx, int dy, int *total)
@@ -232,7 +284,7 @@ static int score(int dx, int dy, int *total)
             int tx = 2 * x + dx, ty = mod(2 * y + dy, 30);
             uint8_t a = nt_tile(tx, ty), b = nt_tile(tx + 1, ty), c = nt_tile(tx, ty + 1), e = nt_tile(tx + 1, ty + 1);
             /* a window or text over the cell says nothing about the map */
-            if (!E.map_tile[a] || !E.map_tile[b] || !E.map_tile[c] || !E.map_tile[e]) continue;
+            if (!map_shown(tx, ty, a) || !map_shown(tx + 1, ty, b) || !map_shown(tx, mod(ty + 1, 30), c) || !map_shown(tx + 1, mod(ty + 1, 30), e)) continue;
             bool hit = a == d[0] && b == d[1] && c == d[2] && e == d[3];
             if (room && !hit) continue;
             t++;
@@ -253,7 +305,7 @@ static int room_miss(void)
         for (int k = 2; k < 30; k += 2) {
             int wx = wx0 + k, wy = wy0 + j, m = town_meta(cell_key(floordiv(wx, 2), floordiv(wy, 2)), E.room46);
             uint8_t g = nt_tile(wx + E.dx, mod(wy + E.dy, 30));
-            if (E.map_tile[g]) miss += g != E.wram[0x1600 + 4 * m + ((wx & 1) | (wy & 1) << 1)];
+            if (map_shown(wx + E.dx, mod(wy + E.dy, 30), g)) miss += g != E.wram[0x1600 + 4 * m + ((wx & 1) | (wy & 1) << 1)];
         }
     return miss;
 }
@@ -490,6 +542,7 @@ static void frame_begin(void *ctx)
        redraws the screen a little after it changes, and a scene can show
        another: when the picture disagrees, the room that explains it best. */
     if (!ow) {
+        if (!was || ++isle_frames >= 30) { isle_frames = 0; islands(); }
         int want = E.ram[0x46] & 0xE0, old = E.room46;
         for (int i = 0; i < 32; i++) E.row_tag[i] = 0x7FFFFFFF;
         E.screen_miss = 0;
@@ -502,11 +555,14 @@ static void frame_begin(void *ctx)
                 for (int i = 0; i < 9; i++) {
                     E.room46 = i == 0 ? want : (i - 1) << 5;
                     int v = room_miss();
-                    if (v < best || (v == best && i == 0)) { best = v; br = E.room46; }
+                    /* (a room other than the hero's must explain the picture clearly better) */
+                    if (i == 0 ? v <= best : 2 * v < best) { best = v; br = E.room46; }
                 }
                 E.room46 = br;
             }
             E.screen_miss = room_miss();
+            if (E.room46 != old && getenv("DW4_WIDE_DEBUG"))
+                fprintf(stderr, "dw4_wide: room %02X -> %02X ($46 %02X) misses %d -> %d cam %d,%d ok %d dx %d dy %d\n", old, E.room46, want, m0, E.screen_miss, E.cam_px, E.cam_py, E.cam_ok, E.dx, E.dy);
             if (E.room46 != old) { E.alt = old; E.alt_frames = 90; }
             else if (E.alt_frames > 0) E.alt_frames--;
             E.room_alt = E.alt_frames > 0 ? E.alt : E.room46;
@@ -552,12 +608,16 @@ static void frame_begin(void *ctx)
            matched early (the screen half drawn) can go on looking right;
            every 8 frames, another offset that explains clearly more wins */
         E.recheck = 0;
-        int t, cur = score(E.dx, E.dy, &t), best = cur, bdx = E.dx, bdy = E.dy;
-        for (int dy = 0; dy < 30; dy += 2)
+        /* (only an offset that leaves cells unexplained can be wrong: with
+           windows open the right one explains the few cells left to see,
+           while another may match more of them by chance) */
+        int t, tc, cur = score(E.dx, E.dy, &tc), best = cur, bdx = E.dx, bdy = E.dy, bmiss = tc - cur;
+        for (int dy = 0; dy < 30 && cur < tc; dy += 2)
             for (int dx = 0; dx < 64; dx += 2) {
                 int v = score(dx, dy, &t);
-                if (v > best) { best = v; bdx = dx; bdy = dy; }
+                if (v > best && t - v < tc - cur) { best = v; bdx = dx; bdy = dy; bmiss = t - v; }
             }
+        (void)bmiss;
         if (best >= cur + cur / 4 + 4 && (bdx != E.dx || bdy != E.dy)) {
             if (getenv("DW4_EDGES_DEBUG"))
                 fprintf(stderr, "dw4_edges: recheck %d,%d (%d) -> %d,%d (%d) hero %d,%d\n", E.dx, E.dy, cur, bdx, bdy, best, E.hx, E.hy);
@@ -589,6 +649,8 @@ done:
     cyc_ppu_set_show_left(E.valid);
 }
 
+static int map_quarter(int wx, int wy);
+
 static int bg_hook(void *ctx, int line, int x, uint16_t v, uint8_t tile)
 {
     (void)ctx;
@@ -603,6 +665,9 @@ static int bg_hook(void *ctx, int line, int x, uint16_t v, uint8_t tile)
     if (E.cam_ok && E.cam_key == E.key && !E.overworld) { ex = floordiv(E.cam_px + x, 8); ey = floordiv(E.cam_py + line, 8); }
     wx += 64 * floordiv(ex - wx + 32, 64);
     wy += 30 * floordiv(ey - wy + 15, 30);
+    /* towns and dungeons: what the game draws there (not the cell's plain
+       look: with the hero in a room the rest is dark, a cave's other rooms too) */
+    if (!E.overworld) return map_quarter(wx, wy);
     int c = cell_key(floordiv(wx, 2), floordiv(wy, 2)), q = (wx & 1) | (wy & 1) << 1, pal;
     const Look *l = E.look[c];
     /* the game's own drawing of this cell, if it is one of the cell's looks
@@ -629,7 +694,7 @@ static int row_bad(int y, int room)
         int m = town_meta(cell_key(x, y), room);
         for (int q = 0; q < 4; q++) {
             uint8_t g = nt_tile(2 * x + E.dx + (q & 1), mod(2 * y + E.dy + (q >> 1), 30));
-            if (E.map_tile[g]) bad += E.wram[0x1600 + 4 * m + q] != g;
+            if (map_shown(2 * x + E.dx + (q & 1), mod(2 * y + E.dy + (q >> 1), 30), g)) bad += E.wram[0x1600 + 4 * m + q] != g;
         }
     }
     return bad;
@@ -655,6 +720,8 @@ static int map_quarter(int wx, int wy)
     int x = floordiv(wx, 2), y = floordiv(wy, 2);
     int c = cell_key(x, y), q = (wx & 1) | (wy & 1) << 1, pal;
     if (!E.overworld) {                                     /* towns and dungeons: as the game draws it */
+        if (isle_apart && x >= 0 && y >= 0 && x < E.w && y < E.h && isle[y * E.w + x] && E.hx < E.w && E.hy < E.h &&
+            isle[E.hy * E.w + E.hx] && isle[y * E.w + x] != isle[E.hy * E.w + E.hx]) c = E.ram[0x520];
         int m = town_meta(c, row_room(y));
         return E.wram[0x1600 + 4 * m + q] | (E.wram[0x16C0 + m] & 3) << 8;
     }
@@ -887,6 +954,7 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
         for (int k = 0; k < 32; k++) {
             uint8_t g = nt_tile(P.tx0 + k, mod(P.ty0 + j, 30));
             if (g == P.nt[j][k]) { same++; same_map += P.ismap[j][k]; }
+            else if (g == 0 && in_window(P.tx0 + k, mod(P.ty0 + j, 30), 0)) same++;   /* a window opened: not the spiral */
             else if (flat_tile(g, table)) times[flat++] = spiral_time(k + 0.5 - 16, j + 0.5 - 15);
             else other++;
         }
@@ -947,15 +1015,27 @@ static int uniform(uint32_t *out, int width, int x0, const uint32_t *native)
     return 1;
 }
 
+static int compose1(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user);
+static char path_dbg;                                      /* which way the last picture went (DW4_WIDE_PATH=1 logs it) */
 static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
+{
+    path_dbg = '-';
+    int r = compose1(out, width, height, x0, native, user);
+    if (getenv("DW4_WIDE_PATH")) fprintf(stderr, "dw4_wide: path %c %d valid %d\n", path_dbg, r, E.valid);
+    return r;
+}
+
+static int compose1(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
 {
     (void)user; (void)height;
     /* nothing read from the game yet (the first frames; edge repair off) */
     if (!E.enabled || !E.ram || !E.wram || !E.ciram) return 0;
     if (!E.valid) {                                        /* not a map: one tile everywhere, the last one fading, or pillarboxed */
-        if (P.have) { int h = hold(out, width, x0, native); if (h) return h; }
+        if (P.have) { int h = hold(out, width, x0, native); if (h) { path_dbg = 'h'; return h; } }
+        path_dbg = 'u';
         return uniform(out, width, x0, native);
     }
+    path_dbg = 'm';
     static int ck = -1;
     if (ck < 0) ck = getenv("DW4_WIDE_CHECK") != NULL;
     check_wide = ck;
@@ -986,7 +1066,8 @@ static int compose(uint32_t *out, int width, int height, int x0, const uint32_t 
             }
         if (n < 20 || bad * (E.overworld ? 4 : 8) > n || drawn < 6) {
             if (getenv("DW4_EDGES_DEBUG")) fprintf(stderr, "dw4_wide: picture disagrees %d/%d\n", bad, n);
-            if (P.have) { int h = hold(out, width, x0, native); if (h) return h; }
+            if (P.have) { int h = hold(out, width, x0, native); if (h) { path_dbg = 'H'; return h; } }
+            path_dbg = 'U';
             return uniform(out, width, x0, native);
         }
     }
@@ -1086,6 +1167,9 @@ static void draw_characters(uint32_t *out, int width, int x0, int ox, int oy)
             /* the previous cell only counts when it is next door (it also holds where the party came out) */
             if (abs(pdx) + abs(pdy) == 1) { PX = X + pdx; PY = Y + pdy; } else { PX = X; PY = Y; }
         } else if (X >= 0x80 || Y >= 0x80) continue;        /* not on the map */
+        /* on another island of an upper floor (islands()): hidden with its building */
+        else if (isle_apart && X < E.w && Y < E.h && E.hx < E.w && E.hy < E.h && isle[E.hy * E.w + E.hx] &&
+                 isle[Y * E.w + X] && isle[Y * E.w + X] != isle[E.hy * E.w + E.hx]) continue;
         /* walking: each character's own progress, in 1/16 pixels from the
            left/upper of its two cells ($7100 X, $7120 Y) */
         int rem = X != PX || Y != PY;
