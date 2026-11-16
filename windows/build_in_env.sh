@@ -75,22 +75,36 @@ if [ "${DW4_NO_HD:-0}" != 1 ]; then
 fi
 
 # --- 2. SDL2 for MinGW --------------------------------------------------------
-SDL_ROOT="$B/sdl2/SDL2-$SDL_VERSION/$MINGW"
-if [ ! -f "$SDL_ROOT/lib/cmake/SDL2/SDL2Config.cmake" ]; then
+SDL_TOP="$B/sdl2/SDL2-$SDL_VERSION"
+SDL_ROOT="$SDL_TOP/$MINGW"
+# SDL2's CMake setup: the release's own cmake/ folder (made for exactly this:
+# it picks the 64-bit libraries), else the one under the 64-bit tree, which is
+# named sdl2-config.cmake or SDL2Config.cmake depending on the release.
+sdl_cmake_dir() {
+    for d in "$SDL_TOP/cmake" "$SDL_ROOT/lib/cmake/SDL2"; do
+        if [ -f "$d/sdl2-config.cmake" ] || [ -f "$d/SDL2Config.cmake" ]; then echo "$d"; return 0; fi
+    done
+    return 1
+}
+if ! sdl_cmake_dir >/dev/null || [ ! -f "$SDL_ROOT/bin/SDL2.dll" ]; then
     say "Fetching SDL2 $SDL_VERSION for MinGW"
+    rm -rf "$B/sdl2"
     mkdir -p "$B/sdl2"
     curl -fsSL "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VERSION/SDL2-devel-$SDL_VERSION-mingw.tar.gz" \
         -o "$B/sdl2/sdl.tar.gz"
     tar -xzf "$B/sdl2/sdl.tar.gz" -C "$B/sdl2"
     rm -f "$B/sdl2/sdl.tar.gz"
 fi
-[ -f "$SDL_ROOT/lib/cmake/SDL2/SDL2Config.cmake" ] || die "SDL2's CMake files are missing under $SDL_ROOT"
+SDL_CMAKE="$(sdl_cmake_dir)" || { echo "SDL2 download contents:" >&2; find "$B/sdl2" -maxdepth 4 -name '*.cmake' >&2;
+    die "SDL2's CMake files are missing under $SDL_TOP"; }
+[ -f "$SDL_ROOT/bin/SDL2.dll" ] || die "SDL2.dll is missing under $SDL_ROOT/bin"
+echo "  SDL2: $SDL_CMAKE"
 
 # --- 3. Windows build ---------------------------------------------------------
 say "Configuring the Windows build"
 cmake -S . -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_TOOLCHAIN_FILE="$PWD/windows/toolchain-mingw64.cmake" \
-      -DSDL2_DIR="$PWD/$SDL_ROOT/lib/cmake/SDL2" \
+      -DSDL2_DIR="$PWD/$SDL_CMAKE" \
       -DDW4_RECOMPILER="$RECOMPILER" \
       -DNESRECOMP_GAME_VERSION="$VERSION" -DNESRECOMP_BUILD_REVISION="$COMMIT" \
       -DDW4_ROM="$PWD/rom/DragonWarriorIV.nes" ${DW4_CMAKE_ARGS:-}
