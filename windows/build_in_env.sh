@@ -77,11 +77,12 @@ fi
 # --- 2. SDL2 for MinGW --------------------------------------------------------
 SDL_TOP="$B/sdl2/SDL2-$SDL_VERSION"
 SDL_ROOT="$SDL_TOP/$MINGW"
-# SDL2's CMake setup: the release's own cmake/ folder (made for exactly this:
-# it picks the 64-bit libraries), else the one under the 64-bit tree, which is
-# named sdl2-config.cmake or SDL2Config.cmake depending on the release.
+# SDL2's CMake setup: the one in the 64-bit tree (named sdl2-config.cmake or
+# SDL2Config.cmake depending on the release). Not the release's top cmake/
+# folder: that one chooses 32/64-bit by CMAKE_SIZEOF_VOID_P and reports "not
+# found" whenever that isn't known at the time of the search.
 sdl_cmake_dir() {
-    for d in "$SDL_TOP/cmake" "$SDL_ROOT/lib/cmake/SDL2"; do
+    for d in "$SDL_ROOT/lib/cmake/SDL2" "$SDL_TOP/cmake"; do
         if [ -f "$d/sdl2-config.cmake" ] || [ -f "$d/SDL2Config.cmake" ]; then echo "$d"; return 0; fi
     done
     return 1
@@ -102,18 +103,33 @@ echo "  SDL2: $SDL_CMAKE"
 
 # --- 3. Windows build ---------------------------------------------------------
 say "Configuring the Windows build"
+rm -f "$B/CMakeCache.txt"     # a fresh look for SDL2 every time (a failed search is cached)
 cmake -S . -B "$B" -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_TOOLCHAIN_FILE="$PWD/windows/toolchain-mingw64.cmake" \
       -DSDL2_DIR="$PWD/$SDL_CMAKE" \
       -DDW4_RECOMPILER="$RECOMPILER" \
       -DNESRECOMP_GAME_VERSION="$VERSION" -DNESRECOMP_BUILD_REVISION="$COMMIT" \
-      -DDW4_ROM="$PWD/rom/DragonWarriorIV.nes" ${DW4_CMAKE_ARGS:-}
+      -DDW4_ROM="$PWD/rom/DragonWarriorIV.nes" ${DW4_CMAKE_ARGS:-} 2>&1 | tee "$B/configure.log"
+[ "${PIPESTATUS[0]}" = 0 ] || die "configuring the Windows build failed (see above)"
+if grep -q "SDL2 not found" "$B/configure.log"; then
+    echo "--- details for the bug report ---"
+    grep -E "^(CMAKE_SIZEOF_VOID_P|SDL2_DIR|CMAKE_C_COMPILER):" "$B/CMakeCache.txt" || true
+    grep -E "CMAKE_SIZEOF_VOID_P" "$B"/CMakeFiles/*/CMakeCCompiler.cmake 2>/dev/null || true
+    ls "$SDL_CMAKE"
+    cmake -S . -B "$B" --debug-find-pkg=SDL2 2>&1 | grep -A6 -E "not accepted|considered the following" | head -30
+    die "SDL2 was not found when configuring (details above)"
+fi
 say "Compiling for Windows ($JOBS jobs)"
 cmake --build "$B" --parallel "$JOBS"
 [ -f "$B/$EXE.exe" ] || die "the build finished but $B/$EXE.exe is missing"
 OBJDUMP="$(command -v "$MINGW-objdump" || command -v objdump)"
-"$OBJDUMP" -p "$B/$EXE.exe" | grep -qi 'DLL Name: SDL2.dll' \
-    || die "SDL2 was not found, so the game was built without a window (check SDL2_DIR)"
+if ! "$OBJDUMP" -p "$B/$EXE.exe" | grep -qi 'DLL Name: SDL2.dll'; then
+    echo "--- details for the bug report ---"
+    echo "objdump: $OBJDUMP"
+    "$OBJDUMP" -p "$B/$EXE.exe" 2>&1 | grep -i -E "DLL Name|format" | head -30
+    grep -c CYC_WITH_SDL "$B/build.ninja" || true
+    die "the game doesn't use SDL2.dll, so it would have no window (details above)"
+fi
 
 # --- 4. the zip ----------------------------------------------------------------
 say "Assembling the Windows folder"
