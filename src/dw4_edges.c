@@ -940,8 +940,10 @@ static struct {
     uint8_t ismap[30][32]; int maps;        /* which were map tiles (not windows, not flat), how many */
     bool have; int frames;
     uint8_t ring[30][64], ringmap[30][64];  /* the whole nametable ring then, and its map tiles */
+    uint8_t ringpal[30][64];                /* and their sub-palettes */
     int sx, sy;                             /* its scroll (the picture may go on scrolling while it fades) */
     uint8_t flipf[30][32];                  /* hold frame each screen tile turned to one colour (0: not yet) */
+    bool spiral; double soff, send;         /* seen to be the battle's spiral: its offset, when it reaches the last side tile */
 } P;
 
 static void side_tile(int x, int y, uint16_t pattern, int pal, unsigned flags)
@@ -979,23 +981,61 @@ static void paint_tile(uint32_t *out, int width, const SideTile *t, const uint8_
 }
 
 /* The battle's spiral: when (frames after it starts) it reaches screen tile
- * (dx, dy) from the middle, fitted on the native picture (median error under
- * 2 frames): four arms turning, a little later further out. */
+ * (dx, dy) from the middle. Four arms sweeping a quarter turn in 25 frames,
+ * twisting less further out; fitted on the game's own schedule (the same every
+ * battle, day or night) more than 8 tiles from the middle and inside its outer
+ * ring: 96% within 3 frames. The outer ring (SPIRAL_RING, mostly the TV's
+ * overscan) the game clears out of turn (see hold). Beyond the native picture
+ * (r > 21) the arms go on with the twist they have at its edge, the same all
+ * round, so the sides continue the arms' curve and finish with the middle. */
+/* The native tiles the game's spiral clears out of turn: its outer two rows
+ * and three columns (column 2 has a late strip too). */
+#define SPIRAL_RING(k, j) ((k) < 3 || (k) >= 29 || (j) < 2 || (j) >= 28)
 static double spiral_time(double dx, double dy)
 {
-    double r = sqrt(dx * dx + dy * dy), ph = fmod(atan2(dy, dx) - 0.4712 - 0.1 * r, M_PI / 2);
+    double r = sqrt(dx * dx + dy * dy), rt = r < 21 ? r : 21;
+    double twist = 0.15 * rt - 0.0035 * rt * rt + (0.15 - 0.007 * 21) * (r - rt);
+    double ph = fmod(atan2(dy, dx) - 0.38 - twist, M_PI / 2);
     if (ph < 0) ph += M_PI / 2;
-    return 6.30 + 12.54 * ph + 0.404 * r;
+    return 16.0 * ph;
 }
 
-/* The same, its arms going on straight beyond a part f of the way out (the
- * picture's edge): the angle where the tile is, the twist and the distance
- * of that edge, so the sides are done when the middle is. */
-static double spiral_time_at(double dx, double dy, double f)
+/* Whether the battle's spiral has begun on a picture that still matches the
+ * map: the map cells gone black, away from the middle (where the model is
+ * loosest), are the ones its arms reach first - one time on the model splits
+ * them from the cells still shown, give or take a few. The first frames then
+ * go to hold too, so the sides spiral from the start (a house darkening or a
+ * door clearing rows doesn't split by the arms). */
+static int map_quarter(int wx, int wy);
+static bool flat_tile(uint8_t tile, uint16_t table);
+static bool spiral_begun(int tx0, int ty0, int wx0, int wy0)
 {
-    double r = f * sqrt(dx * dx + dy * dy), ph = fmod(atan2(dy, dx) - 0.4712 - 0.1 * r, M_PI / 2);
-    if (ph < 0) ph += M_PI / 2;
-    return 6.30 + 12.54 * ph + 0.404 * r;
+    static double tb[30 * 32], ts[30 * 32];
+    int nb = 0, ns = 0;
+    uint16_t table = cyc_render_line_bg_table(120);
+    for (int j = 2; j < 28; j++)
+        for (int k = 2; k < 30; k++) {
+            double dx = k + 0.5 - 16, dy = j + 0.5 - 15;
+            if (dx * dx + dy * dy < 64 || SPIRAL_RING(k, j)) continue;
+            int tx = mod(tx0 + k, 64), ty = mod(ty0 + j, 30), t = map_quarter(wx0 + k, wy0 + j);
+            uint8_t g = nt_tile(tx, ty);
+            if (t < 0 || in_window(tx, ty, 0) || flat_tile((uint8_t)(t & 0xFF), table)) continue;
+            /* on an arm's edge the end of one sweep is the start of the next: left out */
+            double when = spiral_time(dx, dy);
+            if (when > 16.0 * M_PI / 2 - 3) continue;
+            if ((t & 0xFF) == g) ts[ns++] = when;
+            else if (flat_tile(g, table)) tb[nb++] = when;
+        }
+    if (nb < 6 || ns < 50) return false;
+    /* the best split: black below it, shown above */
+    int best = nb;
+    for (int a = 0; a < nb; a++) {
+        int err = 0;
+        for (int b = 0; b < nb; b++) err += tb[b] > tb[a] + 2;
+        for (int b = 0; b < ns; b++) err += ts[b] <= tb[a] - 2;
+        if (err < best) best = err;
+    }
+    return best * 5 <= nb;
 }
 
 /* skip (may be NULL): per tile, leave it out (the spiral reached it) */
@@ -1078,15 +1118,20 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
     }
     /* another screen, black, or the map gone (the spiral done: windows such as
        the status may stay up into the battle) */
-    if (other > 96 || lit < 40 || same_map * 25 < P.maps) {
+    /* the battle's spiral reaches the sides' outer tiles a few frames after
+       the picture's corners: it goes on over a black picture till then */
+    bool sides_left = P.spiral && other <= 96 && P.frames <= P.send;
+    if (!sides_left && (other > 96 || lit < 40 || same_map * 25 < P.maps)) {
         if (debug) fprintf(stderr, "dw4_wide: hold %d ends: same %d flat %d other %d lit %d\n", P.frames, same, flat, other, lit);
+        if (getenv("DW4_FLIP_DUMP")) { fprintf(stderr, "flipf"); for (int j = 0; j < 30; j++) for (int k = 0; k < 32; k++) fprintf(stderr, " %d", P.flipf[j][k]); fprintf(stderr, "\n"); }
         P.have = false; return 0;
     }
     /* how it goes: the spiral (the tiles turned so far are the ones it has
        reached), whole rows cleared, or neither (a fade: nothing left out) */
     int mode = 0;
     double off = 0;
-    if (flat > 8) {
+    if (sides_left && (lit < 40 || same_map * 25 < P.maps)) { mode = 1; off = P.soff; }
+    else if (flat > 8) {
         /* the spiral: the model's times (spiral_time) against the frames the
            tiles turned, as an offset; it is the spiral when they agree */
         static double d[30 * 32];
@@ -1095,7 +1140,12 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
             n = 0;
             for (int j = 0; j < 30; j++)
                 for (int k = 1; k < 31; k++)
-                    if (P.flipf[j][k] > (pass ? 0 : 1) && vflat[j][k]) d[n++] = P.flipf[j][k] - spiral_time(k + 0.5 - 16, j + 0.5 - 15);
+                    if (P.flipf[j][k] > (pass ? 0 : 1) && vflat[j][k]) {
+                        /* not the middle (the game lags the model there) nor an arm's edge */
+                        double dx = k + 0.5 - 16, dy = j + 0.5 - 15, when = spiral_time(dx, dy);
+                        if (dx * dx + dy * dy < 64 || when > 16.0 * M_PI / 2 - 3 || SPIRAL_RING(k, j)) continue;
+                        d[n++] = P.flipf[j][k] - when;
+                    }
             if (!pass) n1 = n;
         }
         if (n >= 8) {
@@ -1104,8 +1154,9 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
             int good = 0;
             for (int a = 0; a < n; a++) good += fabs(d[a] - off) <= 3;
             if (debug) fprintf(stderr, "dw4_wide: spiral offset %.1f, %d of %d within 3 frames (%d after the start)\n", off, good, n, n1);
-            if (4 * good >= 3 * n) mode = 1;
+            if (4 * good >= 3 * n) { mode = 1; P.spiral = true; P.soff = off; }
         }
+        if (!mode && P.spiral) { mode = 1; off = P.soff; }     /* once the spiral, still it: nothing comes back */
         if (!mode) {
             int rows = 0;
             for (int j = 0; j < 30; j++) if (rowchg[j] && rowflat[j] == 32) rows++;
@@ -1115,6 +1166,7 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
     if (debug) fprintf(stderr, "dw4_wide: hold %d same %d flat %d other %d lit %d mode %d scroll %+d,%+d\n", P.frames, same, flat, other, lit, mode, ddx, ddy);
     static SideTile cur[MAX_SIDE];
     static uint8_t skip[MAX_SIDE];
+    if (mode == 1) P.send = 0;
     for (int i = 0; i < P.nheld; i++) {
         SideTile *t = &cur[i];
         *t = P.held[i]; t->x = (int16_t)(t->x - ddx); t->y = (int16_t)(t->y - ddy);
@@ -1122,20 +1174,51 @@ static int hold(uint32_t *out, int width, int x0, const uint32_t *native)
         int j = floordiv(t->y + fy, 8);
         if (mode == 2) skip[i] = j >= 0 && j < 30 && rowchg[j] && rowflat[j] == 32;
         else if (mode == 1) {
-            /* the spiral has no shape beyond the native picture: a side tile
-               goes with its row's tile at the picture's edge (columns 1 and
-               30: the outermost are the edge repair's), a quarter frame later
-               per tile further out, so the arms run on across the seam and
-               the sides are done when the middle is; the model (offset
-               fitted on the native tiles) only says when that edge tile
-               should go if it has not been seen to */
-            double kx = (t->x - x0 + 4) / 8.0;
-            int c = kx < 16 ? 1 : 30, jr = j < 0 ? 0 : j > 29 ? 29 : j;
-            double dist = kx < 16 ? 1 - kx : kx - 30;
-            if (P.flipf[jr][c]) skip[i] = P.flipf[jr][c] + 0.25 * dist <= P.frames;
+            /* the spiral goes on beyond the native picture: the model (fitted on
+               the native tiles, within about a frame of them at the picture's
+               edge) says when its arms reach each side tile, so they keep
+               their curve out to the frame's edge, the same all round */
+            double when = off + spiral_time((t->x - x0 + 4) / 8.0 - 16, (t->y + 4) / 8.0 - 15);
+            skip[i] = when <= P.frames;
+            if (when > P.send) P.send = when;
         }
     }
     paint(out, width, x0, native, cur, P.nheld, skip, true, false);
+    if (mode == 1) {
+        /* the game clears its picture's outer two rows and three columns
+           (mostly the TV's overscan) out of turn: column 0 at once, parts of
+           the others first or last - straight bands and bars that, in the middle of a wide
+           frame, break the spiral's shape. There the held map tile shows till
+           the model's arm reaches it, then black, the same as the sides beside
+           it; inside, the game's own spiral is left as it is. */
+        int fx = sx & 7, black = -1;
+        for (int j = 2; j < 28 && black < 0; j++)
+            for (int k = 2; k < 30; k++)
+                if (flat_tile(nt_tile(mod(stx + k, 64), mod(sty + j, 30)), table)) { black = nt_tile(mod(stx + k, 64), mod(sty + j, 30)); break; }
+        uint8_t pal[32];
+        for (int i = 0; i < 32; i++) pal[i] = cyc_render_palette(i);
+        for (int j = 0; j <= 30; j++)
+            for (int k = fx ? 1 : 0; k < 32; k++) {
+                if (!SPIRAL_RING(k, j)) continue;
+                int px = x0 + 8 * k - fx, py = 8 * j - fy;
+                if (py + 8 <= 0 || py >= 240) continue;
+                int tx = mod(stx + k, 64), ty = mod(sty + j, 30);
+                bool gone = off + spiral_time((8 * k - fx + 4) / 8.0 - 16, (8 * j - fy + 4) / 8.0 - 15) <= P.frames;
+                if (k == 0 && P.nheld && !gone) continue;   /* column 0 till then: the held edge tile (the game's may be junk) */
+                for (int y = py < 0 ? 0 : py; y < py + 8 && y < 240; y++) {
+                    uint8_t m = cyc_render_line_mask(y);
+                    uint32_t back = m & 0x08 ? cyc_render_nes_color(pal[0], m) : 0xFF000000u;
+                    for (int x = px; x < px + 8; x++) out[y * width + x] = back;
+                }
+                if (gone) {
+                    if (black >= 0) cyc_render_hd_tile(px, py, (uint16_t)(table + black * 16), 0);   /* HD: the blank tile */
+                    continue;
+                }
+                SideTile t = { (int16_t)px, (int16_t)py, (uint16_t)(table + P.ring[ty][tx] * 16), P.ringpal[ty][tx], 0, {0} };
+                for (int i = 0; i < 16; i++) t.chr[i] = cyc_render_chr((uint16_t)(t.pattern + i));
+                paint_tile(out, width, &t, pal, true);
+            }
+    }
     return 1;
 }
 
@@ -1198,9 +1281,15 @@ static int compose1(uint32_t *out, int width, int height, int x0, const uint32_t
     static int fl = -1;
     if (fl < 0) fl = getenv("DW4_WIDE_FULL") != NULL;     /* debug: draw the native 256 from the map too */
     bool full = fl;
+    /* the battle's spiral, once seen, holds till the battle */
+    if (P.have && P.spiral) { int h = hold(out, width, x0, native); if (h) { path_dbg = 'S'; return h; } }
     int fx, fy, tx0, ty0, wx0, wy0;
     locate(E.need_search, &fx, &fy, &tx0, &ty0, &wx0, &wy0);
     E.need_search = false;
+    if (P.have && E.blanking && spiral_begun(tx0, ty0, wx0, wy0)) {
+        int h = hold(out, width, x0, native);
+        if (h) { path_dbg = 'S'; return h; }
+    }
     /* does the native picture show this map here? (a battle can leave the
        map's tiles in the nametable while the screen shows the battle) */
     {
@@ -1293,10 +1382,22 @@ static int compose1(uint32_t *out, int width, int height, int x0, const uint32_t
     for (int j = 0; j < 30; j++)
         for (int k = 0; k < 64; k++) {
             P.ring[j][k] = nt_tile(k, j);
+            P.ringpal[j][k] = nt_pal(k, j);
             P.ringmap[j][k] = E.map_tile[P.ring[j][k]] && !flat_tile(P.ring[j][k], table);
+        }
+    /* the battle spiral blanks parts of the picture's outer rows and
+       columns (SPIRAL_RING) out of turn, some before the map stops matching: the held ring
+       takes the map's own tile there (hold draws that ring by the spiral) */
+    for (int j = 0; j < 30; j++)
+        for (int k = 0; k < 32; k++) {
+            if (!SPIRAL_RING(k, j)) continue;
+            int tx = mod(tx0 + k, 64), ty = mod(ty0 + j, 30), t;
+            if (!flat_tile(P.ring[ty][tx], table) || in_window(tx, ty, 0) || (t = map_quarter(wx0 + k, wy0 + j)) < 0) continue;
+            P.ring[ty][tx] = (uint8_t)(t & 0xFF); P.ringpal[ty][tx] = (uint8_t)(t >> 8);
         }
     P.sx = cyc_render_line_scroll_x(120); P.sy = mod(cyc_render_line_scroll_y(120) - 120, 240);
     memset(P.flipf, 0, sizeof P.flipf);
+    P.spiral = false; P.soff = P.send = 0;
     P.have = true; P.frames = 0;
     return 1;
 }

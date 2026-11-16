@@ -300,11 +300,22 @@ picture fades or spirals out while it can no longer be matched as a map: the
 last map picture's side tiles are kept (with their CHR bytes, as the next
 screen loads other tiles) and shown with the colours of the moment until the
 native picture is black, another screen replaces it, or the map's own tiles
-are gone from it (windows such as the status can stay up into a battle). The battle's spiral is
-continued into the sides from a fit of when it reaches each tile (four arms
-turning, a little later further out; median error under 2 frames), placed by
-how far it has come in the native picture. Fading in, the new map is matched
-while still black, so the sides fade in with it.
+are gone from it (windows such as the status can stay up into a battle).
+
+The battle's spiral runs on a fixed schedule (the same every battle, day or night; measured
+tile by tile from 4:3 frames): four arms sweeping a quarter turn in about 25 frames, twisting
+less further out. `spiral_time` is fitted on it (tiles more than 8 from the middle, 96% within
+3 frames; the game lags it near the middle) and continued past the 4:3 edge with the twist the
+arms have there, the same all round, so the side tiles go black as the arms reach them and the
+sides finish with the middle. The offset is fitted per battle on the tiles seen to turn (not the
+middle, not an arm's edge). The game clears its outer two rows and three columns
+(`SPIRAL_RING`, mostly the TV's overscan) out of turn - column 0 at once, some parts first and
+some last - which in a wide frame would be straight bars and bands at the seams; there the held
+map tile (the map's own where the game had already blanked it) shows until the model's arm
+reaches it, then black, like the sides. The hold takes over on the spiral's second frame:
+`spiral_begun` sees the black map cells split from the shown ones by the model's times (a house
+darkening or a door clearing rows doesn't split that way), and once seen the spiral holds till
+the battle. Fading in, the new map is matched while still black, so the sides fade in with it.
 
 With the HD pack, every margin tile the compositor paints is recorded
 (`cyc_render_hd_tile`, nesrecomp patch 0026) and the HD presenter matches it
