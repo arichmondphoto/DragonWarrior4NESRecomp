@@ -11,6 +11,8 @@ hd/title/layers/ and layout.json:
                                 back at the ends, then turned so the old strip
                                 is where it was (x 0-1279) and the new clouds
                                 follow it; layout "wide" of each cloud layer
+                                (taller than the old strip and placed higher
+                                where the new clouds rise above its top)
 
 The model repaints the whole picture, not just the masked part, so its copy
 of the kept painting only resembles it. Where the two meet, each row is cut
@@ -113,8 +115,15 @@ def main():
         src = np.asarray(Image.open(os.path.join(LAYERS, specs[name]['files']['sunset'])).convert('RGBA')).astype(float)
         if not os.path.exists(res):
             strips[name] = None; continue
-        h = src.shape[0]
-        gen = load(res, 'RGBA', (PERIOD, CLOUD_H))[CLOUD_H - h:]
+        h0 = src.shape[0]
+        full = load(res, 'RGBA', (PERIOD, CLOUD_H))
+        # the new clouds may rise above the old strip's top: keep those rows
+        # too (the layer starts higher), or their tops are cut off flat
+        rows = np.flatnonzero((full[..., 3] > 8).any(1))
+        extra = max(0, (CLOUD_H - h0) - int(rows.min()) + 2) if len(rows) else 0
+        h = h0 + extra
+        gen = full[CLOUD_H - h:]
+        src = np.concatenate([np.zeros((extra, STRIP, 4)), src], 0)
         if gen[..., 3].min() > 250:
             print(f'  {cid}: the result has no transparency (the sky above the clouds came back painted); '
                   'run it again with --redo, or check settings.json says transparent')
@@ -130,7 +139,8 @@ def main():
         assert np.abs(out[:, m:STRIP - m] - keep)[keep[..., 3] > 8].max() < 2.0
         fn = name + '_wide_sunset.png'
         save(out, os.path.join(LAYERS, fn))
-        specs[name]['wide'] = {'files': {'sunset': fn}, 'period': PERIOD,
+        x_at, y_at = specs[name]['at']
+        specs[name]['wide'] = {'files': {'sunset': fn}, 'period': PERIOD, 'at': [x_at, y_at - extra],
                                'note': 'repeats every 2560 px (512 native); the first 1280 are the old strip'}
         strips[name] = out
         rep = np.concatenate([out, out], 1)
@@ -157,7 +167,7 @@ def main():
             reps = int(np.ceil(canvas.shape[1] / st.shape[1])) + 1
             # native x 0 is strip x 0 at scroll 0: the side starts SIDE before it
             row = np.roll(np.concatenate([st] * reps, 1), SIDE, axis=1)[:, :canvas.shape[1]]
-            y = specs[name]['at'][1]
+            y = specs[name]['wide']['at'][1] if strips.get(name) is not None else specs[name]['at'][1]
             region = canvas[y:y + row.shape[0]]
             al = row[..., 3:] / 255; region[..., :3] = region[..., :3] * (1 - al) + row[..., :3] * al
         save(canvas[..., :3], os.path.join(prev, 'title_wide_sunset.png'))

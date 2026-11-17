@@ -64,6 +64,10 @@
      "sunset": "clouds_back_wide_sunset.png"
     },
     "period": 2560,
+    "at": [
+     0,
+     944
+    ],
     "note": "repeats every 2560 px (512 native); the first 1280 are the old strip"
    }
   },
@@ -83,6 +87,10 @@
      "sunset": "clouds_front_wide_sunset.png"
     },
     "period": 2560,
+    "at": [
+     0,
+     993
+    ],
     "note": "repeats every 2560 px (512 native); the first 1280 are the old strip"
    }
   }

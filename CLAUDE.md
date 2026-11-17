@@ -68,7 +68,7 @@ README.md is the full reference; this file is the working summary.
 - Title: layers in `hd/title/layers/` (sky+castle, plate, lettering, two cloud strips; `layout.json`), painted on
   the `tools/export_title_kit.py` guides. Blue-sky versions are recoloured at build time unless `*_day.png` exist.
   Widescreen: sky 426 columns wide (layout `"wide"`, `sky_wide_sunset.png`; stand-in without it), cloud strips 512 px
-  (`clouds_*_wide_sunset.png`, period 2560 at 5x) followed past the 256 px scroll wrap (patch 0034). Painted via
+  (`clouds_*_wide_sunset.png`, period 2560 at 5x, taller and placed higher than the old strips where the new clouds rise above them: wide "at") followed past the 256 px scroll wrap (patch 0034). Painted via
   `tools/export_title_ai.py OUT` (OpenAI, masks keep the paintings) + `tools/import_title_ai.py OUT`. 8-bit title
   sides: `title_sides` in src/dw4_edges.c.
 - Endor casino: poker card sheets `hd/casino/cards/C01-C09.png` → one consistent deck composed from their

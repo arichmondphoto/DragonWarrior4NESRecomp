@@ -227,8 +227,8 @@ def main():
     # blended into a half-turned copy.
     strips = []
     for name in ('clouds_back', 'clouds_front'):
-        sp = specs[name]; y_at = round(sp['at'][1] * f); top = (y_at // S) * S
-        wide = sp.get('wide')
+        sp = specs[name]; wide = sp.get('wide')
+        y_at = round((wide or sp).get('at', sp['at'])[1] * f); top = (y_at // S) * S
         if wide:
             sp = dict(sp); sp['files'] = wide['files']
         period = round(wide['period'] * f) if wide else W
