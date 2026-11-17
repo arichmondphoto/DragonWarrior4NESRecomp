@@ -85,7 +85,8 @@ README.md is the full reference; this file is the working summary.
   `nametableColumn`/`nametableX` conditions (0010, for scrolling rows like the title clouds),
   `rgb:`/`rot:` tile transforms + shared decoded blocks (0011), read-only bundled mod packages (0012),
   `<background>` `line:Y` scroll + `wrap` (0013), Game Genie cheats (0014, `cyc_cheats.c`; launcher Cheats
-  page = recomp-ui 0003; `cheats.txt` beside config.ini, `--cheats FILE` headless), faster multi-threaded
+  page = recomp-ui 0003, clashes 0005, catalog of known codes + item picker 0006 from `cheats/catalog.txt` (copied to
+  `assets/cheats_catalog.txt`; check with `tools/check_cheat_catalog.py`); `cheats.txt` beside config.ini, `--cheats FILE` headless), faster multi-threaded
   compositing (0016: opaque-layer skipping, invisible-tile skip, bands on all cores; `NESRECOMP_HDPACK_THREADS`).
   The title is the heaviest screen: keep its layer count low and use fully opaque blocks where possible.
   `<options>edgePaletteFallback` (0018): unmatched BG tiles in the top 16 / bottom 24 lines are retried with the
@@ -94,6 +95,8 @@ README.md is the full reference; this file is the working summary.
   off by default since the edges are repaired (src/dw4_edges.c, patch 0021; `--no-edge-repair`, `DW4_EDGES_DEBUG=1`).
   RAM: map W/H `$3F`/`$40`, hero cell `$44`/`$45` (towns) or `$42`/`$43` (overworld, `$28`=0), border cell `$0520`;
   overworld rows are decoded from ROM bank `$0B` (pointers `$A590` main, `$AB65` Gottside, `$AE89` Underworld).
+  Starting inventories: PRG bank 18, `$9191`, 8 bytes per character (Hero, Cristo, Nara, Mara, Brey, Taloon, Ragnar,
+  Alena; FF = empty, bit 7 = equipped), copied when a chapter starts. Item names by value: `cheats/catalog.txt`.
 - Damage-floor flash: every BG sub-palette becomes `0F161616` for 3 frames per step; `make_field_hdpack.py`
   adds one red-tinted (`rgb:`) entry per map tile quarter for it (blank quarters skipped: the void shares them).
 - Fades: map tiles and characters step each colour down by $10 with black = $0F; **battle monsters fade in

@@ -29,3 +29,14 @@ nesrecomp_add_cycle_game(DragonWarrior4
     # Map edges drawn from the game's map at the full 256x240 picture
     # (src/dw4_edges.c; needs nesrecomp patch 0021).
     HOST_EXTRAS "${CMAKE_SOURCE_DIR}/src/dw4_edges.c")
+
+# The Cheats page's catalog of known Game Genie codes (cheats/catalog.txt,
+# checked by tools/check_cheat_catalog.py) goes beside the program with the
+# launcher's assets, which every package carries (nesrecomp patch 0032 points
+# the launcher at it).
+if(TARGET DragonWarrior4)
+    add_custom_command(TARGET DragonWarrior4 POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:DragonWarrior4>/assets
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/cheats/catalog.txt
+                $<TARGET_FILE_DIR:DragonWarrior4>/assets/cheats_catalog.txt)
+endif()

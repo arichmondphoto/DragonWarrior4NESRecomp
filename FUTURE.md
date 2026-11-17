@@ -146,6 +146,11 @@ launcher's Cheats page (recomp-ui patch 0005, rule in `launcher_cheats.h`,
 codes it clashes with off and says which; clashing codes both on (cheats.txt
 edited by hand) are marked in the list. Checked in the real launcher under
 Xvfb (warning, click, add).
+**Known codes (2026-11-17):** the Dragon's Den list as a built-in catalog
+(`cheats/catalog.txt`, recomp-ui 0006, nesrecomp 0032) and an item picker for
+every item and chapter character. Item names and the inventory table read from
+the game (item menu for values 00-7E; bank 18 $9191, 8 bytes per character);
+`tools/check_cheat_catalog.py` checks every entry.
 
 ### 7. Windows build
 - **Done (untested on Windows):** `./build_windows.sh` cross-compiles on Linux

@@ -46,6 +46,12 @@ run `./build_macos.sh` again to rebuild and reinstall.
   Codes that rewrite the game's code run it on the built-in interpreter for that session (same speed in practice).
   Codes that change the same byte of the game (all the "Start with ... gold" codes, for one) can't work together:
   turning one on turns the others off, and the page says which.
+  **Known codes**: the page also lists the [Dragon's Den](https://www.woodus.com/den/games/dw4nes/codes.php) codes
+  under their chapters, each with an **Add** button, and **Start with any item** builds the code to put any of the
+  game's 126 items in any chapter character's first or second free inventory slot. Item codes take effect when that
+  character's chapter starts. The list (`cheats/catalog.txt`) was checked against the ROM and the game's own item menu
+  (`tools/check_cheat_catalog.py`); corrected from the site: Taloon's item codes, Mara's (they used a slot that already
+  holds her item), the Zenithian Helm (gave a Dragon Shield) and the Symbol of Faith.
 
 Keyboard: arrows = D-pad, **Z** = A, **X** = B, **Return** = Start, `\` = Select. Gamepads work out of the box.
 Esc = menu, F7 = save states, F8 = rewind, Tab = fast-forward, F11 = fullscreen (on a Mac keyboard you may need fn+F7 etc.).
@@ -623,6 +629,9 @@ They are framework bugs, kept here until they can go upstream:
 - `0030-hdpack-windows-threads.patch` — patch 0016's bands on every core use
   Windows threads on Windows (CreateThread; core count from GetSystemInfo),
   where it used to fall back to one core. POSIX threads elsewhere, unchanged.
+- `0032-cyc-cheats-catalog-path.patch` — the host points the launcher at
+  `assets/cheats_catalog.txt` beside the program (`SDL_GetBasePath`), where
+  this project's build copies `cheats/catalog.txt`.
 - `0031-hdpack-key-hash.patch` — the HD pack's tile table hashes every byte of
   a key into the bucket (FNV-1a + a final mix; 65,536 buckets). The old
   rotate-add hash left the palette out of the 12 bucket bits, so a tile's
@@ -681,6 +690,14 @@ They are framework bugs, kept here until they can go upstream:
   `src/common/launcher_cheats.h`, test `tests/launcher_cheats_test.cpp`
   (`recomp-ui-cheats`). `tools/clean_submodules.sh` undoes the patches,
   removing the files they add.
+- `0006-launcher-cheats-catalog.patch` — `GameInfo.cheats_catalog_path`
+  (appended ABI-additively, `RECOMP_LAUNCHER_HAS_CHEATS_CATALOG`): a game's
+  read-only catalog of known codes. The Cheats page lists its entries under
+  collapsible headings with Add (codes that go together joined by `+`, added
+  as "(1 of 2)" ...), and an item picker (who: `slot` lines, two inventory
+  addresses; what: `item` lines) that builds the 8-letter code (`gg_encode`,
+  compare FF: an empty slot). The page's card now fills the page and scrolls.
+  Format and parser in `launcher_cheats.h`, tested.
 
 ## Test routes
 | Route | Frames | Covers |

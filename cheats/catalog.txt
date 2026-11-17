@@ -1,0 +1,279 @@
+# Dragon Warrior IV (USA, NES): Game Genie codes offered by the launcher's Cheats page.
+# From Dragon's Den (woodus.com/den/games/dw4nes/codes.php), checked against the ROM
+# and the game (tools/check_cheat_catalog.py). Corrected: Taloon's items (65-70 gave
+# other items), Mara's items (they used a slot that already holds her item), the
+# Zenithian Helm (gave a Dragon Shield), Symbol of Faith (an empty item value).
+#
+# [Section]            a heading
+# CODE[+CODE] Name     a ready-made entry (codes that go together joined by +)
+# slot ADDR ADDR Name  a character's first and second free inventory slot (hex CPU
+#                      addresses; the ROM holds FF there): the item picker's "who"
+# item VV Name         an item value (hex) and the game's name for it: the picker's "what"
+# Item codes only take effect when a chapter starts (the inventory is copied then).
+
+[General]
+ATVATGSL          Take no damage from monsters and lose no MP (all party members)
+
+[Chapter 1: Ragnar]
+POSOAPZU          Chapter 1: start with 25 gold
+GVSOAPZL          Chapter 1: start with 100 gold
+NNSOAPZU          Chapter 1: start with 255 gold
+AIXOZAYS          Chapter 1: start with lots of gold
+YEEXYXLO          Ragnar starts with 15 hit points
+GVEXYXLP          Ragnar starts with 100 hit points
+NNEXYXLO          Ragnar starts with 255 hit points
+LNKPLONY          Ragnar starts with Final Key
+TEKPLONN          Ragnar starts with Metal Babble Sword
+LOKPLONY          Ragnar starts with Multi-edge Sword
+PEKPLONN          Ragnar starts with Thorn Whip
+AKKPLONY          Ragnar starts with Shield of Strength
+LKKPLONY          Ragnar starts with Dragon Shield
+LNKPLONY+GEKPGONY Ragnar starts with Final Key and Chain Sickle
+LOKPLONY+PSKPGONN Ragnar starts with Multi-edge Sword and Wizard's Ring
+PEKPLONN+ZOKPGONY Ragnar starts with Thorn Whip and Demon Hammer
+TEKPLONN+LEKPGONN Ragnar starts with Metal Babble Sword and Boomerang
+AKKPLONY+ASKPGONY Ragnar starts with Shield of Strength and Meteorite Armband
+LKKPLONY+IEKPGONN Ragnar starts with Dragon Shield and Iron Fan
+
+[Chapter 2: Alena, Brey and Cristo]
+ZUSOPPGT          Chapter 2: start with 50 gold
+NNSOPPGV          Chapter 2: start with 255 gold
+AIXOZAYS          Chapter 2: start with lots of gold
+GVOZAZAP          Alena starts with 100 hit points
+NNOZAZAO          Alena starts with 255 hit points
+
+[Chapter 2: Alena's items]
+LNKOZONY          Alena starts with Final Key
+ZOKOZONN          Alena starts with Fire Claw
+LOKOZONY          Alena starts with Multi-edge Sword
+PEKOZONN          Alena starts with Thorn Whip
+LNKOZONY+ZOKOLONN Alena starts with Final Key and Fire Claw
+LEKOLONN          Alena starts with Boomerang
+LOKOZONY+PSKOLONN Alena starts with Multi-edge Sword and Wizard's Ring
+PEKOZONN+ZOKOLONY Alena starts with Thorn Whip and Demon Hammer
+AKKOZONY+ASKOLONY Alena starts with Shield of Strength and Meteorite Armband
+LKKOZONY+IEKOLONN Alena starts with Dragon Shield and Iron Fan
+
+[Chapter 2: Brey's items]
+LNUPLONY          Brey starts with Final Key
+TOUPLONN          Brey starts with Magma Staff
+LOUPLONY          Brey starts with Multi-edge Sword
+PEUPLONN          Brey starts with Thorn Whip
+AKUPLONY          Brey starts with Shield of Strength
+LKUPLONY          Brey starts with Dragon Shield
+LNUPLONY+TOUPGONN Brey starts with Final Key and Magma Staff
+LEUPGONN          Brey starts with Boomerang
+LOUPLONY+PSUPGONN Brey starts with Multi-edge Sword and Wizard's Ring
+PEUPLONN+ZOUPGONY Brey starts with Thorn Whip and Demon Hammer
+AKUPLONY+ASUPGONY Brey starts with Shield of Strength and Meteorite Armband
+LKUPLONY+IEUPGONN Brey starts with Dragon Shield and Iron Fan
+
+[Chapter 2: Cristo's items]
+LNOOLONY          Cristo starts with Final Key
+TEOOLONN          Cristo starts with Metal Babble Sword
+LOOOLONY          Cristo starts with Multi-edge Sword
+PEOOLONN          Cristo starts with Thorn Whip
+AKOOLONY          Cristo starts with Shield of Strength
+LKOOLONY          Cristo starts with Dragon Shield
+LNOOLONY+GEOOGONY Cristo starts with Final Key and Chain Sickle
+TEOOLONN+LEOOGONN Cristo starts with Metal Babble Sword and Boomerang
+LOOOLONY+PSOOGONN Cristo starts with Multi-edge Sword and Wizard's Ring
+PEOOLONN+ZOOOGONY Cristo starts with Thorn Whip and Demon Hammer
+AKOOLONY+ASOOGONY Cristo starts with Shield of Strength and Meteorite Armband
+LKOOLONY+IEOOGONN Cristo starts with Dragon Shield and Iron Fan
+
+[Chapter 3: Taloon]
+AOEXTZGP          Taloon starts with 16 hit points
+GVEXTZGP          Taloon starts with 100 hit points
+NNEXTZGO          Taloon starts with 255 hit points
+GVSOZPAA          Chapter 3: start with 100 gold
+NNSOZPAE          Chapter 3: start with 255 gold
+LNUOLONY          Taloon starts with Final Key
+TEUOLONN          Taloon starts with Metal Babble Sword
+LOUOLONY          Taloon starts with Multi-edge Sword
+PEUOLONN          Taloon starts with Thorn Whip
+AKUOLONY          Taloon starts with Shield of Strength
+LKUOLONY          Taloon starts with Dragon Shield
+LNUOLONY+GEUOGONY Taloon starts with Final Key and Chain Sickle
+TEUOLONN+LEUOGONN Taloon starts with Metal Babble Sword and Boomerang
+LOUOLONY+PSUOGONN Taloon starts with Multi-edge Sword and Wizard's Ring
+PEUOLONN+ZOUOGONY Taloon starts with Thorn Whip and Demon Hammer
+AKUOLONY+ASUOGONY Taloon starts with Shield of Strength and Meteorite Armband
+LKUOLONY+IEUOGONN Taloon starts with Dragon Shield and Iron Fan
+
+[Chapter 4: Nara and Mara]
+GVEXLZZP          Nara starts with 100 hit points
+GVEXGZAP          Mara starts with 100 hit points
+NNEXLZZO          Nara starts with 255 hit points
+NNEXGZAO          Mara starts with 255 hit points
+
+[Chapter 4: Nara's items]
+LNXPLONY          Nara starts with Final Key
+TEXPLONN          Nara starts with Metal Babble Sword
+LOXPLONY          Nara starts with Multi-edge Sword
+PEXPLONN          Nara starts with Thorn Whip
+AKXPLONY          Nara starts with Shield of Strength
+LKXPLONY          Nara starts with Dragon Shield
+LNXPLONY+GEXPGONY Nara starts with Final Key and Chain Sickle
+TEXPLONN+LEXPGONN Nara starts with Metal Babble Sword and Boomerang
+LOXPLONY+PSXPGONN Nara starts with Multi-edge Sword and Wizard's Ring
+PEXPLONN+ZOXPGONY Nara starts with Thorn Whip and Demon Hammer
+AKXPLONY+ASXPGONY Nara starts with Shield of Strength and Meteorite Armband
+LKXPLONY+IEXPGONN Nara starts with Dragon Shield and Iron Fan
+
+[Chapter 4: Mara's items]
+LNXOZONY          Mara starts with Final Key
+TOXOZONN          Mara starts with Magma Staff
+LOXOZONY          Mara starts with Multi-edge Sword
+PEXOZONN          Mara starts with Thorn Whip
+AKXOZONY          Mara starts with Shield of Strength
+LKXOZONY          Mara starts with Dragon Shield
+LNXOZONY+GEXOLONY Mara starts with Final Key and Chain Sickle
+TEXOZONN+LEXOLONN Mara starts with Metal Babble Sword and Boomerang
+LOXOZONY+PSXOLONN Mara starts with Multi-edge Sword and Wizard's Ring
+PEXOZONN+ZOXOLONY Mara starts with Thorn Whip and Demon Hammer
+AKXOZONY+ASXOLONY Mara starts with Shield of Strength and Meteorite Armband
+LKXOZONY+IEXOLONN Mara starts with Dragon Shield and Iron Fan
+
+[Chapter 5: the Hero]
+LNOPIONY          The Hero starts with Final Key
+PXOPIONY          The Hero starts with Zenithian Sword
+GKOPIONY          The Hero starts with Zenithian Shield
+YUOPIONY          The Hero starts with Zenithian Armor
+LKOPIONN          The Hero starts with Zenithian Helm
+
+# The item picker
+slot 91C3 91C4 Ragnar (Chapter 1)
+slot 91CA 91CB Alena (Chapter 2)
+slot 91B3 91B4 Brey (Chapter 2)
+slot 919B 919C Cristo (Chapter 2)
+slot 91BB 91BC Taloon (Chapter 3)
+slot 91A3 91A4 Nara (Chapter 4)
+slot 91AA 91AB Mara (Chapter 4)
+slot 9195 9196 Hero (Chapter 5)
+item 00 Cypress Stick
+item 01 Club
+item 02 Copper Sword
+item 03 Iron Claw
+item 04 Chain Sickle
+item 05 Iron Spear
+item 06 Broad Sword
+item 07 Battle Axe
+item 08 Silver Tarot Cards
+item 09 Thorn Whip
+item 0A Morning Star
+item 0B Boomerang
+item 0C Abacus of Virtue
+item 0D Iron Fan
+item 0E Metal Babble Sword
+item 0F Poison Needle
+item 10 Staff of Force
+item 11 Staff of Thunder
+item 12 Demon Hammer
+item 13 Multi-edge Sword
+item 14 Zenithian Sword
+item 15 Dragon Killer
+item 16 Stilleto Earrings
+item 17 Staff of Punishment
+item 18 Sword of Lethargy
+item 19 Venomous Dagger
+item 1A Fire Claw
+item 1B Ice Blade
+item 1C Sword of Miracles
+item 1D Staff of Antimagic
+item 1E Magma Staff
+item 1F Sword of Decimation
+item 20 Staff of Healing
+item 21 Zenithian Sword
+item 22 Staff of Jubilation
+item 23 Sword of Malice
+item 24 Basic Clothes
+item 25 Wayfarer's Clothes
+item 26 Leather Armor
+item 27 Chain Mail
+item 28 Half Plate Armor
+item 29 Iron Apron
+item 2A Full Plate Armor
+item 2B Silk Robe
+item 2C Dancer's Costume
+item 2D Bronze Armor
+item 2E Metal Babble Armor
+item 2F Fur Coat
+item 30 Leather Dress
+item 31 Pink Leotard
+item 32 Dragon Mail
+item 33 Cloak of Evasion
+item 34 Sacred Robe
+item 35 Water Flying Clothes
+item 36 Mysterious Bolero
+item 37 Zenithian Armor
+item 38 Swordedge Armor
+item 39 Robe of Serenity
+item 3A Zombie Mail
+item 3B Dress of Radiance
+item 3C Demon Armor
+item 3D Leather Shield
+item 3E Scale Shield
+item 3F Iron Shield
+item 40 Shield of Strength
+item 41 Mirror Shield
+item 42 Aeolus' Shield
+item 43 Dragon Shield
+item 44 Zenithian Shield
+item 45 Metal Babble Shield
+item 46 Leather Hat
+item 47 Wooden Hat
+item 48 Iron Helmet
+item 49 Iron Mask
+item 4A Feather Hat
+item 4B Zenithian Helm
+item 4C Mask of Corruption
+item 4D Golden Barrette
+item 4E Hat of Happiness
+item 4F Metal Babble Helm
+item 50 Meteorite Armband
+item 52 Baron's Horn
+item 53 Medical Herb
+item 54 Antidote Herb
+item 55 Fairy Water
+item 56 Wing of Wyvern
+item 57 Leaf of World Tree
+item 58 Full Moon Herb
+item 59 Wizard's Ring
+item 5A Magic Potion
+item 5B Dew of World Tree
+item 5C Flute of Uncovering
+item 5D Sphere of Silence
+item 5E Scent Pouch
+item 5F Sandglass of Regression
+item 60 Sage's Stone
+item 61 Strength Seed
+item 62 Agility Seed
+item 63 Luck Seed
+item 64 Lifeforce Nuts
+item 65 Mystic Acorns
+item 66 Mirror of Ra
+item 67 Lamp of Darkness
+item 68 Staff of Transform
+item 69 Small Medal
+item 6A Stone of Drought
+item 6B Iron Safe
+item 6C Flying Shoes
+item 6D Silver Statuette
+item 6E Treasure Map
+item 6F Symbol of Faith
+item 70 Gunpowder Jar
+item 71 Thief's Key
+item 72 Magic Key
+item 73 Final Key
+item 74 Lunch
+item 75 Birdsong Nectar
+item 76 Golden Bracelet
+item 77 Prince's Letter
+item 78 Royal Scroll
+item 79 Gum Pod
+item 7A Boarding Pass
+item 7B Padequia Root
+item 7C Fire of Serenity
+item 7D Gas Canister
+item 7E Padequia Seed

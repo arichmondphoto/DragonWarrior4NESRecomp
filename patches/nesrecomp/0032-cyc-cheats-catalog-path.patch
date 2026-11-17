@@ -1,0 +1,25 @@
+diff --git a/runner/cyc/cyc_ui_launcher.c b/runner/cyc/cyc_ui_launcher.c
+index 660779d..16948b5 100644
+--- a/runner/cyc/cyc_ui_launcher.c
++++ b/runner/cyc/cyc_ui_launcher.c
+@@ -304,6 +304,20 @@ int cyc_ui_launcher(CycSettings *settings, const char *settings_path, const CycH
+         else snprintf(cheats_file, sizeof(cheats_file), "cheats.txt");
+     }
+     gi.cheats_path = cheats_file;
++#endif
++#ifdef RECOMP_LAUNCHER_HAS_CHEATS_CATALOG
++    /* A game's catalog of known codes (recomp-ui's launcher_cheats.h format),
++     * shipped beside the program as assets/cheats_catalog.txt; the Cheats page
++     * offers its entries and item picker. Missing file: no catalog. */
++    {
++        static char catalog_file[1100];
++        char *base = SDL_GetBasePath();
++        if (base) {
++            int n = snprintf(catalog_file, sizeof(catalog_file), "%sassets/cheats_catalog.txt", base);
++            SDL_free(base);
++            if (n > 0 && (size_t)n < sizeof(catalog_file)) gi.cheats_catalog_path = catalog_file;
++        }
++    }
+ #endif
+     gi.settings_bindings = 1;         /* every binding is the host's (config.ini) */
+     /* The Mods screen (a game built with mods; recomp-ui's RECOMP_UI_ENABLE_MODS). */

@@ -1,0 +1,389 @@
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index 75581e2..7bfdb77 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -5543,6 +5543,63 @@ static void cheat_turn_on(int i) {
+     g_cheat_status_error = false;
+ }
+ 
++/* The game's catalog of known codes (GameInfo.cheats_catalog_path). */
++static launcher_cheats::Catalog g_cheat_cat;
++static std::string g_cheat_cat_loaded;
++static std::vector<int> g_cheat_item_order;          /* g_cheat_cat.items by name */
++static int g_pick_slot = 0, g_pick_second = 0, g_pick_item = 0;
++
++static void cheat_catalog_load(const char* path) {
++    g_cheat_cat_loaded = path ? path : "";
++    g_cheat_cat = launcher_cheats::Catalog();
++    g_cheat_item_order.clear();
++    FILE* f = path ? fopen(path, "rb") : nullptr;
++    if (!f) return;
++    std::string text;
++    char buf[4096];
++    size_t n;
++    while ((n = fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n);
++    fclose(f);
++    g_cheat_cat = launcher_cheats::parse_catalog(text);
++    for (int i = 0; i < (int)g_cheat_cat.items.size(); i++) g_cheat_item_order.push_back(i);
++    std::sort(g_cheat_item_order.begin(), g_cheat_item_order.end(), [](int a, int b) {
++        return g_cheat_cat.items[a].name < g_cheat_cat.items[b].name;
++    });
++}
++
++static int cheat_find(const std::string& code) {
++    for (int i = 0; i < (int)g_cheats.size(); i++) if (g_cheats[i].code == code) return i;
++    return -1;
++}
++
++/* Add (or turn on, when it is already in the list) each code of an entry. */
++static void cheat_add_codes(const std::vector<std::string>& codes, const std::string& name) {
++    std::string turned_off;
++    for (size_t k = 0; k < codes.size(); k++) {
++        int i = cheat_find(codes[k]);
++        if (i < 0) {
++            std::string nm = codes.size() > 1 ? name + " (" + std::to_string(k + 1) + " of " +
++                                                    std::to_string(codes.size()) + ")" : name;
++            g_cheats.push_back({true, codes[k], nm});
++            i = (int)g_cheats.size() - 1;
++        }
++        g_cheat_status.clear();
++        cheat_turn_on(i);
++        if (!g_cheat_status.empty()) turned_off += " " + g_cheat_status;
++    }
++    g_cheat_status = "Added " + name + "." + turned_off;
++    g_cheat_status_error = false;
++}
++
++/* Are all of an entry's codes in the list and on? */
++static bool cheat_all_on(const std::vector<std::string>& codes) {
++    for (const auto& c : codes) {
++        int i = cheat_find(c);
++        if (i < 0 || !g_cheats[i].on) return false;
++    }
++    return true;
++}
++
+ static void cheats_load(const char* path) {
+     g_cheats.clear();
+     g_cheats_path_loaded = path ? path : "";
+@@ -5596,7 +5653,9 @@ static int cheat_code_filter(ImGuiInputTextCallbackData* d) {
+ void draw_cheats(LauncherModel* m, const LauncherTheme& th) {
+     if (!m->cheats_path) return;
+     if (g_cheats_path_loaded != m->cheats_path) cheats_load(m->cheats_path);
+-    if (!begin_panel("cheats_page", 0, false)) {
++    if (g_cheat_cat_loaded != (m->cheats_catalog_path ? m->cheats_catalog_path : ""))
++        cheat_catalog_load(m->cheats_catalog_path);
++    if (!begin_panel("cheats_page", 0, true)) {
+         end_panel();
+         return;
+     }
+@@ -5662,7 +5721,8 @@ void draw_cheats(LauncherModel* m, const LauncherTheme& th) {
+ 
+     /* the list */
+     ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
+-    ImGui::TextUnformatted(ui_text("CODES"));
++    ImGui::TextUnformatted(ui_text(g_cheat_cat.entries.empty() && g_cheat_cat.slots.empty()
++                                       ? "CODES" : "YOUR CODES"));
+     ImGui::PopStyleColor();
+     if (g_cheats.empty()) {
+         ImGui::TextColored(col(th.text_muted), "%s", ui_text("No codes yet."));
+@@ -5719,6 +5779,100 @@ void draw_cheats(LauncherModel* m, const LauncherTheme& th) {
+         }
+         if (changed) cheats_save(m->cheats_path);
+     }
++
++    /* the item picker: any item into a character's first or second free slot */
++    const auto& cat = g_cheat_cat;
++    if (!cat.slots.empty() && !cat.items.empty()) {
++        ImGui::Dummy(ImVec2(0, px(14)));
++        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
++        ImGui::TextUnformatted(ui_text("START WITH ANY ITEM"));
++        ImGui::PopStyleColor();
++        ImGui::PushStyleColor(ImGuiCol_Text, col(th.text_muted));
++        ImGui::PushTextWrapPos();
++        ImGui::TextWrapped("%s", ui_text(
++            "Puts an item in a character's inventory when their chapter starts: "
++            "add it before you start that chapter. Each character has two free "
++            "slots; one item per slot."));
++        ImGui::PopTextWrapPos();
++        ImGui::PopStyleColor();
++        if (g_pick_slot >= (int)cat.slots.size()) g_pick_slot = 0;
++        if (g_pick_item >= (int)g_cheat_item_order.size()) g_pick_item = 0;
++        ImGui::SetNextItemWidth(px(220));
++        if (ImGui::BeginCombo("##pick_who", cat.slots[g_pick_slot].name.c_str())) {
++            for (int i = 0; i < (int)cat.slots.size(); i++)
++                if (ImGui::Selectable(cat.slots[i].name.c_str(), i == g_pick_slot)) g_pick_slot = i;
++            ImGui::EndCombo();
++        }
++        ImGui::SameLine();
++        ImGui::SetNextItemWidth(px(150));
++        static const char* const which[] = {"First slot", "Second slot"};
++        if (ImGui::BeginCombo("##pick_slot", which[g_pick_second])) {
++            for (int i = 0; i < 2; i++)
++                if (ImGui::Selectable(which[i], i == g_pick_second)) g_pick_second = i;
++            ImGui::EndCombo();
++        }
++        ImGui::SameLine();
++        ImGui::SetNextItemWidth(px(260));
++        const auto& item = cat.items[g_cheat_item_order[g_pick_item]];
++        if (ImGui::BeginCombo("##pick_item", item.name.c_str(), ImGuiComboFlags_HeightLarge)) {
++            for (int k = 0; k < (int)g_cheat_item_order.size(); k++)
++                if (ImGui::Selectable(cat.items[g_cheat_item_order[k]].name.c_str(), k == g_pick_item))
++                    g_pick_item = k;
++            ImGui::EndCombo();
++        }
++        ImGui::SameLine();
++        if (ImGui::Button(ui_text("Add##pick"), ImVec2(px(90), 0))) {
++            const auto& sl = cat.slots[g_pick_slot];
++            std::string who = sl.name.substr(0, sl.name.find(" ("));
++            std::string code = launcher_cheats::gg_encode(g_pick_second ? sl.second : sl.first, item.value, 0xFF);
++            cheat_add_codes({code}, who + " starts with " + item.name + (g_pick_second ? " (second slot)" : ""));
++            cheats_save(m->cheats_path);
++        }
++    }
++
++    /* the catalog's ready-made codes, under their headings */
++    if (!cat.entries.empty()) {
++        ImGui::Dummy(ImVec2(0, px(14)));
++        ImGui::PushStyleColor(ImGuiCol_Text, col(th.accent2));
++        ImGui::TextUnformatted(ui_text("KNOWN CODES"));
++        ImGui::PopStyleColor();
++        bool added = false;
++        for (const auto& sec : cat.sections) {
++            if (!ImGui::CollapsingHeader(sec.c_str())) continue;
++            ImGui::PushID(sec.c_str());
++            if (ImGui::BeginTable("known", 3, ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_RowBg)) {
++                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
++                ImGui::TableSetupColumn("Codes", ImGuiTableColumnFlags_WidthFixed, px(190));
++                ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, px(90));
++                int row = 0;
++                for (const auto& e : cat.entries) {
++                    if (e.section != sec) continue;
++                    ImGui::PushID(row++);
++                    ImGui::TableNextRow();
++                    ImGui::TableNextColumn();
++                    ImGui::AlignTextToFramePadding();
++                    ImGui::TextUnformatted(e.name.c_str());
++                    ImGui::TableNextColumn();
++                    std::string codes;
++                    for (size_t k = 0; k < e.codes.size(); k++) codes += (k ? " + " : "") + e.codes[k];
++                    ImGui::AlignTextToFramePadding();
++                    ImGui::TextColored(col(th.text_muted), "%s", codes.c_str());
++                    ImGui::TableNextColumn();
++                    if (cheat_all_on(e.codes)) {
++                        ImGui::AlignTextToFramePadding();
++                        ImGui::TextColored(col(th.text_muted), "%s", ui_text("On"));
++                    } else if (ImGui::Button(ui_text("Add"), ImVec2(px(84), 0))) {
++                        cheat_add_codes(e.codes, e.name);
++                        added = true;
++                    }
++                    ImGui::PopID();
++                }
++                ImGui::EndTable();
++            }
++            ImGui::PopID();
++        }
++        if (added) cheats_save(m->cheats_path);
++    }
+     end_panel();
+ }
+ 
+diff --git a/src/common/launcher_cheats.h b/src/common/launcher_cheats.h
+index f230bee..d9e674b 100644
+--- a/src/common/launcher_cheats.h
++++ b/src/common/launcher_cheats.h
+@@ -15,6 +15,7 @@
+ #define LAUNCHER_CHEATS_H
+ 
+ #include <cctype>
++#include <cstdio>
+ #include <cstring>
+ #include <string>
+ #include <vector>
+@@ -43,6 +44,96 @@ inline bool gg_decode(const std::string& code, unsigned* addr, unsigned* value,
+     return true;
+ }
+ 
++/* The inverse of gg_decode: the 8-letter code that puts `value` at `addr`
++ * where the cartridge holds `cmp`. */
++inline std::string gg_encode(unsigned a, unsigned v, unsigned c) {
++    static const char L[] = "APZLGITYEOXUKSVN";
++    int n[8];
++    n[0] = (v & 7) | ((v >> 4) & 8);
++    n[1] = ((v >> 4) & 7) | ((a >> 4) & 8);
++    n[2] = ((a >> 4) & 7) | 8;
++    n[3] = ((a >> 12) & 7) | (a & 8);
++    n[4] = (a & 7) | ((a >> 8) & 8);
++    n[5] = ((a >> 8) & 7) | (c & 8);
++    n[6] = (c & 7) | ((c >> 4) & 8);
++    n[7] = ((c >> 4) & 7) | (v & 8);
++    std::string s;
++    for (int i = 0; i < 8; i++) s += L[n[i]];
++    return s;
++}
++
++/* A game's catalog of known codes (GameInfo.cheats_catalog_path), plain text:
++ *   # comment
++ *   [Heading]
++ *   CODE[+CODE...] Name     a ready-made entry; codes that go together joined by +
++ *   slot AAAA BBBB Name     the item picker's "who": first and second free
++ *                           inventory slot (hex CPU addresses, empty = FF there)
++ *   item VV Name            the item picker's "what": item value (hex) and name
++ * An item code is gg_encode(slot address, item value, 0xFF). */
++struct CatalogEntry { std::string section, name; std::vector<std::string> codes; };
++struct CatalogSlot  { unsigned first = 0, second = 0; std::string name; };
++struct CatalogItem  { unsigned value = 0; std::string name; };
++struct Catalog {
++    std::vector<std::string> sections;      /* headings, in file order */
++    std::vector<CatalogEntry> entries;
++    std::vector<CatalogSlot> slots;
++    std::vector<CatalogItem> items;
++};
++
++inline std::string trim(const std::string& s) {
++    size_t a = s.find_first_not_of(" \t\r\n"), b = s.find_last_not_of(" \t\r\n");
++    return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
++}
++
++/* Parse catalog text; lines that don't fit are skipped. */
++inline Catalog parse_catalog(const std::string& text) {
++    Catalog c;
++    std::string section;
++    size_t pos = 0;
++    while (pos <= text.size()) {
++        size_t nl = text.find('\n', pos);
++        std::string line = trim(text.substr(pos, nl == std::string::npos ? std::string::npos : nl - pos));
++        pos = nl == std::string::npos ? text.size() + 1 : nl + 1;
++        if (line.empty() || line[0] == '#') continue;
++        if (line[0] == '[') {
++            size_t e = line.find(']');
++            if (e != std::string::npos) { section = trim(line.substr(1, e - 1)); c.sections.push_back(section); }
++            continue;
++        }
++        size_t sp = line.find_first_of(" \t");
++        std::string first = line.substr(0, sp), rest = sp == std::string::npos ? "" : trim(line.substr(sp));
++        if (first == "slot" || first == "item") {
++            unsigned a = 0, b = 0;
++            int used = 0;
++            if (first == "slot") {
++                if (std::sscanf(rest.c_str(), "%x %x %n", &a, &b, &used) < 2 || !used) continue;
++                c.slots.push_back({a, b, trim(rest.substr(used))});
++            } else {
++                if (std::sscanf(rest.c_str(), "%x %n", &a, &used) < 1 || !used) continue;
++                c.items.push_back({a, trim(rest.substr(used))});
++            }
++            continue;
++        }
++        CatalogEntry e;
++        e.section = section;
++        e.name = rest;
++        size_t start = 0;
++        bool ok = true;
++        while (ok) {
++            size_t plus = first.find('+', start);
++            std::string code = first.substr(start, plus == std::string::npos ? std::string::npos : plus - start);
++            for (auto& ch : code) ch = (char)std::toupper((unsigned char)ch);
++            unsigned x, y, z; bool h;
++            ok = gg_decode(code, &x, &y, &h, &z);
++            if (ok) e.codes.push_back(code);
++            if (plus == std::string::npos) break;
++            start = plus + 1;
++        }
++        if (ok && !e.codes.empty() && !e.name.empty()) c.entries.push_back(e);
++    }
++    return c;
++}
++
+ /* Do codes a and b replace the same cartridge byte? */
+ inline bool clash(const std::string& a, const std::string& b) {
+     unsigned aa, av, ac, ba, bv, bc;
+diff --git a/src/common/launcher_model.c b/src/common/launcher_model.c
+index 4af8f5e..4b356f3 100644
+--- a/src/common/launcher_model.c
++++ b/src/common/launcher_model.c
+@@ -565,6 +565,7 @@ void launcher_model_init(LauncherModel* m,
+                 ? game->assist_direct_pad_bind_action - 1 : -1;
+         m->credits_text         = game->credits_text;
+         m->cheats_path          = game->cheats_path;
++        m->cheats_catalog_path  = game->cheats_catalog_path;
+         m->assist_fast_forward_min = game->assist_fast_forward_min > 0
+             ? game->assist_fast_forward_min : 2;
+         m->assist_fast_forward_max = game->assist_fast_forward_max >=
+diff --git a/src/common/launcher_model.h b/src/common/launcher_model.h
+index 7b111a5..5c9cfd2 100644
+--- a/src/common/launcher_model.h
++++ b/src/common/launcher_model.h
+@@ -422,6 +422,7 @@ typedef struct {
+     int assist_direct_pad_bind_action;
+     const char* credits_text;
+     const char* cheats_path;
++    const char* cheats_catalog_path;
+     int assist_fast_forward_min;
+     int assist_fast_forward_max;
+     /* Resolved defaults for the assist bindings, seeded from
+diff --git a/src/recomp_launcher.h b/src/recomp_launcher.h
+index f13a291..47b5de0 100644
+--- a/src/recomp_launcher.h
++++ b/src/recomp_launcher.h
+@@ -2430,8 +2430,16 @@ typedef struct RecompLauncherCGameInfo {
+      * starts. Borrowed for the launcher's lifetime. Appended for ABI
+      * stability. */
+     const char*        cheats_path;
++
++    /* Optional catalog of known codes for the Cheats page (read-only text,
++     * see launcher_cheats.h): ready-made entries under headings, offered
++     * with an Add button, and an item picker (who: inventory slots, what:
++     * item values). NULL or a missing file: no catalog. Borrowed for the
++     * launcher's lifetime. Appended for ABI stability. */
++    const char*        cheats_catalog_path;
+ } RecompLauncherCGameInfo;
+ #define RECOMP_LAUNCHER_HAS_CHEATS 1
++#define RECOMP_LAUNCHER_HAS_CHEATS_CATALOG 1
+ 
+ /* RecompLauncherCGameInfo carries texture_filter_labels / _values. */
+ #define RECOMP_LAUNCHER_HAS_TEXTURE_FILTER_CATALOG 1
+diff --git a/tests/launcher_cheats_test.cpp b/tests/launcher_cheats_test.cpp
+index 8129874..e56442a 100644
+--- a/tests/launcher_cheats_test.cpp
++++ b/tests/launcher_cheats_test.cpp
+@@ -74,6 +74,40 @@ int main() {
+     CHECK(clashes_with(list, 1).size() == 1 && clashes_with(list, 3).size() == 1);
+     CHECK(clashes_with(list, 2).empty());
+ 
++    // gg_encode: the codes a game's own item picker builds (Dragon Warrior IV)
++    CHECK(gg_encode(0x91C3, 0x0E, 0xFF) == "TEKPLONN");   // Ragnar, Metal Babble Sword
++    CHECK(gg_encode(0x91C4, 0x0B, 0xFF) == "LEKPGONN");   // Ragnar's second slot, Boomerang
++    CHECK(gg_encode(0x9195, 0x4B, 0xFF) == "LKOPIONN");   // the Hero, Zenithian Helm
++    for (unsigned a : {0x8000u, 0xFFFFu, 0x91AAu})
++        for (unsigned v = 0; v < 256; v += 17) {
++            unsigned da, dv, dc; bool dh;
++            CHECK(gg_decode(gg_encode(a, v, 0x5A), &da, &dv, &dh, &dc));
++            CHECK(da == a && dv == v && dh && dc == 0x5A);
++        }
++
++    // catalog parsing
++    Catalog c = parse_catalog(
++        "# comment\n"
++        "[General]\n"
++        "ATVATGSL          Take no damage\n"
++        "\n"
++        "[Chapter 1: Ragnar]\r\n"
++        "lnkplony+GEKPGONY Ragnar starts with Final Key and Chain Sickle\n"
++        "NOTACODE          skipped\n"
++        "TEKPLONN\n"                                   // no name: skipped
++        "slot 91C3 91C4 Ragnar (Chapter 1)\n"
++        "slot zz Bad\n"                               // skipped
++        "item 0E Metal Babble Sword\n"
++        "item 4B Zenithian Helm");
++    CHECK(c.sections.size() == 2 && c.sections[1] == "Chapter 1: Ragnar");
++    CHECK(c.entries.size() == 2);
++    CHECK(c.entries[0].section == "General" && c.entries[0].codes.size() == 1 && c.entries[0].name == "Take no damage");
++    CHECK(c.entries[1].codes.size() == 2 && c.entries[1].codes[0] == "LNKPLONY" && c.entries[1].codes[1] == "GEKPGONY");
++    CHECK(c.entries[1].section == "Chapter 1: Ragnar");
++    CHECK(c.slots.size() == 1 && c.slots[0].first == 0x91C3 && c.slots[0].second == 0x91C4 && c.slots[0].name == "Ragnar (Chapter 1)");
++    CHECK(c.items.size() == 2 && c.items[1].value == 0x4B && c.items[1].name == "Zenithian Helm");
++    CHECK(gg_encode(c.slots[0].first, c.items[0].value, 0xFF) == "TEKPLONN");
++
+     if (g_fail) { std::printf("%d failure(s)\n", g_fail); return 1; }
+     std::printf("launcher_cheats: ok\n");
+     return 0;
