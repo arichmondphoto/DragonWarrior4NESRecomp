@@ -1,0 +1,47 @@
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 4b76d6d..66e74c5 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -81,7 +81,7 @@ typedef struct { uint32_t *px; int w, h; } HdSheet;
+ 
+ /* ── Module state ─────────────────────────────────────────────────────────── */
+ 
+-#define HD_NBUCKETS 4096   /* power of two */
++#define HD_NBUCKETS 65536  /* power of two; a pack has ~100k entries */
+ 
+ static int        s_active = 0;
+ static int        s_scale = 1;
+@@ -232,19 +232,23 @@ static char *rstrip(char *s) {
+ 
+ /* ── Key hashing / equality (mirrors HdTileKey) ───────────────────────────── */
+ 
++/* Every byte of the key reaches the bucket bits (FNV-1a, then a final mix):
++ * the old rotate-add left the palette out of the low 12 bits, so a tile's
++ * copies in other palettes (fade steps, recolours: hundreds per battle
++ * monster) shared one bucket and each lookup walked ~190 entries. */
++static uint32_t mix32(uint32_t h) {
++    h ^= h >> 16; h *= 0x7FEB352Du; h ^= h >> 15; h *= 0x846CA68Bu; h ^= h >> 16;
++    return h;
++}
+ static uint32_t key_hash(const HdKey *k) {
++    uint32_t h = 2166136261u;
+     if (k->is_chr_ram) {
+-        uint8_t buf[20];
+-        memcpy(buf, &k->palette, 4);
+-        memcpy(buf + 4, k->tile16, 16);
+-        uint32_t r = 0;
+-        for (int i = 0; i < 20; i += 4) {
+-            uint32_t c; memcpy(&c, buf + i, 4);
+-            r += c; r = (r << 2) | (r >> 30);
+-        }
+-        return r;
++        for (int i = 0; i < 16; i++) { h ^= k->tile16[i]; h *= 16777619u; }
++    } else {
++        for (int i = 0; i < 4; i++) { h ^= (uint8_t)((uint32_t)k->tile_index >> (8 * i)); h *= 16777619u; }
+     }
+-    return (uint32_t)k->tile_index ^ k->palette;
++    for (int i = 0; i < 4; i++) { h ^= (uint8_t)(k->palette >> (8 * i)); h *= 16777619u; }
++    return mix32(h);
+ }
+ 
+ static int key_eq(const HdKey *a, const HdKey *b) {

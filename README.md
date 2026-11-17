@@ -621,6 +621,12 @@ They are framework bugs, kept here until they can go upstream:
 - `0030-hdpack-windows-threads.patch` — patch 0016's bands on every core use
   Windows threads on Windows (CreateThread; core count from GetSystemInfo),
   where it used to fall back to one core. POSIX threads elsewhere, unchanged.
+- `0031-hdpack-key-hash.patch` — the HD pack's tile table hashes every byte of
+  a key into the bucket (FNV-1a + a final mix; 65,536 buckets). The old
+  rotate-add hash left the palette out of the 12 bucket bits, so a tile's
+  copies in other palettes (each battle monster's fade steps, map recolours)
+  shared one bucket: lookups walked ~186 entries in battles, 82% of the frame
+  time (battle frames ~180 ms on 2 cores, now ~31; HD output pixel-identical).
 - `0022-hdpack-draw-time-recolour.patch` — `rgbd:` on a `<tile>` line: the
   same per-channel colour map as `rgb:` (patch 0011), applied while drawing
   instead of at load, so the entry shares the untouched decoded block. Used
