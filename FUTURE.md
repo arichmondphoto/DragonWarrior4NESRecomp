@@ -195,14 +195,12 @@ Checked on Xvfb with XTest keys and clicks, HD pack loaded.
   the battle flash and spiral, damage flash; rooms, roofs and dark rooms;
   windows; map borders by pattern; plain fields; HD art in the sides of every
   area (README). 21:9 and Fit would exceed the 8192-pixel HD picture limit at 10x.
-- **Title (2026-11-17):** the title goes on sideways in 16:9, in 8-bit
+- **Title (2026-11-17): done.** The title goes on sideways in 16:9, in 8-bit
   (`title_sides`) and HD (sky 426 columns, nesrecomp 0034 keeps hires.txt
-  positions native in wide pictures). The cloud strips are to be 512 px long
-  and seamless (the old blended join shows as faint doubled clouds); the pack
-  already follows the scroll past 256 px. Pack 0.29.0 has a stand-in for the
-  wide sky's sides. **Left (owner):** run `out/DW4_title_for_OpenAI`
-  (`tools/export_title_ai.py`; 3 pictures), then `tools/import_title_ai.py`,
-  look at the previews, rebuild the pack. Optional: wider battle art.
+  positions native in wide pictures). The owner's wide sky and 512 px seamless
+  cloud strips (`tools/export_title_ai.py` -> OpenAI -> `tools/import_title_ai.py`,
+  joins cut along the rows' best seams) replace the old blended join. HD pack
+  0.29.0. Optional: wider battle art.
 
 ## Done
 

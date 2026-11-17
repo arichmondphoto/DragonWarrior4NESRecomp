@@ -4,14 +4,20 @@ hd/title/layers/ and layout.json:
 
   sky_wide_sunset.png           2130x1200 (426 native columns at 5x): the
                                 painted sides with the owner's painting put
-                                back exactly in the middle (blended into the
-                                sides over the 40 px the model was allowed to
-                                touch); layout "wide" of the sky layer
+                                back exactly in the middle; layout "wide" of
+                                the sky layer
   clouds_back_wide_sunset.png   2560 px strips (512 native) that repeat: the
   clouds_front_wide_sunset.png  painted gap with the strip's two halves put
                                 back at the ends, then turned so the old strip
                                 is where it was (x 0-1279) and the new clouds
                                 follow it; layout "wide" of each cloud layer
+
+The model repaints the whole picture, not just the masked part, so its copy
+of the kept painting only resembles it. Where the two meet, each row is cut
+where they differ least (a seam found from row to row, as in image quilting),
+within the strip the model was told to blend in and a little beyond, then
+softened over 3 px: no cross-fade, which leaves see-through doubled cloud tops
+where the outlines do not line up.
 
 It also writes previews (OUT/preview/): the wide title as the pack will draw
 it (sunset), and each strip repeated twice, to check the joins by eye.
@@ -41,9 +47,31 @@ def ramp(n, x0, x1):
     return np.clip((x - x0) / max(1, x1 - x0), 0, 1)
 
 
+def seam(kept, gen, x0, x1, kept_left, feather=3.0):
+    """Weight of `kept` (H x W): 1 on its side of a cut that runs down the rows
+    within columns x0..x1-1 where kept and gen differ least (each row's cut at
+    most 1 column from the last row's), 0 on the other side, ramped over
+    `feather` px."""
+    def pm(a):
+        if a.shape[2] == 4: return np.concatenate([a[..., :3] * a[..., 3:] / 255, a[..., 3:]], -1)
+        return a
+    err = np.abs(pm(kept[:, x0:x1]) - pm(gen[:, x0:x1])).sum(-1)
+    err = (err + np.roll(err, 1, 1) + np.roll(err, -1, 1)) / 3          # a little context sideways
+    h, n = err.shape
+    cost = err.copy(); back = np.zeros((h, n), int)
+    for y in range(1, h):
+        prev = np.stack([np.r_[np.inf, cost[y - 1, :-1]], cost[y - 1], np.r_[cost[y - 1, 1:], np.inf]])
+        k = prev.argmin(0); back[y] = np.arange(n) + k - 1; cost[y] += prev[k, np.arange(n)]
+    cut = np.zeros(h, int); cut[-1] = cost[-1].argmin()
+    for y in range(h - 1, 0, -1): cut[y - 1] = back[y, cut[y]]
+    x = np.arange(kept.shape[1])[None, :]; c = (cut + x0)[:, None]
+    w = np.clip((c - x) / feather + 0.5, 0, 1)
+    return w if kept_left else 1 - w
+
+
 def over(a, b, w):
-    """b over a with weight w (per column), on RGBA (straight alpha)."""
-    w = w[None, :, None]
+    """b over a with weight w (per column, or per pixel), on RGBA (straight alpha)."""
+    w = w[None, :, None] if w.ndim == 1 else w[..., None]
     al = a[..., 3:] * (1 - w) + b[..., 3:] * w
     rgb = (a[..., :3] * a[..., 3:] * (1 - w) + b[..., :3] * b[..., 3:] * w) / np.maximum(al, 1e-6)
     return np.concatenate([rgb, al], -1)
@@ -66,9 +94,11 @@ def main():
         gen = load(res, 'RGB', (SKY_W, SKY_H))
         src = np.asarray(Image.open(os.path.join(LAYERS, specs['sky']['files']['sunset'])).convert('RGB')).astype(float)
         mid = np.zeros_like(gen); mid[:, SKY_X:SKY_X + 1280] = src
-        # the painting where it is, fading into the painted sides over the
-        # overlap the model was allowed to touch
-        w = np.minimum(ramp(SKY_W, SKY_X, SKY_X + OVERLAP), 1 - ramp(SKY_W, SKY_X + 1280 - OVERLAP, SKY_X + 1280))[None, :, None]
+        # the painting where it is, joined to the painted sides along the
+        # rows' best cuts near its edges
+        band = 3 * OVERLAP
+        w = np.minimum(seam(mid, gen, SKY_X + 1, SKY_X + band, False),
+                       seam(mid, gen, SKY_X + 1280 - band, SKY_X + 1280 - 1, True))[..., None]
         out = gen * (1 - w) + mid * w
         x0 = SKY_X - SIDE
         out = out[:, x0:x0 + 1280 + 2 * SIDE]
@@ -89,10 +119,15 @@ def main():
             print(f'  {cid}: the result has no transparency (the sky above the clouds came back painted); '
                   'run it again with --redo, or check settings.json says transparent')
         ends = np.zeros_like(gen); ends[:, :HALF] = src[:, HALF:]; ends[:, PERIOD - HALF:] = src[:, :HALF]
-        w = np.maximum(1 - ramp(PERIOD, HALF - C_OVERLAP, HALF), ramp(PERIOD, PERIOD - HALF, PERIOD - HALF + C_OVERLAP))
+        band = 3 * C_OVERLAP
+        w = np.maximum(seam(ends, gen, HALF - band, HALF - 1, True),
+                       seam(ends, gen, PERIOD - HALF + 1, PERIOD - HALF + band, False))
         out = over(gen, ends, w)
         out = np.roll(out, HALF, axis=1)            # the old strip back at x 0-1279
-        assert np.abs(out[:, :STRIP] - src)[src[..., 3] > 0].max() < 1.0
+        # (the old strip is untouched except near its ends, where it is cut into the new)
+        m = 3 * C_OVERLAP + 4
+        keep = src[:, m:STRIP - m]
+        assert np.abs(out[:, m:STRIP - m] - keep)[keep[..., 3] > 8].max() < 2.0
         fn = name + '_wide_sunset.png'
         save(out, os.path.join(LAYERS, fn))
         specs[name]['wide'] = {'files': {'sunset': fn}, 'period': PERIOD,

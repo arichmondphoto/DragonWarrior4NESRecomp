@@ -1,11 +1,90 @@
 {
  "_about": "The owner's title layers (canvas 1280x1200 = the screen at 5x; scaled to 10x at build time). Positions = top-left of each layer on the canvas; drawn back to front in this order. *_sunset layers may get *_day versions; without them the day look is recoloured at build time. template.png is the owner's composite of all layers.",
- "canvas": [1280, 1200],
+ "canvas": [
+  1280,
+  1200
+ ],
  "layers": [
-  {"name": "sky", "files": {"sunset": "sky_sunset.png"}, "at": [0, 0], "note": "sky with the castle and its hill; still"},
-  {"name": "plate", "files": {"all": "plate.png"}, "at": [139, 160], "note": "blank stone plate; shown once the game draws the plate"},
-  {"name": "lettering", "files": {"all": "lettering.png"}, "at": [139, 161], "note": "letters; each revealed as the game types it"},
-  {"name": "clouds_back", "files": {"sunset": "clouds_back_sunset.png"}, "at": [0, 960], "scroll_line": 200, "note": "scrolls with the game's slower cloud band"},
-  {"name": "clouds_front", "files": {"sunset": "clouds_front_sunset.png"}, "at": [0, 1034], "scroll_line": 230, "note": "scrolls with the faster band"}
+  {
+   "name": "sky",
+   "files": {
+    "sunset": "sky_sunset.png"
+   },
+   "at": [
+    0,
+    0
+   ],
+   "note": "sky with the castle and its hill; still",
+   "wide": {
+    "files": {
+     "sunset": "sky_wide_sunset.png"
+    },
+    "at": [
+     -425,
+     0
+    ],
+    "note": "the sky at 16:9 (426 native columns); the middle 1280 is sky_sunset.png"
+   }
+  },
+  {
+   "name": "plate",
+   "files": {
+    "all": "plate.png"
+   },
+   "at": [
+    139,
+    160
+   ],
+   "note": "blank stone plate; shown once the game draws the plate"
+  },
+  {
+   "name": "lettering",
+   "files": {
+    "all": "lettering.png"
+   },
+   "at": [
+    139,
+    161
+   ],
+   "note": "letters; each revealed as the game types it"
+  },
+  {
+   "name": "clouds_back",
+   "files": {
+    "sunset": "clouds_back_sunset.png"
+   },
+   "at": [
+    0,
+    960
+   ],
+   "scroll_line": 200,
+   "note": "scrolls with the game's slower cloud band",
+   "wide": {
+    "files": {
+     "sunset": "clouds_back_wide_sunset.png"
+    },
+    "period": 2560,
+    "note": "repeats every 2560 px (512 native); the first 1280 are the old strip"
+   }
+  },
+  {
+   "name": "clouds_front",
+   "files": {
+    "sunset": "clouds_front_sunset.png"
+   },
+   "at": [
+    0,
+    1034
+   ],
+   "scroll_line": 230,
+   "note": "scrolls with the faster band",
+   "wide": {
+    "files": {
+     "sunset": "clouds_front_wide_sunset.png"
+    },
+    "period": 2560,
+    "note": "repeats every 2560 px (512 native); the first 1280 are the old strip"
+   }
+  }
  ]
 }

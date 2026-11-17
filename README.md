@@ -287,8 +287,10 @@ How the characters are built (`tools/build_hd_pack.sh`):
   only the new parts are painted, the paintings are kept): the sky's two sides,
   and each strip's two halves set at the ends of a 2560 px canvas with the gap
   between them painted, so the ends already join. `tools/import_title_ai.py OUT`
-  takes the results into `hd/title/layers/` (kept parts restored exactly, the
-  strip turned back so the old clouds stay where they were), updates
+  takes the results into `hd/title/layers/` (kept parts restored exactly and
+  joined to the new along each row's least-different cut, since the model
+  repaints the whole picture; the strip turned back so the old clouds stay
+  where they were), updates
   `layout.json` and writes previews; then rebuild the pack.
 - *Castle doors* — the three in-between frames of the big doors opening
   (drawn straight into the nametable, so not map tiles): `hd/field/doors/DOOR1.png`,
