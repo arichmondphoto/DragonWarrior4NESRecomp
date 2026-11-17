@@ -42,10 +42,12 @@ from vramdump import load
 from field_sheet import NES
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LAYERS = os.path.join(HERE, 'hd', 'title', 'layers')
+LAYERS = os.environ.get('DW4_TITLE_LAYERS') or os.path.join(HERE, 'hd', 'title', 'layers')   # (env: tests)
 S = 10
 C = 8 * S
 W, H = 256 * S, 240 * S
+SIDE = 85                       # widescreen: native columns on each side (426 = 85 + 256 + 85)
+WW = (256 + 2 * SIDE) * S
 DAY_OF = {0x16: 0x3C, 0x06: 0x2C, 0x26: 0x2C, 0x37: 0x3C, 0x20: 0x20, 0x30: 0x30, 0x10: 0x10, 0x00: 0x00}
 
 def rgb(c): v = NES[c & 0x3F]; return np.array([(v >> 16) & 255, (v >> 8) & 255, v & 255], float)
@@ -125,6 +127,7 @@ def main():
 
     def layer(spec, look):
         name = spec['files'].get(look) or spec['files'].get('all')
+        if not name: return None
         if not name and look == 'day': return None
         im = Image.open(os.path.join(LAYERS, name)).convert('RGBA')
         im = im.resize((round(im.width * f), round(im.height * f)), Image.LANCZOS)
@@ -147,10 +150,34 @@ def main():
     save = lambda a, n: Image.fromarray(np.clip(np.round(a), 0, 255).astype(np.uint8), 'RGBA' if a.shape[2] == 4 else 'RGB').save(
         os.path.join(outdir, 'title', n), optimize=True)
     files = {}
-    # sky (opaque, full screen)
+    # sky (opaque, the whole widescreen width: the native screen is its middle
+    # 2560 px, placed at left -85). The owner's wide painting (layout "wide",
+    # tools/export_title_ai.py) when there is one; else the sides are the
+    # painting's left edge mirrored and repeated, a stand-in. (A background's left is the
+    # offset into its picture: 85.)
     sky = layer(specs['sky'], 'sunset')[..., :3]; x0, y0 = [round(v * f) for v in specs['sky']['at']]
-    full = np.zeros((H, W, 3)); full[y0:y0 + sky.shape[0], x0:x0 + sky.shape[1]] = sky[:H - y0, :W - x0]
-    day = layer(specs['sky'], 'day'); day = day[..., :3] if day is not None else day_of(np.dstack([full, np.full(full.shape[:2], 255.0)]), SKY_RAMP)[..., :3]
+    full = np.zeros((H, WW, 3)); m = SIDE * S
+    full[y0:y0 + sky.shape[0], m + x0:m + x0 + sky.shape[1]] = sky[:H - y0, :W - x0]
+    wide = specs['sky'].get('wide')
+    day = None
+    if wide:
+        def wide_of(look):
+            if look not in wide['files']: return None
+            sp = dict(wide); sp['files'] = {look: wide['files'][look]}
+            a = layer(sp, look)[..., :3]; wx, wy = [round(v * f) for v in wide['at']]
+            out = full.copy(); out[wy:wy + a.shape[0], m + wx:m + wx + a.shape[1]] = a[:H - wy, :WW - m - wx]
+            return out
+        full = wide_of('sunset'); day = wide_of('day')
+    else:
+        # (from the painting's left part only: its right edge has the castle)
+        full[:, :m] = full[:, 2 * m - 1:m - 1:-1]; full[:, m + W:] = full[:, m:2 * m]
+    if day is None:
+        d = layer(specs['sky'], 'day')
+        if d is not None and not wide:
+            day = full.copy(); day[y0:y0 + d.shape[0], m + x0:m + x0 + d.shape[1]] = d[:H - y0, :W - x0, :3]
+            day[:, :m] = day[:, 2 * m - 1:m - 1:-1]; day[:, m + W:] = day[:, m:2 * m]
+        else:
+            day = day_of(np.dstack([full, np.full(full.shape[:2], 255.0)]), SKY_RAMP)[..., :3]
     save(full, 'sky_sunset.png'); save(day, 'sky_day.png'); files['sky'] = {'sunset': 'sky_sunset.png', 'day': 'sky_day.png'}
     # plate and lettering on full canvases
     def canvas(name):
@@ -192,17 +219,26 @@ def main():
         a = letters[ty * C:(ty + 1) * C, tx * C:(tx + 1) * C].copy()
         own = np.isin(owner[ty * C:(ty + 1) * C, tx * C:(tx + 1) * C], [cell_id[c] for c in cells_])
         a[..., 3] *= own; return a
-    # clouds: strips placed at a whole native row, seamless sideways
+    # clouds: strips placed at a whole native row, seamless sideways. The
+    # owner's wide strips (layout "wide": 512 native px around, painted to
+    # repeat; tools/export_title_ai.py) are used as they are: the pack follows
+    # the game's scroll past its 256 px wrap (nesrecomp patch 0034), so in
+    # widescreen no cloud shows twice. Without them the 256 px strip's ends are
+    # blended into a half-turned copy.
     strips = []
     for name in ('clouds_back', 'clouds_front'):
         sp = specs[name]; y_at = round(sp['at'][1] * f); top = (y_at // S) * S
+        wide = sp.get('wide')
+        if wide:
+            sp = dict(sp); sp['files'] = wide['files']
+        period = round(wide['period'] * f) if wide else W
         out = {}
         for look in ('sunset', 'day'):
             a = layer(sp, look)
             if a is None: a = day_of(layer(sp, 'sunset'), CLOUD_RAMP)
             a = np.concatenate([np.zeros((y_at - top, a.shape[1], 4)), a], 0)
-            if a.shape[1] != W: a = np.asarray(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8), 'RGBA').resize((W, a.shape[0]), Image.LANCZOS)).astype(float)
-            a = seamless_x(a, 48 * S)
+            if a.shape[1] != period: a = np.asarray(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8), 'RGBA').resize((period, a.shape[0]), Image.LANCZOS)).astype(float)
+            if not wide: a = seamless_x(a, 48 * S)
             save(a, f'{name}_{look}.png'); out[look] = f'{name}_{look}.png'
         strips.append((name, top // S, sp.get('scroll_line', 200), out))
 
@@ -235,7 +271,7 @@ def main():
             phases.append((look, k, br, (f'{cn}&{pn}' if dark(cpk) else cn) + on_title, pn))
     bgs = []
     for look, k, br, cn, pn in phases:
-        bgs.append(f'[{cn}]<background>title/{files["sky"][look]},{br:g},0,0,1,0,0')
+        bgs.append(f'[{cn}]<background>title/{files["sky"][look]},{br:g},0,0,1,{SIDE},0')
         bgs.append(f'[{cn}&{pn}]<background>title/plate.png,{br:g},0,0,2,0,0')
         for i, (name, top, line, out) in enumerate(strips):
             bgs.append(f'[{cn}]<background>title/{out[look]},{br:g},1,0,{22 + i},0,{-top},line:{line},wrap')

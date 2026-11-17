@@ -1,0 +1,143 @@
+diff --git a/runner/cyc/cyc_hdpack.c b/runner/cyc/cyc_hdpack.c
+index b74e767..eab6c9a 100644
+--- a/runner/cyc/cyc_hdpack.c
++++ b/runner/cyc/cyc_hdpack.c
+@@ -221,6 +221,7 @@ const uint32_t *cyc_hdpack_present(const uint32_t *native,int *width,int *height
+     hdpack_invalidate_conditions();
+     int pw=wide?w:256;
+     if(hdpack_resize(pw)<0)return native;
++    hdpack_set_origin(wide?origin:0);
+     HdPixel *pixels=hdpack_pixels();
+     margin_count=0;
+     for(int y=0;y<240;y++) {
+diff --git a/runner/include/hdpack.h b/runner/include/hdpack.h
+index e4fd238..7bee52e 100644
+--- a/runner/include/hdpack.h
++++ b/runner/include/hdpack.h
+@@ -66,6 +66,9 @@ void hdpack_unload(void);
+  * side channel to native_w x 240. Returns 0 on success, <0 if the pack had
+  * to be unloaded because the allocation failed. No-op when inactive. */
+ int  hdpack_resize(int native_w);
++/* nesrecomp: canvas column of native column 0 in a wide picture (0 otherwise):
++ * hires.txt positions stay native screen columns. */
++void hdpack_set_origin(int x0);
+ 
+ int  hdpack_sprite_cells(void); /* <options>spriteCells: record sprites on their transparent pixels too */
+ int  hdpack_active(void);    /* 1 if a pack is loaded */
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index 66e74c5..b9e40ed 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -100,6 +100,10 @@ static int        s_all_count = 0, s_all_cap = 0;
+ 
+ static HdPixel   *s_pixels = NULL;     /* side channel, native_w*240 */
+ static int        s_native_w = 0;
++/* nesrecomp: the canvas column of native column 0 in a wide picture (a game
++ * compositor's sides): positions in hires.txt (tileAtPosition, positionCheckX,
++ * a background's left) stay in native screen columns. */
++static int        s_origin = 0;
+ 
+ static int        s_skipped_cond = 0;  /* conditional tiles not yet supported (Phase 2) */
+ static int        s_overscan[4] = {0,0,0,0}; /* top,right,bottom,left (parsed; clip TODO) */
+@@ -183,6 +187,11 @@ typedef struct HdBg {
+     int       line;          /* nesrecomp: >=0 = scroll with this scanline's background (line:Y) */
+     int       wrap;          /* nesrecomp: repeat the image horizontally (wrap) */
+ } HdBg;
++/* nesrecomp: each line:Y scroll followed past its wrap, per scanline (shared
++ * by all the backgrounds on that line: a strip's day, sunset and fade-step
++ * copies stay in step when one takes over from another) */
++typedef struct { int acc, last; uint64_t frame; } HdLineAcc;
++static HdLineAcc s_line_acc[240];
+ 
+ static HdBg     *s_bgs = NULL; static int s_bg_count = 0, s_bg_cap = 0;
+ static HdBgImg **s_bgimgs = NULL; static int s_bgimg_count = 0, s_bgimg_cap = 0;
+@@ -889,6 +898,8 @@ void hdpack_frame_begin(void) {
+         memset(s_pixels, 0, (size_t)s_native_w * 240 * sizeof(HdPixel));
+ }
+ 
++void hdpack_set_origin(int x0) { s_origin = x0; }
++
+ int hdpack_resize(int native_w) {
+     if (!s_active) return 0;
+     if (native_w <= 0) return -1;
+@@ -1236,8 +1247,8 @@ static int cond_eval(HdCond *c, int x, int y, HdPixel *cur, int is_sprite) {
+             break;
+         case CT_TILE_AT_POS:
+         case CT_SPRITE_AT_POS:
+-            if (c->x >= 0 && c->x < s_native_w && c->y >= 0 && c->y < 240)
+-                r = tile_matches(c, c->y * s_native_w + c->x, c->type == CT_SPRITE_AT_POS);
++            if (c->x + s_origin >= 0 && c->x + s_origin < s_native_w && c->y >= 0 && c->y < 240)
++                r = tile_matches(c, c->y * s_native_w + c->x + s_origin, c->type == CT_SPRITE_AT_POS);
+             break;
+         case CT_TILE_NEARBY:
+         case CT_SPRITE_NEARBY: {
+@@ -1249,7 +1260,7 @@ static int cond_eval(HdCond *c, int x, int y, HdPixel *cur, int is_sprite) {
+                 r = tile_matches(c, py * s_native_w + px, sprite);
+             break;
+         }
+-        case CT_POS_X: r = cond_cmp(x, c->op, (int)c->operandA); break;
++        case CT_POS_X: r = cond_cmp(x - s_origin, c->op, (int)c->operandA); break;
+         case CT_POS_Y: r = cond_cmp(y, c->op, (int)c->operandA); break;
+         case CT_ORIGIN_X: if (cur) r = cond_cmp(x - cur->bg_ox, c->op, (int)c->operandA); break;
+         case CT_ORIGIN_Y: if (cur) r = cond_cmp(y - cur->bg_oy, c->op, (int)c->operandA); break;
+@@ -1283,11 +1294,23 @@ static void eval_backgrounds_for_frame(void) {
+             b->offy = (int)(scrolly * b->vscroll);
+             if (b->line >= 0 && s_pixels) {
+                 /* the scroll of that scanline: nametable position of a pixel minus
+-                 * its screen position (bg_ntx: column + 32 * nametable X, patch 0010) */
+-                const int sx = s_native_w / 2;
+-                const HdPixel *p = &s_pixels[b->line * s_native_w + sx];
++                 * its screen position (bg_ntx: column + 32 * nametable X, patch 0010),
++                 * read in the native picture's middle */
++                const int sx = 128;
++                const HdPixel *p = &s_pixels[b->line * s_native_w + s_origin + sx];
+                 int sc = p->bg_has ? ((((int)(p->bg_ntx & 63) * 8 + p->bg_ox) - sx) & 511) : 0;
+-                b->offx = (int)(sc * b->hscroll);
++                /* followed past its wrap (the nametable repeats every 256 or 512
++                 * pixels), so a strip longer than that keeps moving instead of
++                 * jumping back: each present adds the shortest step from the
++                 * last scroll (presents skipped while the host is behind are
++                 * fine: the clouds move far less than 128 px between them).
++                 * After two seconds unseen (another screen) it starts over. */
++                HdLineAcc *L = &s_line_acc[b->line];
++                if (!L->frame || g_frame_count < L->frame || g_frame_count - L->frame > 120) L->acc = sc;
++                else L->acc += ((sc - L->last + 128) & 255) - 128;   /* (a step mod 256: the title's scroll wraps at 256 without the nametable bit) */
++                L->last = sc; L->frame = g_frame_count ? g_frame_count : 1;
++                if (L->acc > (1 << 28) || L->acc < -(1 << 28)) L->acc = sc;   /* (bounded) */
++                b->offx = (int)(L->acc * b->hscroll);
+             }
+             s_actbg[s_nact++] = b;   /* preserves priority order */
+         }
+@@ -1314,7 +1337,7 @@ static void eval_backgrounds_for_frame(void) {
+             const uint32_t *row = b->img->px + (long)py * b->img->w;
+             int opaque = 0;
+             for (int sx = 0; sx < s_native_w; sx++) {
+-                int px = (b->left + sx) * s_scale;
++                int px = (b->left + sx - s_origin) * s_scale;
+                 if (px >= 0 && px < b->img->w && (row[px] >> 24) == 0xFF) { opaque = 1; break; }
+             }
+             if (!opaque) break;
+@@ -1339,7 +1362,7 @@ static uint32_t sat_sub(uint32_t u, uint32_t s) {
+ static int bg_block_opaque(const HdBg *b, int sx, int sy, int s) {
+     const HdBgImg *im = b->img;
+     if (!im->opaque || im->os != s || b->blend != 0) return 0;
+-    int gx = b->left + sx + b->offx, gy = b->top + sy + b->offy;
++    int gx = b->left + sx - s_origin + b->offx, gy = b->top + sy + b->offy;
+     if (b->wrap) { gx %= im->ow; if (gx < 0) gx += im->ow; if (im->ow * s != im->w) return 0; }
+     if (gx < 0 || gy < 0 || gx >= im->ow || gy >= im->oh) return 0;
+     return im->opaque[gy * im->ow + gx];
+@@ -1351,12 +1374,12 @@ static void blend_bg_block(uint32_t *dst, int hd_w, const HdBg *b, int sx, int s
+     const HdBgImg *im = b->img;
+     const int w = im->w, bright = b->brightness, mode = b->blend;
+     if (bright == 255 && bg_block_opaque(b, sx, sy, s)) {   /* opaque block: row copies */
+-        int gx = b->left + sx + offx; if (b->wrap) { gx %= im->ow; if (gx < 0) gx += im->ow; }
++        int gx = b->left + sx - s_origin + offx; if (b->wrap) { gx %= im->ow; if (gx < 0) gx += im->ow; }
+         const uint32_t *src = im->px + (long)((b->top + sy + offy) * s) * w + (long)gx * s;
+         for (int dy = 0; dy < s; dy++) memcpy(dst + (long)dy * hd_w, src + (long)dy * w, (size_t)s * sizeof(uint32_t));
+         return;
+     }
+-    int px0 = (b->left + sx + offx) * s;
++    int px0 = (b->left + sx - s_origin + offx) * s;
+     if (b->wrap) { px0 %= w; if (px0 < 0) px0 += w; }
+     else if (px0 >= w || px0 + s <= 0) return;           /* the block is beside the image */
+     for (int dy = 0; dy < s; dy++) {

@@ -40,8 +40,9 @@
  * (cyc_render.h) paints the columns left and right of the 256 from the same
  * map, with the look each map value has on screen this frame, and records
  * every margin tile for the HD presenter (nesrecomp patch 0026) so the pack's
- * art covers the margins too. Screens that are not a map (battles, the title,
- * menus, the casino tables) are pillarboxed. Characters outside the native 256
+ * art covers the margins too. The title goes on sideways (title_sides). Other
+ * screens that are not a map (battles, menus, the casino tables) are
+ * pillarboxed. Characters outside the native 256
  * are not drawn.
  *
  * Presentation only: the game's memories are never written. Developer
@@ -1254,6 +1255,76 @@ static int uniform(uint32_t *out, int width, int x0, const uint32_t *native)
     return 1;
 }
 
+/* ---- the title screen in widescreen ----
+ * The title (RAM $0500 = $0F and $0026 = $77, the HD pack's own test) is a
+ * flat sky with the castle on the right, over a sea of clouds the game scrolls
+ * in bands below line 195, each row repeating every 256 pixels. The sides go
+ * on with it: above the clouds the sky (tile row's first tile, the blank sky
+ * tile), the still row of cloud tops (tile row 23: its first 8 tiles repeat),
+ * then the cloud rows themselves, line by line at the line's own scroll. In HD
+ * those are title cells, so the pack's title layers show there (wide sky,
+ * clouds that run on). The nametable is checked too (cloud rows in place), so
+ * no other screen is taken for the title. */
+#define TITLE_TOPS_ROW 23
+#define TITLE_SCROLL_LINE 192
+static bool title_shown(void)
+{
+    if (E.ram[0x0500] != 0x0F || E.ram[0x0026] != 0x77) return false;
+    for (int k = 0; k < 32; k += 2)
+        if (nt_tile(k, 28) != 0x0B || nt_tile(k + 1, 28) != 0x0C) return false;
+    return nt_tile(0, TITLE_TOPS_ROW) != 0;
+}
+
+static int title_sides(uint32_t *out, int width, int x0, const uint32_t *native)
+{
+    uint8_t pal[32];
+    for (int i = 0; i < 32; i++) pal[i] = cyc_render_palette(i);
+    for (int y = 0; y < 240; y++) {
+        uint8_t m = cyc_render_line_mask(y);
+        uint16_t table = cyc_render_line_bg_table(y);
+        int sx = y >= TITLE_SCROLL_LINE ? cyc_render_line_scroll_x(y) : 0;
+        int row = y >> 3, fy = y & 7;
+        uint32_t *o = out + y * width;
+        for (int x = 0; x < width; x++) {
+            /* the native picture is the game's, except its first 8 pixels when
+               the game hides them (left-column mask): drawn too, or a bar of
+               sky colour would split the clouds there */
+            if (x >= x0 && x < x0 + 256 && ((m & 0x02) || x >= x0 + 8)) continue;
+            int nx = x - x0, col, fx;
+            if (y >= TITLE_SCROLL_LINE) { int px = mod(nx + sx, 256); col = px >> 3; fx = px & 7; }
+            else if (row == TITLE_TOPS_ROW) { int px = mod(nx, 64); col = px >> 3; fx = px & 7; }
+            else { col = 0; fx = mod(nx, 8); }
+            if (!(m & 0x08)) { o[x] = 0xFF000000u; continue; }          /* background off: black */
+            uint8_t g = nt_tile(col, row);
+            uint16_t at = (uint16_t)(table + g * 16 + fy);
+            int v = (cyc_render_chr(at) >> (7 - fx) & 1) | (cyc_render_chr((uint16_t)(at + 8)) >> (7 - fx) & 1) << 1;
+            o[x] = cyc_render_nes_color(v ? pal[nt_pal(col, row) * 4 + v] : pal[0], m);
+        }
+    }
+    /* HD: which title cell each side tile is (the pack's title cells only let
+       its layers show through, so the row's tile is all that matters) */
+    for (int row = 0; row < 30; row++) {
+        int y = row * 8;
+        uint16_t table = cyc_render_line_bg_table(y);
+        int sx = y >= TITLE_SCROLL_LINE ? cyc_render_line_scroll_x(y) & 7 : 0;
+        for (int cx = -8 - sx; cx < width; cx += 8) {
+            if (cx + 8 <= 0 || (cx >= x0 && cx + 8 <= x0 + 256)) continue;
+            int nx = cx - x0 + 4, col;
+            if (y >= TITLE_SCROLL_LINE) col = mod(nx + cyc_render_line_scroll_x(y), 256) >> 3;
+            else if (row == TITLE_TOPS_ROW) col = mod(nx, 64) >> 3;
+            else col = 0;
+            uint8_t g = nt_tile(col, row);
+            cyc_render_hd_tile(cx, y, (uint16_t)(table + g * 16), nt_pal(col, row));
+        }
+    }
+    for (int y = 0; y < 240; y++) {
+        int skip = (cyc_render_line_mask(y) & 0x02) ? 0 : 8;   /* the first column, drawn above */
+        memcpy(out + y * width + x0 + skip, native + y * 256 + skip, (size_t)(256 - skip) * sizeof(uint32_t));
+    }
+    P.have = false;
+    return 1;
+}
+
 static int compose1(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user);
 static char path_dbg;                                      /* which way the last picture went (DW4_WIDE_PATH=1 logs it) */
 static int compose(uint32_t *out, int width, int height, int x0, const uint32_t *native, void *user)
@@ -1269,6 +1340,7 @@ static int compose1(uint32_t *out, int width, int height, int x0, const uint32_t
     (void)user; (void)height;
     /* nothing read from the game yet (the first frames; edge repair off) */
     if (!E.enabled || !E.ram || !E.wram || !E.ciram) return 0;
+    if (title_shown()) { path_dbg = 't'; return title_sides(out, width, x0, native); }
     if (!E.valid) {                                        /* not a map: one tile everywhere, the last one fading, or pillarboxed */
         if (P.have) { int h = hold(out, width, x0, native); if (h) { path_dbg = 'h'; return h; } }
         path_dbg = 'u';

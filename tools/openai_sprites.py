@@ -6,6 +6,8 @@ For each character it sends one image edit request:
     image 1  inputs/<ID>.png          the 8-bit sheet (1536x1024, 4x2 grid)
     image 2  style_reference.png      your monster art
     image 3  silhouettes/<ID>.png     (only with --silhouette)
+    mask     masks/<ID>.png           (when the folder has one: only its
+                                      transparent part of image 1 is repainted)
     prompt   PROJECT_INSTRUCTIONS.txt + prompts/<ID>.txt
 with the same model, size, quality and settings every time, and saves:
     results/<ID>.png        the first image (what you send back / what gets checked)
@@ -174,6 +176,9 @@ def main():
                  ('image[]', 'style_reference.png', style)]
         if a.silhouette:
             files.append(('image[]', cid + '_silhouette.png', open(os.path.join(folder, sub + 'silhouettes', cid + '.png'), 'rb').read()))
+        mask = os.path.join(folder, sub + 'masks', cid + '.png')
+        if os.path.exists(mask):
+            files.append(('mask', cid + '_mask.png', open(mask, 'rb').read()))
         w, h = png_size(files[0][2])
         size = f'{w}x{h}' if w % 16 == 0 and h % 16 == 0 else SIZE
         fields = [('model', a.model), ('prompt', prompt), ('size', size), ('quality', a.quality),

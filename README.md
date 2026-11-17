@@ -275,6 +275,21 @@ How the characters are built (`tools/build_hd_pack.sh`):
   (`tileAtPosition`). Without `*_day` layers the blue-sky look is recoloured from
   the sunset art along a light-to-colour ramp. `tools/capture_extras.py` records
   the intro every 4th frame (`title_seq.json`, with when each letter is finished).
+  The sky is drawn 426 columns wide (placed at left 85) for widescreen: the
+  owner's wide painting (`sky_wide_sunset.png`, layout `"wide"`), else a
+  stand-in from the painting's left edge. Each cloud strip with a `"wide"` file
+  is 512 native px long and painted to repeat (no join to blend); the pack
+  follows the game's scroll past its 256 px wrap (patch 0034), so the new half
+  scrolls in after the old one. Without it the 256 px strip's ends are blended
+  into a half-turned copy (that join shows as faint doubled clouds).
+  **Painting the wide sky and the long clouds:** `tools/export_title_ai.py OUT`
+  packages them for OpenAI's image API (`openai_sprites.py`, now with `masks/`:
+  only the new parts are painted, the paintings are kept): the sky's two sides,
+  and each strip's two halves set at the ends of a 2560 px canvas with the gap
+  between them painted, so the ends already join. `tools/import_title_ai.py OUT`
+  takes the results into `hd/title/layers/` (kept parts restored exactly, the
+  strip turned back so the old clouds stay where they were), updates
+  `layout.json` and writes previews; then rebuild the pack.
 - *Castle doors* — the three in-between frames of the big doors opening
   (drawn straight into the nametable, so not map tiles): `hd/field/doors/DOOR1.png`,
   cut by `tools/door_frames.py` into map tiles DR01-DR12 in every palette the
@@ -326,8 +341,12 @@ compositor (nesrecomp `cyc_render.h`) that paints the 85 columns on each side
 from the map itself: the same map data and ring offset the edge repair finds
 each frame (towns from WRAM, overworlds from the ROM), placed with the scroll
 the frame was drawn with, and each cell drawn as the game draws it that frame
-(rooms shown or hidden, roofs, the dark; see below). Screens that are not a map
-(the title, battles, menus, the casino tables) are pillarboxed.
+(rooms shown or hidden, roofs, the dark; see below). The title goes on sideways
+too (`title_sides`): sky above the clouds, the still row of cloud tops (its
+first 8 tiles repeat), and the cloud rows at each line's own scroll, plus the
+first 8 pixels the game hides; in HD those are title cells, so the pack's wide
+sky and long cloud strips show there. Other screens that are not a map
+(battles, menus, the casino tables) are pillarboxed.
 
 The sides are painted with the colours each line used (palette, greyscale,
 emphasis), so the battle's white (greyscale) flash and the damage floor's red
@@ -657,6 +676,15 @@ They are framework bugs, kept here until they can go upstream:
   gives them in the picture's logical units, so the pointer used to land on
   another row than the one under it); the player's own A / B / D-pad keys and
   the left stick navigate it.
+- `0034-hdpack-wide-origin-scroll.patch` — in a wide picture (a game
+  compositor's sides) hires.txt positions stay native screen columns: a
+  `<background>`'s left, `tileAtPosition`, `positionCheckX` and the `line:Y`
+  scroll sample are offset by the native picture's canvas column, so one
+  background (left 85, 426 px wide) fills the sides in 16:9 and shows its
+  middle in native view. And `line:Y` follows the scroll past its wrap (a step
+  of at most 128 px from the last present, per scanline, shared by every
+  background on that line, so day / sunset / fade-step copies stay in step): a
+  strip longer than the nametable's 256 px keeps moving instead of jumping back.
 - `0032-cyc-cheats-catalog-path.patch` — the host points the launcher at
   `assets/cheats_catalog.txt` beside the program (`SDL_GetBasePath`), where
   this project's build copies `cheats/catalog.txt`.
