@@ -25,7 +25,14 @@ trap 'rm -f "$DUMP" "$COPYR" "$ENIX" "$ENIX".*' EXIT
 SPR=(); for f in "$ENIX".*; do SPR+=(--sprites "$f"); done
 "$PY" tools/make_font_hdpack.py "$DUMP" "$OUT" --screen "$COPYR" --screen "$ENIX.250" "${SPR[@]}" "$@"
 cat > "$OUT/NOTICE.txt" <<'NOTE'
-Dragon Warrior IV HD text pack: font, window borders and cursors, smoothly
-upscaled 4x from the game's own 8x8 tiles by tools/make_font_hdpack.py.
-Generated locally from the player's ROM; not for redistribution.
+Dragon Warrior IV HD pack.
+
+The project owner's artwork (the parts listed below as such) and the tools
+that build this pack are under the MIT License. Dragon Warrior IV, its
+graphics and its text are (c) Enix (now Square Enix); no claim is made to them.
+
+Text, window borders and cursors (and the power-on screens): the game's own
+8x8 tiles, smoothed and enlarged by tools/make_font_hdpack.py when the pack is
+built. They are the game's graphics, not the project owner's artwork, and are
+not covered by the MIT License.
 NOTE

@@ -124,7 +124,7 @@ echo "  casino"
 cat >> "$OUT/NOTICE.txt" <<'NOTE'
 
 Endor casino: the poker cards are the project owner's artwork (hd/casino/cards);
-the poker screen's other tiles are smoothly upscaled from your ROM.
+the poker screen's other tiles are the game's own, smoothed and enlarged.
 NOTE
 
 # ---- Endor casino: the slot machine (captured by warping to it) ------------
@@ -141,8 +141,8 @@ echo "  slots"
 cat >> "$OUT/NOTICE.txt" <<'NOTE'
 
 Endor casino: the slot machine and its reel symbols are the project owner's
-artwork (hd/casino/slots); its lamps and coin digits are smoothly upscaled from
-your ROM.
+artwork (hd/casino/slots); its lamps and coin digits are the game's own,
+smoothed and enlarged.
 NOTE
 
 # ---- walking characters (party, townspeople, animals, ships, ...) ---------
