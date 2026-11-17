@@ -106,6 +106,26 @@ wine "build-windows/stage/Dragon Warrior IV/DragonWarrior4.exe"     # optional: 
   4. the zip.
 - The HD compositing uses every core on Windows too (patch 0030).
 
+## In-game menu (Esc)
+
+Esc (or the controller's menu button) pauses the game and opens the menu. It
+only holds settings that change while the game runs; the rest (controls, the
+HD pack, cheats, starting in the launcher) are in the launcher.
+
+| Page | Rows |
+|---|---|
+| Display | Fullscreen, Window scale, Widescreen, Trim borders (overscan) |
+| Graphics | Integer scaling, Linear filter, VSync |
+| Audio | Audio, Volume |
+| System | Resume game, Save states, Rewind, Keep rewind history, Rewind buffer, Rewind interval, Quit |
+
+Up / Down choose, Left / Right change a value, Right or Enter opens a page,
+Backspace (or B) goes back and, from the page list, resumes. The keys you play
+with work too (your A and B keys, your D-pad keys), and so do a controller's
+D-pad, left stick, A and B. The mouse picks a row only once it moves, so a
+pointer left over the window does not fight the keys. Every change is saved at
+once (config.ini). Framework changes: recomp-ui patch 0007, nesrecomp patch 0033.
+
 ## Build (headless baseline)
 ```sh
 git submodule update --init
@@ -296,10 +316,9 @@ How the characters are built (`tools/build_hd_pack.sh`):
 
 ## Widescreen (16:9)
 
-The in-game menu's **View mode** row switches between **Native** (the NES's
-256x240, the default) and **16:9** (426x240), live. The launcher's Display
-settings have the same choice as a **Widescreen** row (Off / On (16:9);
-nesrecomp patch 0029). Both save it in config.ini (`[Game] ViewMode`, 0 or
+The in-game menu's **Widescreen** row (Display) switches between **Off** (the
+NES's 256x240, the default) and **On (16:9)** (426x240), live. The launcher's
+Display settings have the same row (nesrecomp patch 0029). Both save it in config.ini (`[Game] ViewMode`, 0 or
 1); headless runs take `--view native|16:9`.
 
 The game still draws its own 256x240 picture; `src/dw4_edges.c` installs a
@@ -629,6 +648,15 @@ They are framework bugs, kept here until they can go upstream:
 - `0030-hdpack-windows-threads.patch` — patch 0016's bands on every core use
   Windows threads on Windows (CreateThread; core count from GetSystemInfo),
   where it used to fall back to one core. POSIX threads elsewhere, unchanged.
+- `0033-runtime-menu-live-settings.patch` — the in-game menu holds only what
+  changes live: no Controls page (rows that only listed the shortcuts), no rows
+  for mods that need a restart (the HD pack once loaded); new VSync (the
+  renderer is now probed both ways at start, so it can be turned on live too)
+  and rewind rows; View mode is called Widescreen (Off / On (16:9)) as in the
+  launcher; Quit moved last. Mouse events reach the menu in window units (SDL
+  gives them in the picture's logical units, so the pointer used to land on
+  another row than the one under it); the player's own A / B / D-pad keys and
+  the left stick navigate it.
 - `0032-cyc-cheats-catalog-path.patch` — the host points the launcher at
   `assets/cheats_catalog.txt` beside the program (`SDL_GetBasePath`), where
   this project's build copies `cheats/catalog.txt`.
@@ -698,6 +726,17 @@ They are framework bugs, kept here until they can go upstream:
   addresses; what: `item` lines) that builds the 8-letter code (`gg_encode`,
   compare FF: an empty slot). The page's card now fills the page and scrolls.
   Format and parser in `launcher_cheats.h`, tested.
+- `0007-runtime-menu-navigation.patch` — the in-game menu's navigation: a
+  pointer resting over the menu no longer puts the selection back on the row
+  under it every frame (the arrow keys / D-pad seemed dead); it counts only
+  once it moves away from where it was when the menu opened. Right opens the
+  chosen page; Left on a row without a value goes back to the page list; the
+  keyboard's row is scrolled into view; descriptions wrap inside the panel;
+  the footer says what the keys do where the selection is (or shows the status
+  message instead of running under Resume); actions no longer show "OPEN".
+  `view_mode_label` / `view_mode_description` on the standard config
+  (`RECOMP_RUNTIME_UI_HAS_VIEW_MODE_TEXT`). Tests in `runtime_ui_test.c` and
+  `runtime_ui_imgui_test.cpp`.
 
 ## Test routes
 | Route | Frames | Covers |

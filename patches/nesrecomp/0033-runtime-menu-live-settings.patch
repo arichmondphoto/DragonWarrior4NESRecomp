@@ -1,0 +1,339 @@
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index c2975ac..9a50562 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -306,7 +306,9 @@ static bool create_renderer(void)
+     if (s_win && !s_ren) s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_SOFTWARE);
+     if (!s_ren) return false;
+ #if SDL_VERSION_ATLEAST(2, 0, 18)
+-    if (s_set.vsync && SDL_RenderSetVSync(s_ren, 1) == 0) {
++    /* Probed whether or not the setting is on, so the in-game menu can turn it
++     * on later as well as off. */
++    if (SDL_RenderSetVSync(s_ren, 1) == 0) {
+         /* Verify both directions before creating textures or the runtime UI.
+          * A backend that cannot disable blocking must not cap fast-forward. */
+         if (SDL_RenderSetVSync(s_ren, 0) == 0) {
+@@ -330,6 +332,8 @@ static bool renderer_synced(void)
+     return s_ren && SDL_GetRendererInfo(s_ren, &info) == 0 && (info.flags & SDL_RENDERER_PRESENTVSYNC) != 0;
+ }
+ 
++static bool vsync_supported(void) { return s_vsync_supported; }
++
+ static uint64_t now_ms(void) { return SDL_GetTicks64(); }
+ static long     frames_done(void) { return s_frames_done; }
+ static void     request_quit(void) { s_running = false; }
+@@ -549,6 +553,7 @@ static void apply_settings(void)
+     SDL_RenderSetLogicalSize(s_ren, view_w(), logical_h());
+     apply_picture_scale();
+     if (s_tex) SDL_SetTextureScaleMode(s_tex, texture_scale_mode());
++    renderer_vsync(s_set.vsync && !s_uncapped);       /* the menu's VSync row */
+ }
+ 
+ static bool ensure_texture(int w, int h)
+@@ -1357,7 +1362,20 @@ static void menu_nav_key(const SDL_KeyboardEvent *k)
+         /* Escape backs out unless it is the Menu shortcut (which then closes) */
+         if (s_set.bind.shortcut[CYC_SC_MENU].key != SDL_SCANCODE_ESCAPE) in = RECOMP_RUNTIME_UI_INPUT_BACK;
+         break;
+-    default: break;
++    default: {
++        /* The keys a player plays with work too: their A / B accept and back
++         * (as a controller's A / B do), their D-pad keys move. */
++        static const int by_button[CYC_INPUT_BUTTONS] = {
++            RECOMP_RUNTIME_UI_INPUT_ACCEPT, RECOMP_RUNTIME_UI_INPUT_BACK, -1, -1,
++            RECOMP_RUNTIME_UI_INPUT_UP, RECOMP_RUNTIME_UI_INPUT_DOWN,
++            RECOMP_RUNTIME_UI_INPUT_LEFT, RECOMP_RUNTIME_UI_INPUT_RIGHT };
++        for (int p = 0; p < CYC_INPUT_PLAYERS && in < 0; ++p)
++            for (int b = 0; b < CYC_INPUT_BUTTONS && in < 0; ++b)
++                if (s_set.bind.button[p][b].key && s_set.bind.button[p][b].key == (int)k->keysym.scancode &&
++                    s_set.bind.shortcut[CYC_SC_MENU].key != (int)k->keysym.scancode)
++                    in = by_button[b];
++        break;
++    }
+     }
+     if (in >= 0) cyc_ui_nav(in, k->repeat != 0);
+ #else
+@@ -1385,6 +1403,26 @@ static void menu_nav_button(int button)
+ #endif
+ }
+ 
++/* The left stick moves through the menu like the D-pad: one step each time it
++ * is pushed past half way (it has to come back first for the next). */
++static void menu_nav_axis(const SDL_ControllerAxisEvent *a)
++{
++#ifdef CYC_WITH_RECOMP_UI
++    static int held[2];                       /* per axis: -1, 0, +1 */
++    int axis = a->axis == SDL_CONTROLLER_AXIS_LEFTX ? 0 : a->axis == SDL_CONTROLLER_AXIS_LEFTY ? 1 : -1;
++    if (axis < 0) return;
++    int dir = a->value > 16000 ? 1 : a->value < -16000 ? -1 : 0;
++    if (abs(a->value) > 8000 && held[axis] && dir == 0) return;   /* between: keep the state */
++    if (dir == held[axis]) return;
++    held[axis] = dir;
++    if (!dir) return;
++    cyc_ui_nav(axis == 0 ? (dir < 0 ? RECOMP_RUNTIME_UI_INPUT_LEFT : RECOMP_RUNTIME_UI_INPUT_RIGHT)
++                         : (dir < 0 ? RECOMP_RUNTIME_UI_INPUT_UP : RECOMP_RUNTIME_UI_INPUT_DOWN), false);
++#else
++    (void)a;
++#endif
++}
++
+ static bool menu_open(void)
+ {
+ #ifdef CYC_WITH_RECOMP_UI
+@@ -1467,6 +1505,7 @@ int cyc_sdl_main(const char *title_in, int scale)
+     host.state_restore = restore_state_blob;
+     host.states_available = states_available;
+     host.frame_seconds = cyc_host_frame_seconds();
++    host.vsync_supported = vsync_supported;
+     cyc_state_ui_configure(s_set.rewind_enabled, s_set.rewind_depth, s_set.rewind_interval);
+     s_have_menu = cyc_ui_init(s_win, s_ren, &host);
+ #endif
+@@ -1556,6 +1595,8 @@ int cyc_sdl_main(const char *title_in, int scale)
+                 if (open) menu_nav_key(&ev.key);
+             } else if (ev.type == SDL_CONTROLLERBUTTONDOWN && open) {
+                 menu_nav_button(ev.cbutton.button);
++            } else if (ev.type == SDL_CONTROLLERAXISMOTION && open) {
++                menu_nav_axis(&ev.caxis);
+             }
+         }
+ 
+diff --git a/runner/cyc/cyc_ui.h b/runner/cyc/cyc_ui.h
+index 4522c5c..d92a3ee 100644
+--- a/runner/cyc/cyc_ui.h
++++ b/runner/cyc/cyc_ui.h
+@@ -57,6 +57,7 @@ typedef struct CycUiHost {
+     bool (*state_restore)(const uint8_t *data, size_t len, char *err, size_t cap);
+     bool (*states_available)(void);       /* false during an online session */
+     double frame_seconds;                /* NTSC/PAL history timestamps */
++    bool (*vsync_supported)(void);        /* the renderer can turn VSync on and off live */
+ } CycUiHost;
+ 
+ /* The launcher, before the image loads. `settings` is edited in place; on
+diff --git a/runner/cyc/cyc_ui_imgui.cpp b/runner/cyc/cyc_ui_imgui.cpp
+index 9e8c8f4..59190d0 100644
+--- a/runner/cyc/cyc_ui_imgui.cpp
++++ b/runner/cyc/cyc_ui_imgui.cpp
+@@ -79,8 +79,30 @@ extern "C" void cyc_ui_process_event(const SDL_Event *ev)
+ {
+     if (!s_ready) return;
+     ImGui::SetCurrentContext(s_ctx);
+-    ImGui_ImplSDL2_ProcessEvent(ev);
+-    cyc_state_ui_event(ev);
++    // SDL hands out mouse positions in the picture's logical units (the
++    // renderer has a logical size between frames), but the menu is laid out in
++    // window units: put them back, or the pointer lands on a different row
++    // than the one under it (the backend's own polling, in window units, then
++    // fights the events every time the mouse moves or clicks).
++    SDL_Event fixed = *ev;
++    int lw = 0, lh = 0;
++    if (s_ren) SDL_RenderGetLogicalSize(s_ren, &lw, &lh);
++    if (lw > 0 && lh > 0) {
++#if SDL_VERSION_ATLEAST(2, 0, 18)
++        int wx, wy;
++        if (fixed.type == SDL_MOUSEMOTION) {
++            SDL_RenderLogicalToWindow(s_ren, (float)fixed.motion.x, (float)fixed.motion.y, &wx, &wy);
++            fixed.motion.x = wx;
++            fixed.motion.y = wy;
++        } else if (fixed.type == SDL_MOUSEBUTTONDOWN || fixed.type == SDL_MOUSEBUTTONUP) {
++            SDL_RenderLogicalToWindow(s_ren, (float)fixed.button.x, (float)fixed.button.y, &wx, &wy);
++            fixed.button.x = wx;
++            fixed.button.y = wy;
++        }
++#endif
++    }
++    ImGui_ImplSDL2_ProcessEvent(&fixed);
++    cyc_state_ui_event(&fixed);
+ }
+ 
+ extern "C" void cyc_ui_render(void)
+diff --git a/runner/cyc/cyc_ui_launcher.c b/runner/cyc/cyc_ui_launcher.c
+index 16948b5..d8f5b1d 100644
+--- a/runner/cyc/cyc_ui_launcher.c
++++ b/runner/cyc/cyc_ui_launcher.c
+@@ -260,7 +260,7 @@ int cyc_ui_launcher(CycSettings *settings, const char *settings_path, const CycH
+         gi.num_aspect_labels = 2;
+         gi.aspect_setting_label = "Widescreen";
+         gi.aspect_setting_help = "Draws the map past the sides of the NES picture to fill a 16:9 screen.\n"
+-                                 "Also in the in-game menu (View mode).";
++                                 "Also in the in-game menu (Display, Widescreen).";
+         io.aspect_index = settings->view_mode == RECOMP_RUNTIME_UI_VIEW_MODE_FIXED_16_9_VALUE;
+         defaults.aspect_index = 0;
+     }
+diff --git a/runner/cyc/cyc_ui_menu.c b/runner/cyc/cyc_ui_menu.c
+index 2823400..b230bf2 100644
+--- a/runner/cyc/cyc_ui_menu.c
++++ b/runner/cyc/cyc_ui_menu.c
+@@ -41,9 +41,7 @@ static const char *s_side_choices[MAX_SIDES + 1];
+ static int s_side_values[MAX_SIDES + 1];
+ static char s_drive_desc[128], s_eject_label[48];
+ static char s_axis_desc[MAX_AXES][160];
+-static char s_shortcut_label[CYC_SC_COUNT][96];
+ static char s_axis_key[MAX_AXES][24];
+-static char s_shortcut_key[CYC_SC_COUNT][24];
+ static uint64_t s_quit_armed;
+ 
+ /* ---- Mods: every feature of the mod runtime's catalog (cyc_session.h), with
+@@ -103,6 +101,12 @@ static void add_mod_rows(void)
+     for (int f = 0; f < features && s_mod_count < MAX_MOD_ROWS; ++f) {
+         RecompLauncherCModFeature feat;
+         if (!p->feature_get(p->ctx, f, &feat) || (feat.hidden && !feat.enabled)) continue;
++#if NESRECOMP_ENABLE_MODS
++        /* The menu holds what changes while the game runs. A feature that only
++         * changes with a restart (an HD pack once loaded) is the launcher's
++         * alone: a row that can never be used only gets in the way. */
++        if (nes_mod_feature_requires_restart(feat.package_id, feat.id)) continue;
++#endif
+         ModRow *m = &s_mod[s_mod_count];
+         memset(m, 0, sizeof(*m));
+         snprintf(m->package, sizeof(m->package), "%s", feat.package_id);
+@@ -110,10 +114,6 @@ static void add_mod_rows(void)
+         snprintf(m->key, sizeof(m->key), "cyc.mod.%d", s_mod_count);
+         snprintf(m->label, sizeof(m->label), "%s", feat.name);
+         snprintf(m->desc, sizeof(m->desc), "%s", feat.description);
+-#if NESRECOMP_ENABLE_MODS
+-        if (nes_mod_feature_requires_restart(feat.package_id, feat.id))
+-            snprintf(m->desc, sizeof(m->desc), "Change this mod in the launcher, then restart the game.");
+-#endif
+         m->type = -1;
+         add(m->key, "Mods", m->label, m->desc, RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL);
+         s_mod_count++;
+@@ -219,6 +219,21 @@ static int mod_enabled(const ModRow *m)
+ }
+ 
+ static const char *const HLE_CHOICES[] = { "Game default", "On", "Off" };
++static const char *const OFF_ON[] = { "Off", "On" };
++/* The launcher's Rewind buffer / interval steps (recomp-ui launcher_model.c). */
++static const char *const REWIND_DEPTH_NAMES[] = { "50", "100", "150", "200" };
++static const int REWIND_DEPTHS[] = { 50, 100, 150, 200 };
++static const char *const REWIND_INTERVAL_NAMES[] = { "1", "4", "8", "12", "15", "30" };
++static const int REWIND_INTERVALS[] = { 1, 4, 8, 12, 15, 30 };
++
++/* The nearest listed step to a value from config.ini (any number there). */
++static int nearest(const int *steps, int n, int v)
++{
++    int best = steps[0];
++    for (int i = 1; i < n; ++i)
++        if (abs(steps[i] - v) < abs(best - v)) best = steps[i];
++    return best;
++}
+ static const int HLE_VALUES[] = { -1, 1, 0 };
+ 
+ static bool is_key(const RecompRuntimeUiItem *it, const char *k) { return it->key && !strcmp(it->key, k); }
+@@ -285,13 +300,6 @@ static void refresh(void)
+                                                                              : from);
+         }
+     }
+-    for (int i = 0; i < CYC_SC_COUNT; ++i) {
+-        char hint[64];
+-        cyc_binding_hint(&s_host.settings->bind.shortcut[i], hint, sizeof(hint));
+-        if (!s_host.settings->bind.shortcut[i].key && !s_host.settings->bind.shortcut[i].pad)
+-            snprintf(hint, sizeof(hint), "unbound");
+-        snprintf(s_shortcut_label[i], sizeof(s_shortcut_label[i]), "%s: %s", cyc_shortcut_label(i), hint);
+-    }
+ }
+ 
+ static int get_value(void *ctx, const RecompRuntimeUiItem *it, int *out)
+@@ -303,6 +311,10 @@ static int get_value(void *ctx, const RecompRuntimeUiItem *it, int *out)
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE)) *out = s->window_scale;
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_INTEGER_SCALE)) *out = s->integer_scale;
+     else if (is_key(it, "cyc.crop_sides")) *out = s->crop_sides;
++    else if (is_key(it, "cyc.vsync")) *out = s->vsync != 0;
++    else if (is_key(it, "cyc.rewind.on")) *out = s->rewind_enabled != 0;
++    else if (is_key(it, "cyc.rewind.depth")) *out = nearest(REWIND_DEPTHS, 4, s->rewind_depth);
++    else if (is_key(it, "cyc.rewind.interval")) *out = nearest(REWIND_INTERVALS, 6, s->rewind_interval);
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER)) *out = s->linear_filter;
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_AUDIO)) *out = s->audio_enabled;
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_VOLUME)) *out = s->volume;
+@@ -333,6 +345,11 @@ static int set_value(void *ctx, const RecompRuntimeUiItem *it, int v)
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE)) s->window_scale = v < 1 ? 1 : v > CYC_WINDOW_SCALE_MAX ? CYC_WINDOW_SCALE_MAX : v;
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_INTEGER_SCALE)) s->integer_scale = v != 0;
+     else if (is_key(it, "cyc.crop_sides")) s->crop_sides = v != 0;
++    else if (is_key(it, "cyc.vsync")) s->vsync = v != 0;
++    /* the main loop hands these to the rewind history every frame */
++    else if (is_key(it, "cyc.rewind.on")) s->rewind_enabled = v != 0;
++    else if (is_key(it, "cyc.rewind.depth")) s->rewind_depth = nearest(REWIND_DEPTHS, 4, v);
++    else if (is_key(it, "cyc.rewind.interval")) s->rewind_interval = nearest(REWIND_INTERVALS, 6, v);
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_LINEAR_FILTER)) s->linear_filter = v != 0;
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_AUDIO)) s->audio_enabled = v != 0;
+     else if (is_key(it, RECOMP_RUNTIME_UI_KEY_VOLUME)) s->volume = v < 0 ? 0 : v > 100 ? 100 : v;
+@@ -428,7 +445,6 @@ static int is_enabled(void *ctx, const RecompRuntimeUiItem *it)
+ #endif
+     (void)ctx;
+     const CycHostExtras *x = s_host.extras;
+-    if (it->key && !strncmp(it->key, "cyc.shortcut.", 13)) return 0;   /* information rows */
+     if (axis_of(it) >= 0) {
+         const NesFdsHleAxis *ax = &nes_fds_hle_axes(NULL)[axis_of(it)];
+         const NesFdsHlePlan *p = cyc_host_hle_plan();
+@@ -438,6 +454,11 @@ static int is_enabled(void *ctx, const RecompRuntimeUiItem *it)
+         return !nes_fds_hle_plan_denied(p, ax) || *nes_fds_hle_ask_axis(&s_host.settings->fds_hle, ax) > 0;
+     }
+     if (is_key(it, RECOMP_RUNTIME_UI_KEY_WINDOW_SCALE)) return s_host.settings->fullscreen == 0;
++    if (is_key(it, "cyc.rewind.depth") || is_key(it, "cyc.rewind.interval"))
++        return s_host.settings->rewind_enabled != 0;
++    if (is_key(it, "cyc.rewind"))
++        return s_host.settings->rewind_enabled != 0 && s_host.state_serialize && s_host.state_restore &&
++               (!s_host.states_available || s_host.states_available());
+     if (mod_row(it)) return mod_enabled(mod_row(it));
+     if (game_row(it) && x && x->menu_callbacks && x->menu_callbacks->is_enabled)
+         return x->menu_callbacks->is_enabled(x->menu_callbacks->context, it);
+@@ -488,12 +509,8 @@ RecompRuntimeUi *cyc_ui_menu_create(const CycUiHost *host)
+                 HLE_CHOICES, 3, HLE_VALUES);
+         }
+     }
+-    for (int i = 0; i < CYC_SC_COUNT; ++i) {
+-        if (i == CYC_SC_DISK && !host->fds) continue;
+-        snprintf(s_shortcut_key[i], sizeof(s_shortcut_key[i]), "cyc.shortcut.%d", i);
+-        add(s_shortcut_key[i], "Controls", s_shortcut_label[i], "Change bindings in the launcher's Controls page.",
+-            RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, NULL, 0, NULL);
+-    }
++    /* No Controls page: bindings are changed in the launcher only, and rows
++     * that only list them could be selected but never used. */
+     if (x && x->menu_items)
+         /* Game-defined additions follow the host's controls. */
+         for (size_t i = 0; i < x->menu_item_count; ++i)
+@@ -501,6 +518,9 @@ RecompRuntimeUi *cyc_ui_menu_create(const CycUiHost *host)
+     add("cyc.crop_sides", "Display", "Trim borders (overscan)",
+         "Hide the edges a TV hid: the black bar at the left and the flickering rows at the top and bottom.",
+         RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL);
++    if (host->vsync_supported && host->vsync_supported())
++        add("cyc.vsync", "Graphics", "VSync", "Wait for the display's refresh: no tearing.",
++            RECOMP_RUNTIME_UI_CHOICE, 0, 1, 1, OFF_ON, 2, NULL);
+     add_mod_rows();
+     CycZapperState gun;
+     cyc_zapper_state(&gun);
+@@ -510,10 +530,18 @@ RecompRuntimeUi *cyc_ui_menu_create(const CycUiHost *host)
+         add("cyc.zapper.crosshair", "Zapper", "Crosshair", "Show the aiming marker.",
+             RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL);
+     }
+-    add("cyc.quit", "System", "Quit", "Close the game (the disk save is written first).", RECOMP_RUNTIME_UI_ACTION,
+-        0, 0, 0, NULL, 0, NULL);
+     add("cyc.states", "System", "Save states", "Browse twelve save slots with thumbnails (F7).", RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, NULL, 0, NULL);
+     add("cyc.rewind", "System", "Rewind", "Choose an earlier moment and resume there (F8).", RECOMP_RUNTIME_UI_ACTION, 0, 0, 0, NULL, 0, NULL);
++    add("cyc.rewind.on", "System", "Keep rewind history", "Record moments to rewind to. Off clears the history.",
++        RECOMP_RUNTIME_UI_BOOL, 0, 1, 1, NULL, 0, NULL);
++    add("cyc.rewind.depth", "System", "Rewind buffer", "How many moments to keep. A change starts the history over.",
++        RECOMP_RUNTIME_UI_CHOICE, 50, 200, 1, REWIND_DEPTH_NAMES, 4, REWIND_DEPTHS);
++    add("cyc.rewind.interval", "System", "Rewind interval", "Frames between moments. A change starts the history over.",
++        RECOMP_RUNTIME_UI_CHOICE, 1, 30, 1, REWIND_INTERVAL_NAMES, 6, REWIND_INTERVALS);
++    /* Last, out of the way of the rows above it (it asks for a second press). */
++    add("cyc.quit", "System", "Quit", host->fds ? "Close the game (the disk save is written first). Press twice."
++                                               : "Close the game. Press twice.", RECOMP_RUNTIME_UI_ACTION,
++        0, 0, 0, NULL, 0, NULL);
+     refresh();
+ 
+     RecompRuntimeUiStandardConfig std;
+@@ -536,6 +564,15 @@ RecompRuntimeUi *cyc_ui_menu_create(const CycUiHost *host)
+     if (x && x->view_modes && x->set_view_mode) {
+         std.features |= RECOMP_RUNTIME_UI_STANDARD_VIEW_MODE;
+         std.view_modes = x->view_modes;
++#ifdef RECOMP_RUNTIME_UI_HAS_VIEW_MODE_TEXT
++        /* Native / 16:9 only: the launcher's own words for it (cyc_ui_launcher.c). */
++        if (!(x->view_modes & ~(unsigned)(RECOMP_RUNTIME_UI_VIEW_MODE_NATIVE | RECOMP_RUNTIME_UI_VIEW_MODE_FIXED_16_9))) {
++            std.view_mode_label = "Widescreen";
++            std.native_view_label = "Off";
++            std.fixed_view_label = "On (16:9)";
++            std.view_mode_description = "Draw past the sides of the NES picture to fill a 16:9 screen.";
++        }
++#endif
+     }
+     std.window_scale_max = CYC_WINDOW_SCALE_MAX;
+     std.extra_items = s_items;

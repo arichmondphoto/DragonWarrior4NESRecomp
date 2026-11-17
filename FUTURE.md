@@ -152,6 +152,17 @@ every item and chapter character. Item names and the inventory table read from
 the game (item menu for values 00-7E; bank 18 $9191, 8 bytes per character);
 `tools/check_cheat_catalog.py` checks every entry.
 
+### 6b. In-game menu (Esc): done (2026-11-17)
+The arrow keys / D-pad seemed dead whenever the mouse pointer sat over the
+menu (it put the selection back on the row under it every frame), clicks could
+land on another row (mouse events came in the picture's logical units), and
+rows that could not be used in game (the Controls list, the HD pack's
+restart-only toggle) looked broken. The menu now holds only live settings
+(README "In-game menu (Esc)"); VSync and the rewind settings were added, View
+mode is called Widescreen as in the launcher. recomp-ui 0007, nesrecomp 0033.
+Checked on Xvfb with XTest keys and clicks, HD pack loaded.
+**Left:** the owner tries it with a controller (left stick, A / B).
+
 ### 7. Windows build
 - **Done (untested on Windows):** `./build_windows.sh` cross-compiles on Linux
   with MinGW-w64 in a container (README "Build for Windows"). The owner keeps
@@ -175,7 +186,7 @@ the game (item menu for values 00-7E; bank 18 $9191, 8 bytes per character);
 - Widescreen: see item 10.
 
 ### 10. Widescreen
-- Done (phases 1-2): View mode Native / 16:9 in the in-game menu, saved in
+- Done (phases 1-2): Widescreen Off / On (16:9) in the in-game menu, saved in
   config.ini; map sides drawn from the map, in 8-bit and HD (README
   "Widescreen (16:9)"); other screens pillarboxed.
 - Done (phase 3): characters in the sides of towns, castles, dungeons and
