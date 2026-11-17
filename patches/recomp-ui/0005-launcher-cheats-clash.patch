@@ -1,0 +1,296 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 637b236..562b33e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -113,6 +113,9 @@ if(BUILD_TESTING)
+     add_executable(recomp-ui-directory-url-test tests/launcher_directory_url_test.cpp)
+     target_include_directories(recomp-ui-directory-url-test PRIVATE src/common)
+     add_test(NAME recomp-ui-directory-url COMMAND $<TARGET_FILE:recomp-ui-directory-url-test>)
++    add_executable(recomp-ui-cheats-test tests/launcher_cheats_test.cpp)
++    target_include_directories(recomp-ui-cheats-test PRIVATE src/common)
++    add_test(NAME recomp-ui-cheats COMMAND $<TARGET_FILE:recomp-ui-cheats-test>)
+     add_executable(recomp-ui-ips-patch-test
+         tests/ips_patch_test.c
+         src/common/ips_patch.c
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index 9df6a3f..75581e2 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -24,6 +24,7 @@
+ #include "launcher_i18n.h"
+ #include "launcher_mod_visibility.h"
+ #include "launcher_mod_preparation.h"
++#include "launcher_cheats.h"
+ #include "recomp_moderation.h"   // local ignore/block list (online only)
+ #include "consoles/n64/n64_binds.h"   // RUI_N64_FIELD_* for the pad-capture path
+ 
+@@ -5518,26 +5519,28 @@ static char g_cheat_name_buf[96];
+ static std::string g_cheat_status;
+ static bool g_cheat_status_error = false;
+ 
+-static int cheat_gg_letter(char c) {
+-    static const char L[] = "APZLGITYEOXUKSVN";
+-    const char* p = c ? strchr(L, toupper((unsigned char)c)) : nullptr;
+-    return p ? (int)(p - L) : -1;
+-}
+-
+-/* The device's own scrambling: address, value and (8 letters) compare. */
++static int cheat_gg_letter(char c) { return launcher_cheats::gg_letter(c); }
+ static bool cheat_gg_decode(const std::string& code, unsigned* addr, unsigned* value,
+                             bool* has_cmp, unsigned* cmp) {
+-    if (code.size() != 6 && code.size() != 8) return false;
+-    int n[8];
+-    for (size_t i = 0; i < code.size(); i++)
+-        if ((n[i] = cheat_gg_letter(code[i])) < 0) return false;
+-    *addr = 0x8000u | ((n[3] & 7) << 12) | ((n[5] & 7) << 8) | ((n[4] & 8) << 8) |
+-            ((n[2] & 7) << 4) | ((n[1] & 8) << 4) | (n[4] & 7) | (n[3] & 8);
+-    const int last = code.size() == 8 ? 7 : 5;
+-    *value = ((n[1] & 7) << 4) | ((n[0] & 8) << 4) | (n[0] & 7) | (n[last] & 8);
+-    *has_cmp = code.size() == 8;
+-    *cmp = *has_cmp ? (((n[7] & 7) << 4) | ((n[6] & 8) << 4) | (n[6] & 7) | (n[5] & 8)) : 0;
+-    return true;
++    return launcher_cheats::gg_decode(code, addr, value, has_cmp, cmp);
++}
++
++/* "NNSOAPZU (Start with 255 gold)", or the code alone. */
++static std::string cheat_label(const CheatEntry& e) {
++    return e.name.empty() ? e.code : e.code + " (" + e.name + ")";
++}
++
++/* Turn g_cheats[i] on; the codes that change the same game byte go off (only
++ * one of them could work), and the status line says which. */
++static void cheat_turn_on(int i) {
++    std::vector<int> off = launcher_cheats::turn_on(g_cheats, i);
++    if (off.empty()) return;
++    std::string names;
++    for (size_t k = 0; k < off.size(); k++)
++        names += (k ? ", " : "") + cheat_label(g_cheats[off[k]]);
++    g_cheat_status = "Turned off " + names + ": " + (off.size() > 1 ? "they change" : "it changes") +
++                     " the same game byte as " + g_cheats[i].code + ", so only one can work.";
++    g_cheat_status_error = false;
+ }
+ 
+ static void cheats_load(const char* path) {
+@@ -5602,9 +5605,10 @@ void draw_cheats(LauncherModel* m, const LauncherTheme& th) {
+     ImGui::PushTextWrapPos();
+     ImGui::TextWrapped("%s", ui_text(
+         "Game Genie codes. Codes that are on apply when the game starts; "
+-        "change them here and start the game again. Cheats are never used "
+-        "in online play. Some codes can glitch or soft-lock the game, so "
+-        "keep a backup of your save."));
++        "change them here and start the game again. Codes that change the "
++        "same byte of the game can't work together, so turning one on turns "
++        "the others off. Cheats are never used in online play. Some codes can "
++        "glitch or soft-lock the game, so keep a backup of your save."));
+     ImGui::PopTextWrapPos();
+     ImGui::PopStyleColor();
+     ImGui::Dummy(ImVec2(0, px(8)));
+@@ -5642,10 +5646,11 @@ void draw_cheats(LauncherModel* m, const LauncherTheme& th) {
+                 g_cheat_status_error = true;
+             } else {
+                 g_cheats.push_back({true, code, g_cheat_name_buf});
+-                if (cheats_save(m->cheats_path)) {
+-                    g_cheat_status = "Added " + code + ".";
+-                    g_cheat_status_error = false;
+-                }
++                g_cheat_status = "Added " + code + ".";
++                g_cheat_status_error = false;
++                cheat_turn_on((int)g_cheats.size() - 1);
++                if (g_cheat_status.rfind("Turned off ", 0) == 0) g_cheat_status = "Added " + code + ". " + g_cheat_status;
++                cheats_save(m->cheats_path);
+                 g_cheat_code_buf[0] = 0; g_cheat_name_buf[0] = 0;
+             }
+         }
+@@ -5675,13 +5680,23 @@ void draw_cheats(LauncherModel* m, const LauncherTheme& th) {
+             ImGui::PushID(i);
+             ImGui::TableNextRow();
+             ImGui::TableNextColumn();
+-            if (ImGui::Checkbox("##on", &e.on)) changed = true;
++            if (ImGui::Checkbox("##on", &e.on)) {
++                changed = true;
++                if (e.on) { g_cheat_status.clear(); cheat_turn_on(i); }
++            }
+             ImGui::TableNextColumn();
+             ImGui::AlignTextToFramePadding();
+             ImGui::TextUnformatted(e.code.c_str());
+             ImGui::TableNextColumn();
+             ImGui::AlignTextToFramePadding();
+             ImGui::TextUnformatted(e.name.empty() ? "-" : e.name.c_str());
++            if (e.on) {
++                /* on together with a code it can't work with (cheats.txt edited by hand) */
++                std::vector<int> other = launcher_cheats::clashes_with(g_cheats, i);
++                for (int j : other)
++                    ImGui::TextColored(col(th.warn), "Can't work with %s: same game byte. Turn one off.",
++                                       cheat_label(g_cheats[j]).c_str());
++            }
+             ImGui::TableNextColumn();
+             ImGui::AlignTextToFramePadding();
+             unsigned a, v, c; bool hc;
+diff --git a/src/common/launcher_cheats.h b/src/common/launcher_cheats.h
+new file mode 100644
+index 0000000..f230bee
+--- /dev/null
++++ b/src/common/launcher_cheats.h
+@@ -0,0 +1,76 @@
++/* launcher_cheats.h - Game Genie codes for the launcher's Cheats page:
++ * decoding, and which codes can't work together.
++ *
++ * A code replaces one byte the game reads from the cartridge. Two codes that
++ * replace the same byte can't both work: the host keeps one replacement per
++ * byte (the later code's, or the first in the list where a 6-letter code and
++ * an 8-letter code meet). An 8-letter code only replaces the byte when the
++ * cartridge holds its compare value there, so two 8-letter codes at one
++ * address with different compare values change different bytes (different
++ * banks) and work together. All the "Start with ... gold" codes of a game,
++ * for instance, share one byte: only one of them can be on.
++ *
++ * Header-only so the page and tests/launcher_cheats_test.cpp share it. */
++#ifndef LAUNCHER_CHEATS_H
++#define LAUNCHER_CHEATS_H
++
++#include <cctype>
++#include <cstring>
++#include <string>
++#include <vector>
++
++namespace launcher_cheats {
++
++inline int gg_letter(char c) {
++    static const char L[] = "APZLGITYEOXUKSVN";
++    const char* p = c ? std::strchr(L, std::toupper((unsigned char)c)) : nullptr;
++    return p ? (int)(p - L) : -1;
++}
++
++/* The device's own scrambling: address, value and (8 letters) compare. */
++inline bool gg_decode(const std::string& code, unsigned* addr, unsigned* value,
++                      bool* has_cmp, unsigned* cmp) {
++    if (code.size() != 6 && code.size() != 8) return false;
++    int n[8];
++    for (size_t i = 0; i < code.size(); i++)
++        if ((n[i] = gg_letter(code[i])) < 0) return false;
++    *addr = 0x8000u | ((n[3] & 7) << 12) | ((n[5] & 7) << 8) | ((n[4] & 8) << 8) |
++            ((n[2] & 7) << 4) | ((n[1] & 8) << 4) | (n[4] & 7) | (n[3] & 8);
++    const int last = code.size() == 8 ? 7 : 5;
++    *value = ((n[1] & 7) << 4) | ((n[0] & 8) << 4) | (n[0] & 7) | (n[last] & 8);
++    *has_cmp = code.size() == 8;
++    *cmp = *has_cmp ? (((n[7] & 7) << 4) | ((n[6] & 8) << 4) | (n[6] & 7) | (n[5] & 8)) : 0;
++    return true;
++}
++
++/* Do codes a and b replace the same cartridge byte? */
++inline bool clash(const std::string& a, const std::string& b) {
++    unsigned aa, av, ac, ba, bv, bc;
++    bool ah, bh;
++    if (!gg_decode(a, &aa, &av, &ah, &ac) || !gg_decode(b, &ba, &bv, &bh, &bc)) return false;
++    return aa == ba && (!ah || !bh || ac == bc);
++}
++
++/* The codes that are on, other than list[i], that clash with list[i].
++ * E has members `on` and `code`. */
++template <class E>
++std::vector<int> clashes_with(const std::vector<E>& list, int i) {
++    std::vector<int> out;
++    for (int j = 0; j < (int)list.size(); j++)
++        if (j != i && list[j].on && list[j].code != list[i].code && clash(list[i].code, list[j].code))
++            out.push_back(j);
++    return out;
++}
++
++/* Turn list[i] on and the codes it clashes with off; returns those. */
++template <class E>
++std::vector<int> turn_on(std::vector<E>& list, int i) {
++    list[i].on = true;
++    std::vector<int> off = clashes_with(list, i);
++    for (int j : off) list[j].on = false;
++    return off;
++}
++
++}  // namespace launcher_cheats
++
++#endif
+diff --git a/tests/launcher_cheats_test.cpp b/tests/launcher_cheats_test.cpp
+new file mode 100644
+index 0000000..8129874
+--- /dev/null
++++ b/tests/launcher_cheats_test.cpp
+@@ -0,0 +1,80 @@
++// launcher_cheats_test.cpp - which Game Genie codes can't work together
++// (launcher_cheats.h, the Cheats page's rule).
++#include "launcher_cheats.h"
++
++#include <cstdio>
++#include <string>
++#include <vector>
++
++static int g_fail = 0;
++#define CHECK(c) do { if (!(c)) { std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); g_fail++; } } while (0)
++
++// The inverse of gg_decode: a code for address a, value v and (8 letters) compare c.
++static std::string encode(unsigned a, unsigned v, bool eight, unsigned c = 0) {
++    static const char L[] = "APZLGITYEOXUKSVN";
++    int n[8];
++    n[0] = (v & 7) | ((v >> 4) & 8);
++    n[1] = ((v >> 4) & 7) | ((a >> 4) & 8);
++    n[2] = ((a >> 4) & 7) | (eight ? 8 : 0);
++    n[3] = ((a >> 12) & 7) | (a & 8);
++    n[4] = (a & 7) | ((a >> 8) & 8);
++    n[5] = ((a >> 8) & 7) | (eight ? (c & 8) : (v & 8));
++    n[6] = (c & 7) | ((c >> 4) & 8);
++    n[7] = ((c >> 4) & 7) | (v & 8);
++    std::string s;
++    for (int i = 0; i < (eight ? 8 : 6); i++) s += L[n[i]];
++    return s;
++}
++
++struct E { bool on; std::string code, name; };
++
++int main() {
++    using namespace launcher_cheats;
++    // round trip, every address bit and value bit
++    for (unsigned a : {0x8000u, 0xFFFFu, 0xA5C3u, 0xC35Au, 0x9ABCu})
++        for (unsigned v : {0x00u, 0xFFu, 0x5Au, 0xA5u})
++            for (int eight = 0; eight < 2; eight++) {
++                unsigned c = eight ? (v ^ 0x3Cu) : 0;
++                std::string code = encode(a, v, eight, c);
++                unsigned da, dv, dc; bool dh;
++                CHECK(gg_decode(code, &da, &dv, &dh, &dc));
++                CHECK(da == a); CHECK(dv == v); CHECK(dh == (eight != 0));
++                if (eight) CHECK(dc == c);
++            }
++    // a known code: SXIOPO (infinite lives in many guides' examples) decodes to the device's layout
++    {
++        unsigned a, v, c; bool h;
++        CHECK(gg_decode("SXIOPO", &a, &v, &h, &c));
++        CHECK(a == 0x91D9 && v == 0xAD && !h);
++    }
++    CHECK(!gg_decode("SXIOP", nullptr, nullptr, nullptr, nullptr));
++
++    const std::string g6a = encode(0xB123, 0x10, false), g6b = encode(0xB123, 0xFF, false);
++    const std::string g8a = encode(0xB123, 0x10, true, 0x05), g8b = encode(0xB123, 0x20, true, 0x06);
++    const std::string g8c = encode(0xB123, 0x30, true, 0x05), other = encode(0xB124, 0x10, false);
++    CHECK(clash(g6a, g6b));      // two plain codes on one byte
++    CHECK(clash(g6a, g8a));      // a plain code hides an 8-letter one there (or the reverse)
++    CHECK(!clash(g8a, g8b));     // different compare values: different bytes (banks)
++    CHECK(clash(g8a, g8c));      // same compare value: the same byte
++    CHECK(!clash(g6a, other));   // next address
++    CHECK(!clash(g6a, "NOTACODE"));
++
++    // two "start with ... gold" codes, an unrelated one and an 8-letter code
++    std::vector<E> list = {{true, g6a, "gold 16"}, {false, g6b, "gold 255"},
++                           {true, other, "other"}, {false, g8b, "bank code"}};
++    CHECK(clashes_with(list, 0).empty());          // gold 255 is off
++    std::vector<int> off = turn_on(list, 1);       // turn gold 255 on
++    CHECK(off.size() == 1 && off[0] == 0);
++    CHECK(!list[0].on && list[1].on && list[2].on);
++    off = turn_on(list, 3);                        // an 8-letter code on gold 255's byte
++    CHECK(off.size() == 1 && off[0] == 1);
++    CHECK(list[3].on && !list[1].on && list[2].on);
++    // both on by hand (cheats.txt edited): reported both ways
++    list[1].on = true;
++    CHECK(clashes_with(list, 1).size() == 1 && clashes_with(list, 3).size() == 1);
++    CHECK(clashes_with(list, 2).empty());
++
++    if (g_fail) { std::printf("%d failure(s)\n", g_fail); return 1; }
++    std::printf("launcher_cheats: ok\n");
++    return 0;
++}

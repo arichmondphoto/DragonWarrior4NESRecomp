@@ -42,7 +42,7 @@ README.md is the full reference; this file is the working summary.
   Captures are cached beside OUTDIR (`*-capture/.stamp` = hash of host, ROM, route, capture script).
   A full build takes ~45 min on 2 cores; peak RAM ~1.1 GB per host process with the pack.
 - **Bump `HD_VERSION` in `package_macos_app.sh` whenever the pack's content changes** (the mod
-  catalog keys on it). Current: 0.27.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
+  catalog keys on it). Current: 0.28.0. Pack name: "HD text, windows, monsters, maps, characters, title and casino".
 - The nesmod package limit is 256 MiB; the pack is ~200 MiB — watch its size (`du -sb OUTDIR`). Never store
   recoloured or turned copies of art: emit `rgb:`/`rot:` tokens on the tile line (patch 0011) instead.
 
@@ -124,8 +124,8 @@ README.md is the full reference; this file is the working summary.
 1. `tools/apply_patches.sh` (restores touched files, applies every patch in order).
 2. In the submodule: `git add -A runner && git stash create` → snapshot hash; `git reset -q`.
 3. Edit, then `git add -A runner && git diff --cached <snapshot> > ../patches/nesrecomp/NNNN-name.patch && git reset -q`.
-4. Re-run `tools/apply_patches.sh`, rebuild, test; before committing: `git -C nesrecomp checkout -- .`
-   (and the same for `recomp-ui`) so the submodules stay pristine.
+4. Re-run `tools/apply_patches.sh`, rebuild, test; before committing: `tools/clean_submodules.sh` (restores every
+   file the patches touch and removes the files they add) so the submodules stay pristine.
 - `nesrecomp/runner/cyc/hw_ppu.c` uses CRLF line endings — edit it with `newline=''` / without converting.
 - Keep HD save-state struct layouts unchanged (`cyc_hdpack_state.inc`): add fields only in padding.
 

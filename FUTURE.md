@@ -138,13 +138,14 @@ the waterfall, one piece just over the threshold).
 
 ## Later
 
-### 6. Cheats page: warn about codes that can't combine
-- **Why:** two codes that patch the same address can't both apply (the last one
-  wins), which looked like "only one code works". All the "Start with ..."
-  gold codes share one address, the HP codes another, and so on.
-- **How:** in the launcher's Cheats page (recomp-ui patch 0003) mark enabled
-  codes that decode to the same address, with a one-line explanation. Decide
-  then whether ticking one should untick the other.
+### 6. Cheats page: codes that can't combine: done
+Two enabled codes that replace the same cartridge byte (same address; one
+without a compare value, or equal compare values) can't both work. The
+launcher's Cheats page (recomp-ui patch 0005, rule in `launcher_cheats.h`,
+`tests/launcher_cheats_test.cpp`): turning a code on or adding one turns the
+codes it clashes with off and says which; clashing codes both on (cheats.txt
+edited by hand) are marked in the list. Checked in the real launcher under
+Xvfb (warning, click, add).
 
 ### 7. Windows build
 - **Done (untested on Windows):** `./build_windows.sh` cross-compiles on Linux
@@ -152,16 +153,15 @@ the waterfall, one piece just over the threshold).
   the ROM off GitHub, so no cloud build.
 - **Builds** on the owner's Linux PC (2026-11-16, fd170da): compiled clean;
   fixes were only in the script (SDL2 setup file, pipefail check, DLL copy).
+- Widescreen battle spiral checked by the owner in a dungeon battle (2026-11-17).
 - **Left:** run check with Wine (launcher, HD on, sound/pad, widescreen,
   battery save + states, ROM remembered), then once on a real Windows PC.
 
 ### 8. Release polish
 - The macOS app is ad-hoc signed: players need "Open Anyway". Removing that
   needs Apple notarization (paid developer account).
-- macOS builds are Apple Silicon only; Intel or universal needs a universal
-  SDL2.
-- The HD pack's own licence line says "Personal use; generated from your ROM"
-  while the repository is public under MIT. It should say "MIT license". 
+- macOS builds are Apple Silicon only (owner's decision: no Intel builds).
+- The HD pack's licence line says "MIT License" (pack 0.28.0).
 - Releases are created on GitHub's website (the cloud session can't create
   releases or push tags). The version is `1.0.<commit count>`: build both
   platforms from the same commit.

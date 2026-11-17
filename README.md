@@ -44,6 +44,8 @@ run `./build_macos.sh` again to rebuild and reinstall.
 - Cheats: the launcher's **Cheats** page takes Game Genie codes (6 or 8 letters), each with an optional name and
   an on/off switch. They are saved in `cheats.txt` in the same folder and apply when the game starts.
   Codes that rewrite the game's code run it on the built-in interpreter for that session (same speed in practice).
+  Codes that change the same byte of the game (all the "Start with ... gold" codes, for one) can't work together:
+  turning one on turns the others off, and the page says which.
 
 Keyboard: arrows = D-pad, **Z** = A, **X** = B, **Return** = Start, `\` = Select. Gamepads work out of the box.
 Esc = menu, F7 = save states, F8 = rewind, Tab = fast-forward, F11 = fullscreen (on a Mac keyboard you may need fn+F7 etc.).
@@ -671,6 +673,14 @@ They are framework bugs, kept here until they can go upstream:
   codes on and off, delete them; each change is written straight to the text
   file (`on`/`off`, code, name per line), and the decoded patch is shown.
   `tools/apply_patches.sh` now also handles patches that add files.
+- `0005-launcher-cheats-clash.patch` — codes that replace the same cartridge
+  byte (same address; one without a compare value, or equal compare values)
+  can't both work (the host keeps one replacement per byte). Turning a code on
+  or adding one turns those off, with a status line naming them; clashing
+  codes that are both on (a hand-edited file) are marked in the list. Rule in
+  `src/common/launcher_cheats.h`, test `tests/launcher_cheats_test.cpp`
+  (`recomp-ui-cheats`). `tools/clean_submodules.sh` undoes the patches,
+  removing the files they add.
 
 ## Test routes
 | Route | Frames | Covers |

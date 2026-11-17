@@ -71,7 +71,7 @@ if [ "${DW4_NO_HD:-0}" != 1 ]; then
     "$VENV/bin/python" nesrecomp/tools/package_hdpack.py --pack "$H/hd/pack" --rom rom/DragonWarriorIV.nes \
         --game-id dragon-warrior-4 --id "$HD_ID" --version "$HD_VERSION" \
         --name "HD text, windows, monsters, maps, characters, title and casino" --author "DragonWarrior4NESRecomp" \
-        --license "Personal use; generated from your ROM and your artwork" --notice "$H/hd/pack/NOTICE.txt" --out "$NESMOD"
+        --license "MIT License" --notice "$H/hd/pack/NOTICE.txt" --out "$NESMOD"
 fi
 
 # --- 2. SDL2 for MinGW --------------------------------------------------------

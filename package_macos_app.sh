@@ -55,7 +55,7 @@ fi
 
 VERSION="1.0.$(git rev-list --count HEAD 2>/dev/null || echo 0)"
 HD_ID="dragon-warrior-4.hd-text"
-HD_VERSION="0.27.0"     # bump whenever the pack's content changes (the Mods catalog keys on it)
+HD_VERSION="0.28.0"     # bump whenever the pack's content changes (the Mods catalog keys on it)
 SAVE_NAME="DragonWarriorIV"   # battery save / save states: saves/DragonWarriorIV.*, whatever the ROM file is called
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
@@ -218,7 +218,7 @@ if [ "${DW4_NO_HD:-0}" != 1 ]; then
     "$VENV/bin/python" nesrecomp/tools/package_hdpack.py --pack build/hd/pack --rom rom/DragonWarriorIV.nes \
         --game-id dragon-warrior-4 --id "$HD_ID" --version "$HD_VERSION" \
         --name "HD text, windows, monsters, maps, characters, title and casino" --author "DragonWarrior4NESRecomp" \
-        --license "Personal use; generated from your ROM and your artwork" --notice build/hd/pack/NOTICE.txt --out "$NESMOD"
+        --license "MIT License" --notice build/hd/pack/NOTICE.txt --out "$NESMOD"
     DEST_PKG="$C/Resources/mods/packages/$HD_ID/$HD_VERSION"
     rm -rf "$C/Resources/mods"; mkdir -p "$DEST_PKG"
     "$VENV/bin/python" -c 'import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])' "$NESMOD" "$DEST_PKG"
