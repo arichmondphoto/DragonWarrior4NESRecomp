@@ -278,19 +278,21 @@ How the characters are built (`tools/build_hd_pack.sh`):
   The sky is drawn 426 columns wide (placed at left 85) for widescreen: the
   owner's wide painting (`sky_wide_sunset.png`, layout `"wide"`), else a
   stand-in from the painting's left edge. Each cloud strip with a `"wide"` file
-  is 512 native px long and painted to repeat (no join to blend); the pack
-  follows the game's scroll past its 256 px wrap (patch 0034), so the new half
-  scrolls in after the old one. Without it the 256 px strip's ends are blended
-  into a half-turned copy (that join shows as faint doubled clouds).
+  is the AI's own strip, 480 native px long and made to repeat (no old clouds
+  mixed in); the pack follows the game's scroll past its 256 px wrap (patch
+  0034), so in widescreen no cloud shows twice. Without it the 256 px strip's
+  ends are blended into a half-turned copy (that join shows as faint doubled
+  clouds).
   **Painting the wide sky and the long clouds:** `tools/export_title_ai.py OUT`
-  packages them for OpenAI's image API (`openai_sprites.py`, now with `masks/`:
-  only the new parts are painted, the paintings are kept): the sky's two sides,
-  and each strip's two halves set at the ends of a 2560 px canvas with the gap
-  between them painted, so the ends already join. `tools/import_title_ai.py OUT`
-  takes the results into `hd/title/layers/` (kept parts restored exactly and
-  joined to the new along each row's least-different cut, since the model
-  repaints the whole picture; the strip turned back so the old clouds stay
-  where they were), updates
+  packages them for OpenAI's image API (`openai_sprites.py`, now with `masks/`):
+  the sky's two sides (the painting is kept), and each strip's two halves set at
+  the ends of a 2560 px canvas with the gap between them painted (the model
+  repaints the ends too, which is what is used). `tools/import_title_ai.py OUT`
+  takes the results into `hd/title/layers/`: the sky's painting restored exactly
+  and joined to the new sides along each row's least-different cut; each AI
+  strip alone, its last 160 columns laid over its first and cut the same way so
+  it repeats on its own (2400 px at 5x), kept taller where the clouds rise
+  above the old strip; it updates
   `layout.json` and writes previews; then rebuild the pack.
 - *Castle doors* — the three in-between frames of the big doors opening
   (drawn straight into the nametable, so not map tiles): `hd/field/doors/DOOR1.png`,

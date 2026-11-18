@@ -6,13 +6,13 @@ hd/title/layers/ and layout.json:
                                 painted sides with the owner's painting put
                                 back exactly in the middle; layout "wide" of
                                 the sky layer
-  clouds_back_wide_sunset.png   2560 px strips (512 native) that repeat: the
-  clouds_front_wide_sunset.png  painted gap with the strip's two halves put
-                                back at the ends, then turned so the old strip
-                                is where it was (x 0-1279) and the new clouds
-                                follow it; layout "wide" of each cloud layer
-                                (taller than the old strip and placed higher
-                                where the new clouds rise above its top)
+  clouds_back_wide_sunset.png   the AI's cloud strips as painted (none of the
+  clouds_front_wide_sunset.png  old strips mixed in), made to repeat on their
+                                own: their ends overlapped by 160 px and cut
+                                along each row's best seam (2400 px = 480
+                                native around); taller and placed higher than
+                                the old strips where the clouds rise above
+                                them; layout "wide" of each cloud layer
 
 The model repaints the whole picture, not just the masked part, so its copy
 of the kept painting only resembles it. Where the two meet, each row is cut
@@ -32,6 +32,7 @@ import json, os, sys
 import numpy as np
 from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+WRAP = 160                    # columns of the AI strip's ends laid over each other to make it repeat
 from export_title_ai import (LAYERS, SKY_W, SKY_H, SKY_X, OVERLAP, SIDE, STRIP, PERIOD, CLOUD_H, HALF, C_OVERLAP)
 
 
@@ -123,25 +124,25 @@ def main():
         extra = max(0, (CLOUD_H - h0) - int(rows.min()) + 2) if len(rows) else 0
         h = h0 + extra
         gen = full[CLOUD_H - h:]
-        src = np.concatenate([np.zeros((extra, STRIP, 4)), src], 0)
         if gen[..., 3].min() > 250:
             print(f'  {cid}: the result has no transparency (the sky above the clouds came back painted); '
                   'run it again with --redo, or check settings.json says transparent')
-        ends = np.zeros_like(gen); ends[:, :HALF] = src[:, HALF:]; ends[:, PERIOD - HALF:] = src[:, :HALF]
-        band = 3 * C_OVERLAP
-        w = np.maximum(seam(ends, gen, HALF - band, HALF - 1, True),
-                       seam(ends, gen, PERIOD - HALF + 1, PERIOD - HALF + band, False))
-        out = over(gen, ends, w)
-        out = np.roll(out, HALF, axis=1)            # the old strip back at x 0-1279
-        # (the old strip is untouched except near its ends, where it is cut into the new)
-        m = 3 * C_OVERLAP + 4
-        keep = src[:, m:STRIP - m]
-        assert np.abs(out[:, m:STRIP - m] - keep)[keep[..., 3] > 8].max() < 2.0
+        # The AI's strip as it painted it, nothing of the old strip mixed in.
+        # Its two ends nearly meet (they were painted from neighbouring columns
+        # of the old strip) but not quite, so it is made to repeat on its own:
+        # its last WRAP columns are laid over its first ones, each row cut where
+        # the two agree best (seam(), as at any join), and the strip ends where
+        # that overlap begins. Repeating, column period-1 is followed by the
+        # columns that came after it in the painting.
+        period = PERIOD - WRAP
+        tail = np.zeros_like(gen); tail[:, :WRAP] = gen[:, period:]
+        w = seam(tail, gen, 1, WRAP - 1, True)
+        out = over(gen, tail, w)[:, :period]
         fn = name + '_wide_sunset.png'
         save(out, os.path.join(LAYERS, fn))
         x_at, y_at = specs[name]['at']
-        specs[name]['wide'] = {'files': {'sunset': fn}, 'period': PERIOD, 'at': [x_at, y_at - extra],
-                               'note': 'repeats every 2560 px (512 native); the first 1280 are the old strip'}
+        specs[name]['wide'] = {'files': {'sunset': fn}, 'period': period, 'at': [x_at, y_at - extra],
+                               'note': f'the AI strip alone, repeating every {period} px ({period // 5} native)'}
         strips[name] = out
         rep = np.concatenate([out, out], 1)
         bg = np.array([60, 40, 90.0]); al = rep[..., 3:] / 255

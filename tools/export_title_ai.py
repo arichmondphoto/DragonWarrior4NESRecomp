@@ -91,9 +91,9 @@ the build machine:
 
   python3 tools/import_title_ai.py out/DW4_title_for_OpenAI
 
-puts them into hd/title/layers/ (the kept parts restored exactly, the strip
-rotated back so the old clouds stay where they were) and writes previews to
-look at before building the pack.
+puts them into hd/title/layers/ (the sky's painting restored exactly; each
+cloud strip is the AI's alone, made to repeat on its own) and writes previews
+to look at before building the pack.
 """
 
 

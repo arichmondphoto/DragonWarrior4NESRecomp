@@ -63,12 +63,12 @@
     "files": {
      "sunset": "clouds_back_wide_sunset.png"
     },
-    "period": 2560,
+    "period": 2400,
     "at": [
      0,
      944
     ],
-    "note": "repeats every 2560 px (512 native); the first 1280 are the old strip"
+    "note": "the AI strip alone, repeating every 2400 px (480 native)"
    }
   },
   {
@@ -86,12 +86,12 @@
     "files": {
      "sunset": "clouds_front_wide_sunset.png"
     },
-    "period": 2560,
+    "period": 2400,
     "at": [
      0,
      993
     ],
-    "note": "repeats every 2560 px (512 native); the first 1280 are the old strip"
+    "note": "the AI strip alone, repeating every 2400 px (480 native)"
    }
   }
  ]
