@@ -1,0 +1,388 @@
+diff --git a/recompiler/src/cyc_codegen.c b/recompiler/src/cyc_codegen.c
+index 8ebf040..553f53f 100644
+--- a/recompiler/src/cyc_codegen.c
++++ b/recompiler/src/cyc_codegen.c
+@@ -1579,6 +1579,12 @@ static void emit_umbrella(const Program *p, const char *path, const char *prefix
+     fprintf(f,
+         "const char *cyc_native_program_name = \"%s\";\n"
+         "const uint32_t cyc_native_prg_hash = 0x%08Xu;  /* FNV-1a of the PRG ROM compiled */\n\n"
++        "/* Chunks the runtime runs on the interpreter instead (cyc_run.h): a\n"
++        " * code cheat changed a byte compiled into them. NULL: none. */\n"
++        "extern uint8_t *cyc_native_blocked;\n"
++        "static inline bool chunk_blocked(uint16_t addr, unsigned k) {\n"
++        "    return cyc_native_blocked && cyc_native_blocked[hw_prg_bank4(addr) * %uu + (k >> %d)];\n"
++        "}\n\n"
+         "/* Which compiled view covers a CPU address right now: the bank the\n"
+         " * cartridge has in that address's 4KB slot decides, because the bytes\n"
+         " * there - and so the block compiled from them - depend on it. */\n"
+@@ -1594,7 +1600,7 @@ static void emit_umbrella(const Program *p, const char *path, const char *prefix
+         "    if (!hw_prg_is_rom(addr) || !hw_prg_is_stable()) return false;\n"
+         "    unsigned k;\n"
+         "    const CycNativeView *v = view_at(addr, &k);\n"
+-        "    return v && ((v->bits[k >> 3] >> (k & 7)) & 1);\n"
++        "    return v && ((v->bits[k >> 3] >> (k & 7)) & 1) && !chunk_blocked(addr, k);\n"
+         "}\n\n"
+         "/* Run compiled instructions from cpu.pc until execution leaves compiled\n"
+         " * code or the PPU finishes a frame. Called at an instruction boundary.\n"
+@@ -1607,13 +1613,13 @@ static void emit_umbrella(const Program *p, const char *path, const char *prefix
+         "        if (!hw_prg_is_rom(pc) || !hw_prg_is_stable()) return;\n"
+         "        unsigned k;\n"
+         "        const CycNativeView *v = view_at(pc, &k);\n"
+-        "        if (!v || !((v->bits[k >> 3] >> (k & 7)) & 1)) return;\n"
++        "        if (!v || !((v->bits[k >> 3] >> (k & 7)) & 1) || chunk_blocked(pc, k)) return;\n"
+         "        void (*chunk)(void) = v->chunks[k >> %d];\n"
+         "        if (!chunk) return;\n"
+         "        chunk();\n"
+         "    }\n"
+         "}\n",
+-        prefix, prg_hash, SLOT_SHIFT, SLOT_COUNT - 1, SLOT_SIZE - 1, CHUNK_SHIFT);
++        prefix, prg_hash, CHUNKS_PER_SLOT, CHUNK_SHIFT, SLOT_SHIFT, SLOT_COUNT - 1, SLOT_SIZE - 1, CHUNK_SHIFT);
+     fputc('\n', f);
+     ram_emit_table(f, ram);
+     /* The mod hook sites (runner/cyc/cyc_hooks.c): the runtime fires a site
+diff --git a/runner/cyc/cyc_cheats.c b/runner/cyc/cyc_cheats.c
+index c31cb43..e125ade 100644
+--- a/runner/cyc/cyc_cheats.c
++++ b/runner/cyc/cyc_cheats.c
+@@ -8,6 +8,7 @@
+ #include <string.h>
+ 
+ extern bool cyc_run_native;
++#include "cyc_run.h"
+ 
+ static int gg_letter(char c)
+ {
+@@ -41,19 +42,20 @@ bool cyc_gg_decode(const char *code, uint16_t *addr, uint8_t *value, bool *has_c
+ static bool touches_native_code(uint16_t addr, bool has_compare, uint8_t compare)
+ {
+     if (!hw_cart.prg) return true;
++    bool any = false;
+     for (uint32_t off = addr & 0x0FFFu; off < hw_cart.prg_len; off += 0x1000u) {
+         if (has_compare && hw_cart.prg[off] != compare) continue;
+-        if (cyc_native_prg_code_byte(off)) return true;
++        /* that 1 KB of compiled code runs on the interpreter, which reads
++           the changed byte; the rest of the program stays compiled */
++        if (cyc_native_prg_code_byte(off)) { cyc_native_block_prg(off); any = true; }
+     }
+-    return false;
++    return any;
+ }
+ 
+-static bool s_forced_interp;     /* this module turned native code off */
+-
+ int cyc_cheats_apply_file(const char *path)
+ {
+     cyc_mod_clear_rom_read_overrides();
+-    if (s_forced_interp) { cyc_run_native = true; s_forced_interp = false; }
++    cyc_native_unblock_all();
+     if (!path || !*path) return 0;
+     FILE *f = fopen(path, "r");
+     if (!f) return 0;
+@@ -87,9 +89,8 @@ int cyc_cheats_apply_file(const char *path)
+         applied++;
+     }
+     fclose(f);
+-    if (code_bytes && cyc_run_native) {
+-        cyc_run_native = false; s_forced_interp = true;
+-        fprintf(stderr, "[cheats] %d code(s) change game code: running on the interpreter\n", code_bytes);
+-    }
++    if (!hw_cart.prg && code_bytes && cyc_run_native) cyc_run_native = false;   /* (no PRG to look at: all of it) */
++    if (code_bytes)
++        fprintf(stderr, "[cheats] %d code(s) change game code: the parts they touch run on the interpreter\n", code_bytes);
+     return applied;
+ }
+diff --git a/runner/cyc/cyc_hdpack.c b/runner/cyc/cyc_hdpack.c
+index eab6c9a..9e8bf96 100644
+--- a/runner/cyc/cyc_hdpack.c
++++ b/runner/cyc/cyc_hdpack.c
+@@ -145,16 +145,25 @@ static uint32_t color(uint8_t value,uint8_t mask) {
+     return hw_palette_argb[((mask>>5)*64)+((mask&1)?(value&0x30):(value&0x3f))];
+ }
+ /* the most used non-zero colour index (1-3) of an 8x8 tile; 0 for a blank tile */
++/* Asked for every pixel of the picture, mostly for the same tile as the pixel
++ * before: the last two answers are kept with the 16 bytes they were for. Bits counted
++ * by table (a portable build has no popcount instruction: __builtin_popcount
++ * became a library call, a tenth of the picture's time). */
+ static unsigned main_index(const uint8_t *t) {
++    static uint8_t bits[256];static bool ready;
++    static uint8_t last[2][16];static unsigned last_k[2],have,next;   /* (a background and a sprite tile alternate) */
++    for(unsigned i=0;i<have;i++)if(!memcmp(t,last[i],16))return last_k[i];
++    if(!ready){for(int i=0;i<256;i++){int c=0;for(int b=i;b;b>>=1)c+=b&1;bits[i]=(uint8_t)c;}ready=true;}
+     unsigned n[4]={0,0,0,0};
+     for(int y=0;y<8;y++){
+         uint8_t lo=t[y],hi=t[y+8];
+-        n[1]+=(unsigned)__builtin_popcount(lo&~hi&0xFF);
+-        n[2]+=(unsigned)__builtin_popcount(hi&~lo&0xFF);
+-        n[3]+=(unsigned)__builtin_popcount(lo&hi);
++        n[1]+=bits[(uint8_t)(lo&~hi)];
++        n[2]+=bits[(uint8_t)(hi&~lo)];
++        n[3]+=bits[lo&hi];
+     }
+     unsigned k=0,best=0;
+     for(unsigned i=1;i<4;i++)if(n[i]>best){best=n[i];k=i;}
++    memcpy(last[next],t,16);last_k[next]=k;next^=1;if(have<2)have++;
+     return k;
+ }
+ static void fill_pixel(HdPixel *p,const HdRecordedPixel *r,uint32_t fallback) {
+diff --git a/runner/cyc/cyc_run.c b/runner/cyc/cyc_run.c
+index 2a79763..c949cf6 100644
+--- a/runner/cyc/cyc_run.c
++++ b/runner/cyc/cyc_run.c
+@@ -1,6 +1,8 @@
+ /* cyc_run.c - see cyc_run.h. */
+ #include "cyc_run.h"
+ 
++#include <stdlib.h>
++
+ #include "cyc_core.h"
+ #include "cyc_hooks.h"
+ #include "cyc_mod.h"
+@@ -11,6 +13,27 @@
+ #include "hw_internal.h"
+ 
+ bool      cyc_run_native = true;
++uint8_t  *cyc_native_blocked;
++static size_t s_blocked_len;
++
++/* Run the 1 KB chunk of compiled code holding a changed PRG byte on the
++ * interpreter (and the chunk before, for an instruction that starts there
++ * and reaches into it); the rest of the program stays compiled. */
++void cyc_native_block_prg(uint32_t offset) {
++    size_t chunks = (size_t)(hw_cart.prg_len / 0x1000u + 1) * 4;
++    if (!cyc_native_blocked) {
++        cyc_native_blocked = (uint8_t *)calloc(chunks, 1);
++        if (!cyc_native_blocked) return;
++        s_blocked_len = chunks;
++    }
++    size_t c = offset >> 10;                 /* = bank4 * 4 + chunk in the 4 KB page */
++    if (c < s_blocked_len) cyc_native_blocked[c] = 1;
++    if ((offset & 0x3FF) < 2 && c > 0) cyc_native_blocked[c - 1] = 1;
++}
++
++void cyc_native_unblock_all(void) {
++    free(cyc_native_blocked); cyc_native_blocked = NULL; s_blocked_len = 0;
++}
+ uint64_t  cyc_run_native_cycles;
+ uint32_t *cyc_run_miss;
+ uint32_t *cyc_run_ram_miss;
+diff --git a/runner/cyc/cyc_run.h b/runner/cyc/cyc_run.h
+index 48f4fe1..dbf56ce 100644
+--- a/runner/cyc/cyc_run.h
++++ b/runner/cyc/cyc_run.h
+@@ -62,6 +62,12 @@ extern void (*cyc_run_observer)(void);
+  * (cyc_ring.h). */
+ int cyc_run_isolated(uint16_t stop_pc, uint8_t entry_s);
+ 
++
++/* Code cheats (cyc_cheats.c): run the chunk of compiled code holding PRG byte
++ * `offset` on the interpreter; or none again. */
++void cyc_native_block_prg(uint32_t offset);
++void cyc_native_unblock_all(void);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index d7b0a6a..6466aea 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -1269,6 +1269,8 @@ static void present_shot(long frame)
+     free(px);
+ }
+ 
++static double s_compose_ms;    /* the last picture's making (HD compositing), for the pacing log */
++
+ /* again: show the picture already in the texture once more (another display
+  * refresh of the same guest frame): no new picture, no upload. */
+ static void show_frame(bool loading, const char *toast_title, const char *toast_body, bool again)
+@@ -1279,7 +1281,11 @@ static void show_frame(bool loading, const char *toast_title, const char *toast_
+         SDL_QueryTexture(s_tex, NULL, NULL, &w, &h);
+         goto draw;
+     }
+-    pic = picture(&w, &h);
++    {
++        Uint64 c0 = SDL_GetPerformanceCounter();
++        pic = picture(&w, &h);
++        s_compose_ms = (double)(SDL_GetPerformanceCounter() - c0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
++    }
+ #ifdef CYC_WITH_RECOMP_UI
+     cyc_state_ui_picture(pic, w, h);
+ #endif
+@@ -1393,7 +1399,8 @@ int cyc_sdl_hd_scale_hint(void)
+  * display paces instead: one guest frame per N refreshes, each refresh
+  * presented (the same picture again for the others), no deadline wait. The
+  * game then runs at the display's rate (60 Hz: 0.16% slower than an NES,
+- * which nobody hears: the audio is stretched to match, below). Other rates
++ * which nobody hears: the audio is stretched to match, below, by 0.5%, or
++ * up to 3% while the queue runs low). Other rates
+  * (75, 144 Hz) keep the deadline. A present that does not wait (a driver
+  * that queues pictures, a hidden window) is held to the display's clock.
+  * NESRECOMP_PACING=deadline turns it off (=display: on, and a display that
+@@ -1653,7 +1660,7 @@ int cyc_sdl_main(const char *title_in, int scale)
+     const double guest_hz = 1.0 / frame_seconds;
+     const bool pacing_log = getenv("NESRECOMP_PACING_LOG") && *getenv("NESRECOMP_PACING_LOG") == '1';
+     Uint64 loop_mark = SDL_GetPerformanceCounter(), log_mark = loop_mark;
+-    struct { long loops, guest, shows, again, skipped, hitches; double show_ms, show_max, loop_max, game_ms, game_max; } pl = {0};
++    struct { long loops, guest, shows, again, skipped, hitches; double show_ms, show_max, loop_max, game_ms, game_max, compose_ms; } pl = {0};
+     lock_update(guest_hz);
+     SDL_SetWindowTitle(s_win, title);
+ 
+@@ -1852,11 +1859,15 @@ int cyc_sdl_main(const char *title_in, int scale)
+             const int16_t *outp = pcm;
+             if (s_lock_n) {
+                 /* paced by the display: keep ~50 ms queued */
+-                static int16_t st_buf[4096 + 64];
++                static int16_t st_buf[4096 + 256];
+                 double target = have.freq * 0.05, q = SDL_GetQueuedAudioSize(dev) / 2.0;
++                /* gentle near the target (0.5%: inaudible), firmer when the
++                   queue runs low (up to 3%: a game slower than the display
++                   for a while is heard a little lower, not broken up) */
+                 double d = (target - q) / target;
+                 if (d > 1) d = 1; else if (d < -1) d = -1;
+-                n = audio_stretch(pcm, n, 1.0 + 0.005 * d, st_buf, sizeof(st_buf) / sizeof(st_buf[0]));
++                double f = 1.0 + 0.005 * d + (d > 0.5 ? 0.05 * (d - 0.5) : 0.0);
++                n = audio_stretch(pcm, n, f, st_buf, sizeof(st_buf) / sizeof(st_buf[0]));
+                 outp = st_buf;
+             }
+             SDL_QueueAudio(dev, outp, (Uint32)(n * sizeof(int16_t)));
+@@ -1895,6 +1906,7 @@ int cyc_sdl_main(const char *title_in, int scale)
+             show_frame(loading, toast_title, toast_body, false);
+             double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / (double)freq;
+             pl.shows++; pl.show_ms += ms; if (ms > pl.show_max) pl.show_max = ms;
++            pl.compose_ms += s_compose_ms;
+             if (s_present_out && s_present_every > 0 && loops % s_present_every == 0) present_shot(s_frames_done);
+             SDL_RenderPresent(s_ren);
+             /* the guest frame's other refreshes: the same picture again */
+@@ -1939,10 +1951,10 @@ int cyc_sdl_main(const char *title_in, int scale)
+             }
+             if (pacing_log && tnow - log_mark >= 5 * freq) {
+                 fprintf(stderr, "pacing: %s%d Hz display, %ld loops, %ld game frames, %ld pictures (+%ld repeats), %ld not shown, "
+-                        "%ld late loops (>1.5x), game %.1f ms avg / %.1f max, picture %.1f ms avg / %.1f max, loop %.1f ms avg / %.1f max\n",
++                        "%ld late loops (>1.5x), game %.1f ms avg / %.1f max, picture %.1f ms avg (HD %.1f) / %.1f max, loop %.1f ms avg / %.1f max\n",
+                         s_lock_n ? "display-locked, " : "game clock, ", s_lock_hz, pl.loops, pl.guest, pl.shows, pl.again,
+                         pl.skipped, pl.hitches, pl.guest ? pl.game_ms / pl.guest : 0.0, pl.game_max,
+-                        pl.shows ? pl.show_ms / pl.shows : 0.0, pl.show_max,
++                        pl.shows ? pl.show_ms / pl.shows : 0.0, pl.shows ? pl.compose_ms / pl.shows : 0.0, pl.show_max,
+                         pl.loops ? (double)(tnow - log_mark) * 1000.0 / (double)freq / pl.loops : 0.0, pl.loop_max);
+                 memset(&pl, 0, sizeof(pl));
+                 log_mark = tnow;
+diff --git a/runner/cyc/hw_mapper.c b/runner/cyc/hw_mapper.c
+index dbbd3da..4e95095 100644
+--- a/runner/cyc/hw_mapper.c
++++ b/runner/cyc/hw_mapper.c
+@@ -1268,7 +1268,15 @@ void hw_cart_ppu_addr_watched(uint16_t vbus)
+ {
+     if (hw_cart.mapper==1 || hw_cart.mapper==155) {
+         unsigned a12=(vbus>>12)&1;
+-        if (hw_cart.m.a12!=a12) { hw_cart.m.a12=(uint8_t)a12; mmc1_apply(); }
++        if (hw_cart.m.a12!=a12) {
++            /* mmc1_apply depends on A12 only through the CHR bank it selects:
++               re-mapping is needed only when that bank changes (4 KB CHR mode
++               with two different banks), not on every pattern-table switch */
++            unsigned before=(hw_cart.m.ctrl&MMC1_CTRL_CHR_4K) && hw_cart.m.a12 ? hw_cart.m.chr1 : hw_cart.m.chr0;
++            hw_cart.m.a12=(uint8_t)a12;
++            unsigned after=(hw_cart.m.ctrl&MMC1_CTRL_CHR_4K) && hw_cart.m.a12 ? hw_cart.m.chr1 : hw_cart.m.chr0;
++            if (after!=before) mmc1_apply();
++        }
+     } else if (hw_cart.mapper == 4 || hw_cart.mapper == 118 || hw_cart.mapper == 119 || hw_cart.mapper == 48) mmc3_ppu_addr(vbus);
+     else if (hw_cart.mapper==64 || hw_cart.mapper==158) rambo_ppu_addr(vbus);
+     else if (hw_cart.mapper==96) oeka_ppu_addr(vbus);
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index e5f41c8..831ecc3 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -357,44 +357,69 @@ static int safe_image_name(const char *name) {
+     return 1;
+ }
+ /* Scale a premultiplied ARGB picture by num/den (den > num) with an area
+- * filter: each output pixel is the average of the input area it covers. */
++ * filter: each output pixel is the average of the input area it covers.
++ * Fixed-point weights per output column / row (each input pixel touches at
++ * most two outputs), integer sums: load time stays close to the 10x pack's. */
++typedef struct { int first, count; uint16_t w[4]; } AreaTap;   /* w: 1/65536ths of the input span */
++static AreaTap *area_taps(int n_in, int n_out) {
++    AreaTap *t = (AreaTap *)calloc((size_t)n_out, sizeof(AreaTap));
++    if (!t) return NULL;
++    for (int o = 0; o < n_out; o++) {
++        /* in fixed point: input span [o*n_in, (o+1)*n_in) / n_out */
++        long a0 = (long)o * n_in, a1 = a0 + n_in;      /* (scaled by n_out) */
++        int i0 = (int)(a0 / n_out), i1 = (int)((a1 - 1) / n_out);
++        if (i1 - i0 + 1 > 4) i1 = i0 + 3;              /* (ratios this filter is used for touch <= 3) */
++        t[o].first = i0; t[o].count = i1 - i0 + 1;
++        int left = 65536;
++        for (int k = 0; k < t[o].count; k++) {
++            long c0 = (long)(i0 + k) * n_out, c1 = c0 + n_out;
++            long lo = c0 > a0 ? c0 : a0, hi = c1 < a1 ? c1 : a1;
++            int w = k == t[o].count - 1 ? left : (int)((hi - lo) * 65536 / n_in);
++            if (w < 0) w = 0;
++            if (w > 65535) w = 65535;
++            t[o].w[k] = (uint16_t)w; left -= w;
++        }
++    }
++    return t;
++}
+ static uint32_t *area_downscale(const uint32_t *px, int w, int h, int num, int den, int *ow, int *oh) {
+     int nw = (int)((long)w * num / den), nh = (int)((long)h * num / den);
+     if (nw < 1) nw = 1;
+     if (nh < 1) nh = 1;
+-    float *tmp = (float *)malloc((size_t)nw * h * 4 * sizeof(float));
++    AreaTap *tx = area_taps(w, nw), *ty = area_taps(h, nh);
++    uint32_t *tmp = (uint32_t *)malloc((size_t)nw * h * 4 * sizeof(uint32_t));   /* 16.16 per channel */
+     uint32_t *out = (uint32_t *)malloc((size_t)nw * nh * sizeof(uint32_t));
+-    if (!tmp || !out) { free(tmp); free(out); return NULL; }
+-    const double fx = (double)w / nw, fy = (double)h / nh;
++    if (!tx || !ty || !tmp || !out) { free(tx); free(ty); free(tmp); free(out); return NULL; }
+     for (int y = 0; y < h; y++) {                       /* across */
+         const uint32_t *row = px + (size_t)y * w;
+-        for (int x = 0; x < nw; x++) {
+-            double a0 = x * fx, a1 = a0 + fx, acc[4] = {0, 0, 0, 0};
+-            for (int i = (int)a0; i < w && i < a1; i++) {
+-                double wgt = (i + 1 < a1 ? i + 1 : a1) - (i > a0 ? i : a0);
+-                uint32_t v = row[i];
+-                acc[0] += wgt * (v >> 24); acc[1] += wgt * ((v >> 16) & 255);
+-                acc[2] += wgt * ((v >> 8) & 255); acc[3] += wgt * (v & 255);
++        uint32_t *t = tmp + (size_t)y * nw * 4;
++        for (int x = 0; x < nw; x++, t += 4) {
++            uint32_t a = 0, r = 0, g = 0, b = 0;
++            const AreaTap *tp = &tx[x];
++            for (int k = 0; k < tp->count; k++) {
++                uint32_t v = row[tp->first + k], wt = tp->w[k];
++                a += (v >> 24) * wt; r += ((v >> 16) & 255) * wt; g += ((v >> 8) & 255) * wt; b += (v & 255) * wt;
+             }
+-            float *t = tmp + ((size_t)y * nw + x) * 4;
+-            for (int c = 0; c < 4; c++) t[c] = (float)(acc[c] / fx);
++            t[0] = a >> 8; t[1] = r >> 8; t[2] = g >> 8; t[3] = b >> 8;     /* 8.8 */
+         }
+     }
+-    for (int x = 0; x < nw; x++) {                      /* down */
+-        for (int y = 0; y < nh; y++) {
+-            double a0 = y * fy, a1 = a0 + fy, acc[4] = {0, 0, 0, 0};
+-            for (int i = (int)a0; i < h && i < a1; i++) {
+-                double wgt = (i + 1 < a1 ? i + 1 : a1) - (i > a0 ? i : a0);
+-                const float *t = tmp + ((size_t)i * nw + x) * 4;
+-                for (int c = 0; c < 4; c++) acc[c] += wgt * t[c];
++    for (int y = 0; y < nh; y++) {                      /* down */
++        const AreaTap *tp = &ty[y];
++        uint32_t *o = out + (size_t)y * nw;
++        for (int x = 0; x < nw; x++) {
++            uint32_t acc[4] = {0, 0, 0, 0};
++            for (int k = 0; k < tp->count; k++) {
++                const uint32_t *t = tmp + ((size_t)(tp->first + k) * nw + x) * 4;
++                uint32_t wt = tp->w[k];
++                acc[0] += t[0] * wt; acc[1] += t[1] * wt; acc[2] += t[2] * wt; acc[3] += t[3] * wt;
+             }
+-            int ch[4];
+-            for (int c = 0; c < 4; c++) { int v = (int)(acc[c] / fy + 0.5); ch[c] = v < 0 ? 0 : v > 255 ? 255 : v; }
+-            for (int c = 1; c < 4; c++) if (ch[c] > ch[0]) ch[c] = ch[0];   /* stay premultiplied */
+-            out[(size_t)y * nw + x] = ((uint32_t)ch[0] << 24) | ((uint32_t)ch[1] << 16) | ((uint32_t)ch[2] << 8) | (uint32_t)ch[3];
++            uint32_t c[4];
++            for (int i = 0; i < 4; i++) { uint32_t v = (acc[i] + (1u << 23)) >> 24; c[i] = v > 255 ? 255 : v; }
++            for (int i = 1; i < 4; i++) if (c[i] > c[0]) c[i] = c[0];   /* stay premultiplied */
++            o[x] = (c[0] << 24) | (c[1] << 16) | (c[2] << 8) | c[3];
+         }
+     }
+-    free(tmp);
++    free(tx); free(ty); free(tmp);
+     *ow = nw; *oh = nh;
+     return out;
+ }

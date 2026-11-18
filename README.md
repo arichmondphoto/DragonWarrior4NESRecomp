@@ -680,6 +680,23 @@ They are framework bugs, kept here until they can go upstream:
   gives them in the picture's logical units, so the pointer used to land on
   another row than the one under it); the player's own A / B / D-pad keys and
   the left stick navigate it.
+- `0037-performance.patch` — measured with callgrind (town, 9x, widescreen):
+  the HD picture's per-pixel setup asked every pixel's tile for its main colour
+  with `__builtin_popcount`, which a portable x86-64 build turns into a library
+  call: a third of the picture's work, all on one thread. Now a byte table and
+  a two-entry cache (pixels in a row share tiles): the picture is identical,
+  its work a third less. MMC1: a PPU A12 change re-mapped the cartridge every
+  pattern-table switch (thousands a frame); now only when the CHR bank it
+  selects changes (identical state after 5000 frames). Code cheats no longer
+  put the whole game on the interpreter: the recompiler's run loop skips
+  compiled 1 KB chunks the runtime blocks (`cyc_native_blocked`), and a cheat
+  blocks only the chunks holding the bytes it changes (RAM, VRAM, WRAM
+  identical to the interpreter after 3000 frames with the owner's codes). The
+  scale-down at load is fixed-point (as fast as the 10x load, within rounding of
+  before). The pacing log splits the picture time (HD compositing vs upload)
+  and shows the game's own time; the display-locked audio stretch firms up to
+  3% while the queue runs low, so a game slower than the display for a while
+  sounds a little lower instead of breaking up.
 - `0036-hd-draw-scale-and-pacing.patch` — the HD pack is drawn at the scale
   the largest display needs, not always the pack's 10x: every picture is
   scaled down once at load (area filter, tile positions with it; tile blocks
