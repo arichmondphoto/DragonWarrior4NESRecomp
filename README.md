@@ -680,6 +680,23 @@ They are framework bugs, kept here until they can go upstream:
   gives them in the picture's logical units, so the pointer used to land on
   another row than the one under it); the player's own A / B / D-pad keys and
   the left stick navigate it.
+- `0035-display-locked-pacing.patch` — with VSync on, the window host used to
+  pace the game by its own 60.0988 Hz clock while each present waited for the
+  display: the two clocks drift, so a heavy (HD) frame missed its refresh, the
+  next present waited a whole refresh more and a picture was dropped (an
+  uneven, shuddering scroll; on a slow test box 10-30% of pictures were never
+  shown even in 8-bit). When the display runs at a whole multiple of the
+  game's rate (60/120/240 Hz within 2%), the display now paces: one game frame
+  per N refreshes, every refresh presented (the same picture again in
+  between, no new upload), the audio stretched by up to 0.5% to keep its queue
+  at 50 ms (the game runs at the display's 60.000 Hz). A game more than a
+  frame behind catches up without a picture, but never twice in a row. A
+  present that does not wait (hidden window, VSync refused) is noticed after
+  30 loops and the game's clock takes over. `NESRECOMP_PACING=deadline` turns
+  it off (`=display`: on, a display reporting no rate taken as 60 Hz);
+  `NESRECOMP_PACING_LOG=1` prints every 5 s: pacing mode and display rate,
+  game frames, pictures (+ repeats), pictures not shown, late loops, picture
+  time avg/max (HD compositing + upload), longest loop.
 - `0034-hdpack-wide-origin-scroll.patch` — in a wide picture (a game
   compositor's sides) hires.txt positions stay native screen columns: a
   `<background>`'s left, `tileAtPosition`, `positionCheckX` and the `line:Y`

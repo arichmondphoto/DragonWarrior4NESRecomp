@@ -163,6 +163,14 @@ mode is called Widescreen as in the launcher. recomp-ui 0007, nesrecomp 0033.
 Checked on Xvfb with XTest keys and clicks, HD pack loaded.
 **Left:** the owner tries it with a controller (left stick, A / B).
 
+### 6c. Shudder with VSync and the HD pack (2026-11-18)
+Cause found: two clocks (the game's deadline and the display's blocking
+present) dropping pictures; fixed by display-locked pacing (nesrecomp 0035).
+**Left:** owner tries it; if a screen still shudders, run with
+`NESRECOMP_PACING_LOG=1` there: "picture N ms" near or over 16 ms means the HD
+picture itself is too slow on that screen (next step then: compose the HD
+picture at the window's size instead of 10x, or upload only changed rows).
+
 ### 7. Windows build
 - **Done (untested on Windows):** `./build_windows.sh` cross-compiles on Linux
   with MinGW-w64 in a container (README "Build for Windows"). The owner keeps
