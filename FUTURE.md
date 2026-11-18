@@ -166,6 +166,9 @@ Checked on Xvfb with XTest keys and clicks, HD pack loaded.
 ### 6c. Shudder with VSync and the HD pack (2026-11-18)
 Cause found: two clocks (the game's deadline and the display's blocking
 present) dropping pictures; fixed by display-locked pacing (nesrecomp 0035).
+Owner's log (Linux, 60 Hz, cheats on the interpreter): pictures took 11.6 ms
+at 10x and a quarter were still dropped. 0036: the pack drawn at the display's
+scale (7x there: half the work) and drops only when slow for a while.
 **Left:** owner tries it; if a screen still shudders, run with
 `NESRECOMP_PACING_LOG=1` there: "picture N ms" near or over 16 ms means the HD
 picture itself is too slow on that screen (next step then: compose the HD

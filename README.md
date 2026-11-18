@@ -680,6 +680,19 @@ They are framework bugs, kept here until they can go upstream:
   gives them in the picture's logical units, so the pointer used to land on
   another row than the one under it); the player's own A / B / D-pad keys and
   the left stick navigate it.
+- `0036-hd-draw-scale-and-pacing.patch` — the HD pack is drawn at the scale
+  the largest display needs, not always the pack's 10x: every picture is
+  scaled down once at load (area filter, tile positions with it; tile blocks
+  on the 80 px grid stay whole), so composing and uploading every frame costs
+  what the display can show (a 1600-line screen: 7x, half the pixels; 1080:
+  5x, a quarter). The window host picks it from the displays' heights (Windows:
+  times the desktop scale; macOS: the pack's own, its sizes before a window
+  are in points); headless runs keep 10x; `NESRECOMP_HD_SCALE=N` overrides
+  either. Save states record the scale (a different one drops only the HD
+  picture record, as patch 0025). And display-locked pacing (0035) now drops a
+  picture only when the loop has been slower than the display for a while (a
+  moving average over 15% above the period), never for one slow frame; a
+  present that returns early waits for the display's clock instead.
 - `0035-display-locked-pacing.patch` — with VSync on, the window host used to
   pace the game by its own 60.0988 Hz clock while each present waited for the
   display: the two clocks drift, so a heavy (HD) frame missed its refresh, the

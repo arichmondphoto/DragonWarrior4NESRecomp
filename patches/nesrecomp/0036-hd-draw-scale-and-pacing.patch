@@ -1,0 +1,305 @@
+diff --git a/runner/cyc/cyc_host.c b/runner/cyc/cyc_host.c
+index 759dfe2..1da485b 100644
+--- a/runner/cyc/cyc_host.c
++++ b/runner/cyc/cyc_host.c
+@@ -1492,6 +1492,15 @@ session_restart:
+     }
+ #endif
+ #ifdef NESRECOMP_CYCLE_HDPACK_MODS
++    void hdpack_set_draw_scale(int scale);
++#if defined(CYC_WITH_SDL) && !defined(CYC_ORACLE)
++    {   /* the window draws the HD pack at its display's scale (headless: the pack's own) */
++        int cyc_sdl_hd_scale_hint(void);
++        hdpack_set_draw_scale(headless ? 0 : cyc_sdl_hd_scale_hint());
++    }
++#else
++    hdpack_set_draw_scale(0);
++#endif
+     if (!cyc_hdpack_mod_prepare()) return 2;
+ #endif
+ #ifndef CYC_ORACLE
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index 224c1fc..0eef145 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -1354,6 +1354,35 @@ draw:
+     }
+ }
+ 
++/* The HD pack's drawing scale for this machine's largest display: the scale
++ * whose picture (240 lines high) covers the display's height in pixels, so a
++ * full-screen picture is never enlarged, and nothing more is composed and
++ * uploaded every frame than the display can show (a 10x pack on a 1600-line
++ * screen: 7x, half the pixels). 0 = the pack's own (macOS, where the display
++ * size before a window exists is in points, not pixels). */
++int cyc_sdl_hd_scale_hint(void)
++{
++#ifdef __APPLE__
++    return 0;
++#else
++    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return 0;
++    int best = 0;
++    for (int i = 0; i < SDL_GetNumVideoDisplays(); ++i) {
++        SDL_DisplayMode m;
++        if (SDL_GetDesktopDisplayMode(i, &m) != 0) continue;
++        double px = m.h;
++#ifdef _WIN32
++        float ddpi = 0;
++        if (SDL_GetDisplayDPI(i, &ddpi, NULL, NULL) == 0 && ddpi > 96.0f) px *= ddpi / 96.0f;   /* (scaled desktop) */
++#endif
++        int sc = (int)ceil(px / 240.0 - 0.02);
++        if (sc > best) best = sc;
++    }
++    SDL_QuitSubSystem(SDL_INIT_VIDEO);
++    return best < 2 ? 0 : best;
++#endif
++}
++
+ /* ---- display-locked pacing ----
+  * With VSync on, the guest's own 60.0988 Hz deadline and the display's
+  * blocking present are two clocks: the deadline drifts across the refresh, so
+@@ -1365,14 +1394,13 @@ draw:
+  * presented (the same picture again for the others), no deadline wait. The
+  * game then runs at the display's rate (60 Hz: 0.16% slower than an NES,
+  * which nobody hears: the audio is stretched to match, below). Other rates
+- * (75, 144 Hz) keep the deadline. A driver whose present does not wait
+- * (hidden window, VSync refused) is noticed and pacing falls back.
++ * (75, 144 Hz) keep the deadline. A present that does not wait (a driver
++ * that queues pictures, a hidden window) is held to the display's clock.
+  * NESRECOMP_PACING=deadline turns it off (=display: on, and a display that
+  * reports no rate is taken as 60 Hz); NESRECOMP_PACING_LOG=1 prints the
+  * pacing every 5 s (stderr). */
+ static int  s_lock_n;            /* refreshes per guest frame (0: deadline) */
+ static int  s_lock_hz;
+-static bool s_lock_off;          /* the present does not wait here: deadline from now on */
+ 
+ static int display_refresh(void)
+ {
+@@ -1392,7 +1420,7 @@ static void lock_update(double guest_hz)
+     s_lock_n = 0;
+     s_lock_hz = display_refresh();
+     if (s_lock_hz <= 0 && env == 2) s_lock_hz = 60;
+-    if (env == 1 || s_lock_off || s_lock_hz <= 0) return;
++    if (env == 1 || s_lock_hz <= 0) return;
+     double r = s_lock_hz / guest_hz;
+     int n = (int)(r + 0.5);
+     if (n >= 1 && n <= 4 && fabs(r - n) <= 0.02 * n) s_lock_n = n;
+@@ -1625,7 +1653,6 @@ int cyc_sdl_main(const char *title_in, int scale)
+     const double guest_hz = 1.0 / frame_seconds;
+     const bool pacing_log = getenv("NESRECOMP_PACING_LOG") && *getenv("NESRECOMP_PACING_LOG") == '1';
+     Uint64 loop_mark = SDL_GetPerformanceCounter(), log_mark = loop_mark;
+-    int fast_loops = 0;
+     struct { long loops, guest, shows, again, skipped, hitches; double show_ms, show_max, loop_max; } pl = {0};
+     lock_update(guest_hz);
+     SDL_SetWindowTitle(s_win, title);
+@@ -1848,11 +1875,13 @@ int cyc_sdl_main(const char *title_in, int scale)
+         static bool was_locked;
+         if (locked && !was_locked) next = tnow;
+         was_locked = locked;
+-        /* locked: a picture every frame, unless the game has fallen more than
+-           a frame behind the display (a picture that took too long): then it
+-           catches up without one, as on the game's clock (but never two in a
+-           row: a machine too slow for every picture still shows every other) */
+-        bool present = locked ? (open || inactive || tnow <= next + lock_ticks || tnow - shown >= 2 * lock_ticks)
++        /* locked: a picture every frame, unless the loop has been taking
++           longer than the display's period for a while (a machine too slow
++           for every picture): then every other frame catches up without one,
++           as on the game's clock. One slow frame costs no picture. */
++        static double ema_ms;
++        bool slow = locked && ema_ms > 1.15 * 1000.0 * s_lock_n / s_lock_hz;
++        bool present = locked ? (open || inactive || !slow || tnow - shown >= 2 * lock_ticks)
+                               : cyc_frame_present_due(tnow, next, frame_ticks, shown,
+                                                       s_vsync_active, unpaced || open || inactive);
+         if (present && !(unpaced && s_vsync_active) &&
+@@ -1883,18 +1912,25 @@ int cyc_sdl_main(const char *title_in, int scale)
+             pl.loops++;
+             if (!open && !inactive) pl.guest++;
+             if (loop_ms > pl.loop_max) pl.loop_max = loop_ms;
++            ema_ms = ema_ms * 0.95 + (loop_ms > 250 ? 250 : loop_ms) * 0.05;
+             if (loop_ms > 1.5 * want_ms) pl.hitches++;
+             if (locked) {
+-                /* a present that does not wait: the loop races */
+-                if (loop_ms < 0.5 * want_ms) {
+-                    if (++fast_loops > 30) {
+-                        s_lock_off = true; s_lock_n = 0;
+-                        fprintf(stderr, "pacing: the display's present does not wait here; pacing by the game's clock\n");
+-                    }
+-                } else fast_loops = 0;
+-                /* the display's clock: one frame per N refreshes */
++                /* the display's clock: one frame per N refreshes. A present
++                   that returned early (a driver that queues pictures instead
++                   of waiting, a hidden window) must not let the game run
++                   ahead: then this clock waits. Behind it, the clock follows
++                   the display (a display slower than its nominal rate, 59.94
++                   Hz shown as 60, a slow frame). */
+                 next += lock_ticks;
+-                if (tnow > next + freq / 4 || next > tnow + freq / 4) next = tnow;
++                if (tnow > next || next > tnow + freq / 4) next = tnow;
++                if (tnow + lock_ticks / 4 < next) {
++                    Uint64 until = next - lock_ticks / 4;
++                    Uint32 ms = (Uint32)((until - tnow) * 1000 / freq);
++                    if (ms > 1) SDL_Delay(ms - 1);
++                    while (SDL_GetPerformanceCounter() < until) {}
++                    tnow = SDL_GetPerformanceCounter();
++                    loop_mark = tnow;
++                }
+             }
+             if (pacing_log && tnow - log_mark >= 5 * freq) {
+                 fprintf(stderr, "pacing: %s%d Hz display, %ld loops, %ld game frames, %ld pictures (+%ld repeats), %ld not shown, "
+diff --git a/runner/include/hdpack.h b/runner/include/hdpack.h
+index 7bee52e..184a6a7 100644
+--- a/runner/include/hdpack.h
++++ b/runner/include/hdpack.h
+@@ -69,6 +69,9 @@ int  hdpack_resize(int native_w);
+ /* nesrecomp: canvas column of native column 0 in a wide picture (0 otherwise):
+  * hires.txt positions stay native screen columns. */
+ void hdpack_set_origin(int x0);
++/* nesrecomp: draw the pack at this scale (1..its own <scale>; 0 = its own),
++ * set before hdpack_load. NESRECOMP_HD_SCALE=N overrides it. */
++void hdpack_set_draw_scale(int scale);
+ 
+ int  hdpack_sprite_cells(void); /* <options>spriteCells: record sprites on their transparent pixels too */
+ int  hdpack_active(void);    /* 1 if a pack is loaded */
+diff --git a/runner/src/hdpack.c b/runner/src/hdpack.c
+index b9e40ed..e5f41c8 100644
+--- a/runner/src/hdpack.c
++++ b/runner/src/hdpack.c
+@@ -85,6 +85,13 @@ typedef struct { uint32_t *px; int w, h; } HdSheet;
+ 
+ static int        s_active = 0;
+ static int        s_scale = 1;
++/* nesrecomp: the pack is authored at s_pack_scale (<scale>); it is drawn at
++ * s_scale, which may be smaller (hdpack_set_draw_scale): every picture is
++ * scaled down by the same area filter when it is loaded, and tile positions
++ * in the pictures with it. A display that needs only 7x does not pay for
++ * composing and uploading 10x (twice the pixels) every frame. */
++static int        s_pack_scale = 1;
++static int        s_draw_req = 0;
+ static int        s_version = 0;
+ static int        s_is_chr_ram = 0;
+ static char       s_dir[512];
+@@ -349,6 +356,65 @@ static int safe_image_name(const char *name) {
+     }
+     return 1;
+ }
++/* Scale a premultiplied ARGB picture by num/den (den > num) with an area
++ * filter: each output pixel is the average of the input area it covers. */
++static uint32_t *area_downscale(const uint32_t *px, int w, int h, int num, int den, int *ow, int *oh) {
++    int nw = (int)((long)w * num / den), nh = (int)((long)h * num / den);
++    if (nw < 1) nw = 1;
++    if (nh < 1) nh = 1;
++    float *tmp = (float *)malloc((size_t)nw * h * 4 * sizeof(float));
++    uint32_t *out = (uint32_t *)malloc((size_t)nw * nh * sizeof(uint32_t));
++    if (!tmp || !out) { free(tmp); free(out); return NULL; }
++    const double fx = (double)w / nw, fy = (double)h / nh;
++    for (int y = 0; y < h; y++) {                       /* across */
++        const uint32_t *row = px + (size_t)y * w;
++        for (int x = 0; x < nw; x++) {
++            double a0 = x * fx, a1 = a0 + fx, acc[4] = {0, 0, 0, 0};
++            for (int i = (int)a0; i < w && i < a1; i++) {
++                double wgt = (i + 1 < a1 ? i + 1 : a1) - (i > a0 ? i : a0);
++                uint32_t v = row[i];
++                acc[0] += wgt * (v >> 24); acc[1] += wgt * ((v >> 16) & 255);
++                acc[2] += wgt * ((v >> 8) & 255); acc[3] += wgt * (v & 255);
++            }
++            float *t = tmp + ((size_t)y * nw + x) * 4;
++            for (int c = 0; c < 4; c++) t[c] = (float)(acc[c] / fx);
++        }
++    }
++    for (int x = 0; x < nw; x++) {                      /* down */
++        for (int y = 0; y < nh; y++) {
++            double a0 = y * fy, a1 = a0 + fy, acc[4] = {0, 0, 0, 0};
++            for (int i = (int)a0; i < h && i < a1; i++) {
++                double wgt = (i + 1 < a1 ? i + 1 : a1) - (i > a0 ? i : a0);
++                const float *t = tmp + ((size_t)i * nw + x) * 4;
++                for (int c = 0; c < 4; c++) acc[c] += wgt * t[c];
++            }
++            int ch[4];
++            for (int c = 0; c < 4; c++) { int v = (int)(acc[c] / fy + 0.5); ch[c] = v < 0 ? 0 : v > 255 ? 255 : v; }
++            for (int c = 1; c < 4; c++) if (ch[c] > ch[0]) ch[c] = ch[0];   /* stay premultiplied */
++            out[(size_t)y * nw + x] = ((uint32_t)ch[0] << 24) | ((uint32_t)ch[1] << 16) | ((uint32_t)ch[2] << 8) | (uint32_t)ch[3];
++        }
++    }
++    free(tmp);
++    *ow = nw; *oh = nh;
++    return out;
++}
++
++/* A loaded picture at the drawing scale (frees the original when scaled). */
++static uint32_t *to_draw_scale(uint32_t *px, int *w, int *h) {
++    if (s_scale >= s_pack_scale || !px) return px;
++    int nw, nh;
++    uint32_t *d = area_downscale(px, *w, *h, s_scale, s_pack_scale, &nw, &nh);
++    if (!d) return px;
++    free(px); *w = nw; *h = nh;
++    return d;
++}
++
++void hdpack_set_draw_scale(int scale) {
++    const char *e = getenv("NESRECOMP_HD_SCALE");     /* (overrides the host's choice) */
++    if (e && atoi(e) > 0) scale = atoi(e);
++    s_draw_req = scale < 0 ? 0 : scale;
++}
++
+ static int load_sheet(const char *name) {
+     if(!safe_image_name(name)){fprintf(stderr,"[HDPack] Unsafe image path rejected\n");return -1;}
+     char path[768];
+@@ -370,6 +436,7 @@ static int load_sheet(const char *name) {
+         px[i] = premul(argb);
+     }
+     stbi_image_free(rgba);
++    px = to_draw_scale(px, &w, &h);
+ 
+     if (s_sheet_count == s_sheet_cap) {
+         s_sheet_cap = s_sheet_cap ? s_sheet_cap * 2 : 8;
+@@ -545,6 +612,9 @@ static void process_tile(const char *cond_str, char *rest) {
+     }
+     if (brightness < 0) brightness = 0;
+ 
++    if (s_scale != s_pack_scale) {                  /* the picture is at the drawing scale */
++        X = (int)((long)X * s_scale / s_pack_scale); Y = (int)((long)Y * s_scale / s_pack_scale);
++    }
+     HdSheet *sh = &s_sheets[bitmap_index];
+     int W = 8 * s_scale, H = 8 * s_scale;
+     if (X < 0 || Y < 0 || X + W > sh->w || Y + H > sh->h) {
+@@ -753,6 +823,7 @@ static HdBgImg *load_bg_img(const char *name) {
+         im->px[i] = premul(argb);
+     }
+     stbi_image_free(rgba);
++    im->px = to_draw_scale(im->px, &im->w, &im->h);
+ 
+     if (s_bgimg_count == s_bgimg_cap) {
+         s_bgimg_cap = s_bgimg_cap ? s_bgimg_cap * 2 : 64;
+@@ -863,7 +934,13 @@ static void parse_line(char *line) {
+     if (*L == '\0') return;
+ 
+     if      (!strncmp(L, "<ver>", 5))        s_version = atoi(L + 5);
+-    else if (!strncmp(L, "<scale>", 7))      s_scale = clampi(atoi(L + 7), 1, 10);
++    else if (!strncmp(L, "<scale>", 7)) {
++        s_pack_scale = clampi(atoi(L + 7), 1, 10);
++        s_scale = s_draw_req > 0 && s_draw_req < s_pack_scale && s_sheet_count == 0 && s_bgimg_count == 0
++                  ? s_draw_req : s_pack_scale;
++        if (s_scale != s_pack_scale)
++            fprintf(stderr, "[HDPack] drawn at %dx (authored at %dx)\n", s_scale, s_pack_scale);
++    }
+     else if (!strncmp(L, "<img>", 5))        { char *nm = rstrip(L + 5); load_sheet(nm); }
+     else if (!strncmp(L, "<condition>", 11)) process_condition(L + 11);
+     else if (!strncmp(L, "<tile>", 6))       process_tile(cond_str, L + 6);
+@@ -946,7 +1023,7 @@ void hdpack_unload(void) {
+     s_missing_cond = s_bg_unrenderable = 0; s_disable_orig = 0; s_sprite_cells = 0;
+ 
+     free(s_pixels); s_pixels = NULL;
+-    s_active = 0; s_scale = 1; s_version = 0;
++    s_active = 0; s_scale = 1; s_pack_scale = 1; s_version = 0;
+     s_skipped_cond = 0; s_has_overscan = 0; s_native_w = 0;
+     s_dir[0] = '\0';
+ }
+@@ -955,7 +1032,7 @@ int hdpack_load(const char *dir, int is_chr_ram_game, int native_w) {
+     hdpack_unload();
+     snprintf(s_dir, sizeof(s_dir), "%s", dir);
+     s_is_chr_ram = is_chr_ram_game ? 1 : 0;
+-    s_scale = 1; s_version = 0;
++    s_scale = 1; s_pack_scale = 1; s_version = 0;
+ 
+     char path[600];
+     snprintf(path, sizeof(path), "%s/hires.txt", dir);
