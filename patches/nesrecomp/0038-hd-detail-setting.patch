@@ -1,0 +1,141 @@
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+index 6466aea..cdc2dec 100644
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -1366,7 +1366,7 @@ draw:
+  * uploaded every frame than the display can show (a 10x pack on a 1600-line
+  * screen: 7x, half the pixels). 0 = the pack's own (macOS, where the display
+  * size before a window exists is in points, not pixels). */
+-int cyc_sdl_hd_scale_hint(void)
++static int display_hd_scale(void)
+ {
+ #ifdef __APPLE__
+     return 0;
+@@ -1389,6 +1389,22 @@ int cyc_sdl_hd_scale_hint(void)
+ #endif
+ }
+ 
++/* The launcher's HD detail (config.ini [Display] HDDetail): Auto = the
++ * display's scale above; Full = the pack's own; Balanced = 3/4 of Auto; Fast
++ * = half of it (never under 3x). 0 = the pack's own. */
++int cyc_sdl_hd_scale_hint(void)
++{
++    int full = 10;                          /* (the pack's own scale is read later; ours are 10x) */
++    int d = display_hd_scale();
++    int base = d > 0 ? d : full;
++    switch (s_set.hd_detail) {
++    case 1: return 0;
++    case 2: { int v = (base * 3 + 2) / 4; return v < 3 ? 3 : v; }
++    case 3: { int v = (base + 1) / 2; return v < 3 ? 3 : v; }
++    default: return d;
++    }
++}
++
+ /* ---- display-locked pacing ----
+  * With VSync on, the guest's own 60.0988 Hz deadline and the display's
+  * blocking present are two clocks: the deadline drifts across the refresh, so
+diff --git a/runner/cyc/cyc_settings.c b/runner/cyc/cyc_settings.c
+index fcf4147..6e96e62 100644
+--- a/runner/cyc/cyc_settings.c
++++ b/runner/cyc/cyc_settings.c
+@@ -20,6 +20,7 @@ void cyc_settings_default(CycSettings *s)
+     s->integer_scale = 1;
+     s->crop_sides = 0;   /* the full 256x240 picture (games may repair their edges: cyc_ppu_set_bg_tile_hook) */
+     s->linear_filter = 0;
++    s->hd_detail = 0;
+     s->vsync = 0;
+     s->audio_enabled = 1;
+     s->volume = 100;
+@@ -134,6 +135,7 @@ bool cyc_settings_load(CycSettings *s, const char *path, FILE *log, const CycSet
+             else if (eq_ci(key, "IntegerScale")) bad = !parse_int(val, &v) || (s->integer_scale = v != 0, 0);
+             else if (eq_ci(key, "CropSides")) bad = !parse_int(val, &v) || (s->crop_sides = v != 0, 0);
+             else if (eq_ci(key, "LinearFilter")) bad = !parse_int(val, &v) || (s->linear_filter = v != 0, 0);
++            else if (eq_ci(key, "HDDetail")) bad = !parse_int(val, &v) || (s->hd_detail = clampi(v, 0, 3), 0);
+             else if (eq_ci(key, "VSync")) bad = !parse_int(val, &v) || (s->vsync = v != 0, 0);
+             else if (eq_ci(key, "HdPackEnabled")) bad = !parse_int(val, &v) || (s->hdpack_enabled = v != 0, 0);
+             else if (eq_ci(key, "HdPackDir")) snprintf(s->hdpack_dir,sizeof s->hdpack_dir,"%s",val);
+@@ -222,8 +224,9 @@ bool cyc_settings_save(const CycSettings *s, const char *path, const CycSettings
+     if (!f) return false;
+     fprintf(f, "# NESRecomp cycle-backend settings: the launcher, the in-game menu and the\n"
+                "# window write this file. Keys are SDL key and controller names.\n");
+-    fprintf(f, "[Display]\nWindowScale = %d\nFullscreen = %d\nIntegerScale = %d\nLinearFilter = %d\nVSync = %d\n",
+-            s->window_scale, s->fullscreen, s->integer_scale, s->linear_filter, s->vsync);
++    fprintf(f, "[Display]\nWindowScale = %d\nFullscreen = %d\nIntegerScale = %d\nLinearFilter = %d\nVSync = %d\n"
++               "HDDetail = %d\n",
++            s->window_scale, s->fullscreen, s->integer_scale, s->linear_filter, s->vsync, s->hd_detail);
+     fprintf(f, "CropSides = %d\n", s->crop_sides);
+     fprintf(f,"HdPackEnabled = %d\nHdPackDir = %s\n",s->hdpack_enabled,s->hdpack_dir);
+     fprintf(f, "[Audio]\nEnabled = %d\nVolume = %d\n", s->audio_enabled, s->volume);
+diff --git a/runner/cyc/cyc_settings.h b/runner/cyc/cyc_settings.h
+index d7e4e06..82d5ff2 100644
+--- a/runner/cyc/cyc_settings.h
++++ b/runner/cyc/cyc_settings.h
+@@ -4,7 +4,7 @@
+  *
+  * The keys nesrecomp's other runtime and recomp-ui's NES launcher already use
+  * keep their names ([Display] WindowScale, Fullscreen, IntegerScale,
+- * LinearFilter; [Audio] Volume; [Input] PlayerNSource / PlayerNDevice /
++ * LinearFilter, HDDetail (0 Auto, 1 Full, 2 Balanced, 3 Fast); [Audio] Volume; [Input] PlayerNSource / PlayerNDevice /
+  * PlayerNDeadzone; [Launcher] SkipLauncher). The cycle host adds:
+  *
+  *   [Audio]    Enabled
+@@ -45,6 +45,7 @@ typedef struct CycSettings {
+                                and 8 / 16 lines from the top / bottom of a
+                                240-line one (the TV overscan) */
+     int  linear_filter;     /* bool */
++    int  hd_detail;         /* HD pack drawing scale: 0 Auto (the screen's), 1 Full (the pack's), 2 Balanced, 3 Fast */
+     int  vsync;             /* bool: sync presents to the display refresh */
+     int  audio_enabled;     /* bool */
+     int  volume;            /* 0..100 */
+diff --git a/runner/cyc/cyc_ui_launcher.c b/runner/cyc/cyc_ui_launcher.c
+index d8f5b1d..e58efd7 100644
+--- a/runner/cyc/cyc_ui_launcher.c
++++ b/runner/cyc/cyc_ui_launcher.c
+@@ -51,6 +51,9 @@ static int shortcut_list(bool fds, int out[CYC_SC_COUNT])
+     return n;
+ }
+ 
++/* config.ini [Display] HDDetail 0..3, by name in the launcher's list */
++static const char *const HD_DETAIL_IDS[4] = { "auto", "full", "balanced", "fast" };
++
+ /* view_mode values: the index of the RECOMP_RUNTIME_UI_VIEW_MODE_* bit */
+ #define RECOMP_RUNTIME_UI_VIEW_MODE_FIXED_16_9_VALUE 1
+ static bool view_wide_offered(const CycHostExtras *x)
+@@ -67,6 +70,8 @@ static void to_launcher(const CycSettings *s, RecompLauncherCSettings *io, const
+     io->crop_sides = s->crop_sides;
+ #endif
+     io->linear_filter = s->linear_filter;
++    io->renderer = s->hd_detail;          /* (the HD detail list: gi.renderer_*, chosen by id) */
++    snprintf(io->renderer_id, sizeof(io->renderer_id), "%s", HD_DETAIL_IDS[s->hd_detail & 3]);
+     /* The host's 1/0 predates the setting: always transfer an opinion, so the
+      * row shows ours rather than the model's ON seed. */
+     io->vsync = s->vsync ? RECOMP_LAUNCHER_VSYNC_ON : RECOMP_LAUNCHER_VSYNC_OFF;
+@@ -110,6 +115,9 @@ static void from_launcher(const RecompLauncherCSettings *io, CycSettings *s, con
+     s->crop_sides = io->crop_sides != 0;
+ #endif
+     s->linear_filter = io->linear_filter != 0;
++#if defined(NESRECOMP_CYCLE_HDPACK_MODS) && defined(RECOMP_LAUNCHER_HAS_RENDERER_LABEL)
++    s->hd_detail = io->renderer < 0 ? 0 : io->renderer > 3 ? 3 : io->renderer;
++#endif
+     /* SDL2 cannot do adaptive (no swap-interval API on the 2D renderer), so
+      * Adaptive and On both mean synced presents. */
+     s->vsync = io->vsync == RECOMP_LAUNCHER_VSYNC_ON || io->vsync == RECOMP_LAUNCHER_VSYNC_ADAPTIVE;
+@@ -234,6 +242,18 @@ int cyc_ui_launcher(CycSettings *settings, const char *settings_path, const CycH
+     gi.zapper = 1;
+ #endif
+     gi.has_renderer = 0;              /* the cycle host has one SDL renderer */
++#if defined(NESRECOMP_CYCLE_HDPACK_MODS) && defined(RECOMP_LAUNCHER_HAS_RENDERER_LABEL)
++    /* ...but the launcher's list row serves the HD pack's drawing scale:
++     * the pack is scaled down once when the game starts (hdpack.c), so this
++     * is a launcher setting, not an in-game one. */
++    static const char *const detail_labels[4] = { "Auto", "Full", "Balanced", "Fast" };
++    gi.has_renderer = 1;
++    gi.renderer_labels = detail_labels;
++    gi.renderer_ids = HD_DETAIL_IDS;
++    gi.num_renderers = 4;
++    gi.renderer_setting_label = "HD detail";
++    gi.renderer_note = "Lower: faster, a little softer. Applies at start.";
++#endif
+ #if defined(NESRECOMP_CYCLE_HDPACK) && !defined(NESRECOMP_CYCLE_HDPACK_MODS)
+     gi.hdpack_supported = 1;
+ #else

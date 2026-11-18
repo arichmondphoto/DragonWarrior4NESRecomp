@@ -1,0 +1,53 @@
+diff --git a/src/common/backends/imgui/launcher_imgui.cpp b/src/common/backends/imgui/launcher_imgui.cpp
+index 7bfdb77..810659b 100644
+--- a/src/common/backends/imgui/launcher_imgui.cpp
++++ b/src/common/backends/imgui/launcher_imgui.cpp
+@@ -4099,7 +4099,8 @@ void draw_display_controls(LauncherModel* m, const LauncherTheme& th) {
+          * hosts that supply their own (Auto / D3D11 / D3D9 / OpenGL /
+          * Software), and reaching the last one by clicking through the other
+          * four is not a choice a player should have to count out. */
+-        row_label_right("Renderer", th, px(SETTINGS_CTRL_W));
++        row_label_right(m->renderer_setting_label && m->renderer_setting_label[0]
++                            ? m->renderer_setting_label : "Renderer", th, px(SETTINGS_CTRL_W));
+         ImGui::SetNextItemWidth(px(SETTINGS_CTRL_W));
+         if (ImGui::BeginCombo("##renderer",
+                               ui_text(launcher_model_renderer_label(m)))) {
+diff --git a/src/common/launcher_model.c b/src/common/launcher_model.c
+index 4b356f3..6118a7b 100644
+--- a/src/common/launcher_model.c
++++ b/src/common/launcher_model.c
+@@ -593,6 +593,7 @@ void launcher_model_init(LauncherModel* m,
+         m->quality_redetect            = game->quality_redetect;
+         m->quality_snapshot_valid      = false;
+         m->renderer_note        = game->renderer_note;
++        m->renderer_setting_label = game->renderer_setting_label;
+         m->hide_rebind          = game->hide_rebind != 0;
+         m->has_mouse_controls   = game->has_mouse_controls != 0;
+         m->has_gyro_controls    = game->has_gyro_controls != 0;
+diff --git a/src/common/launcher_model.h b/src/common/launcher_model.h
+index 5c9cfd2..dc8fb94 100644
+--- a/src/common/launcher_model.h
++++ b/src/common/launcher_model.h
+@@ -343,6 +343,7 @@ typedef struct {
+     // control does not compose.
+     const char* const* renderer_ids;
+     const char* renderer_note;
++    const char* renderer_setting_label;   /* (GameInfo; NULL = "Renderer") */
+ 
+     // ---- internal-resolution vocabulary (GameInfo.internal_resolution_*) ---
+     // Borrowed. When offered (see launcher_model_internal_resolution_offered)
+diff --git a/src/recomp_launcher.h b/src/recomp_launcher.h
+index 47b5de0..21044c9 100644
+--- a/src/recomp_launcher.h
++++ b/src/recomp_launcher.h
+@@ -1859,6 +1859,10 @@ typedef struct RecompLauncherCGameInfo {
+      * without a recomp-ui change. NULL = no note. Appended additively. */
+     const char* const* renderer_ids;
+     const char* renderer_note;
++    /* The row's name (NULL = "Renderer"): a host whose list is not a choice of
++     * renderer but of something drawn the same way (HD detail) names it. */
++    const char* renderer_setting_label;
++#define RECOMP_LAUNCHER_HAS_RENDERER_LABEL 1
+ 
+     /* ---- N64 Transfer Pak (dashboard "tpak" panel) ------------------------
+      * tpak_slots (0..4): how many controller ports offer a Transfer Pak GB

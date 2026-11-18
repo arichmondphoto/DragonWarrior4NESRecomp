@@ -173,6 +173,13 @@ scale (7x there: half the work) and drops only when slow for a while.
 `NESRECOMP_PACING_LOG=1` there: "picture N ms" near or over 16 ms means the HD
 picture itself is too slow on that screen (next step then: compose the HD
 picture at the window's size instead of 10x, or upload only changed rows).
+0037 (2026-11-18): the HD picture's work a third less (popcount table), MMC1
+re-maps only on a CHR bank change, code cheats block only the 1 KB of compiled
+code they touch, audio stretch up to 3% when the queue runs low. 0038: launcher
+**HD detail** (Auto / Full / Balanced / Fast).
+**Option offered, owner to decide after a new pacing log:** overlap HD drawing
+(compose the next picture on another thread while the game runs the next
+frame; +1 frame of display latency, about 17 ms).
 
 ### 7. Windows build
 - **Done (untested on Windows):** `./build_windows.sh` cross-compiles on Linux

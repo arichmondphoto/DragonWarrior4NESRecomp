@@ -323,6 +323,10 @@ How the characters are built (`tools/build_hd_pack.sh`):
   `tools/slice_field_sheets.py`.
 - *More monsters* — `hd/monsters/extra/M###.png` (monsters the atlases didn't cover).
 
+- **HD detail** (launcher, Display): the pack is drawn at the scale your
+  largest display can show (**Auto**). **Balanced** and **Fast** draw it at
+  three quarters and half of that: faster on slow machines, a little softer.
+  **Full** always uses the pack's 10x.
 - macOS: `./build_macos.sh` (or `./package_macos_app.sh`) generates the pack and
   bundles it inside the app (`Contents/Resources/mods`; nothing is copied to
   your Library folder). It is switched on at the first start (the app writes
@@ -697,6 +701,12 @@ They are framework bugs, kept here until they can go upstream:
   and shows the game's own time; the display-locked audio stretch firms up to
   3% while the queue runs low, so a game slower than the display for a while
   sounds a little lower instead of breaking up.
+- `0038-hd-detail-setting.patch` — the launcher's **HD detail** row
+  (Display; `[Display] HDDetail` in config.ini): **Auto** (the display's scale,
+  as 0036), **Full** (the pack's own 10x), **Balanced** (three quarters of
+  Auto's) and **Fast** (half of Auto's), never below 3x. Lower is faster and a
+  little softer; it applies when the game starts, so it is a launcher setting
+  only. `NESRECOMP_HD_SCALE` still overrides it.
 - `0036-hd-draw-scale-and-pacing.patch` — the HD pack is drawn at the scale
   the largest display needs, not always the pack's 10x: every picture is
   scaled down once at load (area filter, tile positions with it; tile blocks
@@ -816,6 +826,10 @@ They are framework bugs, kept here until they can go upstream:
   `view_mode_label` / `view_mode_description` on the standard config
   (`RECOMP_RUNTIME_UI_HAS_VIEW_MODE_TEXT`). Tests in `runtime_ui_test.c` and
   `runtime_ui_imgui_test.cpp`.
+- `0008-launcher-renderer-label.patch` — `GameInfo.renderer_setting_label`
+  (appended ABI-additively, `RECOMP_LAUNCHER_HAS_RENDERER_LABEL`): a game can
+  give the launcher's renderer row its own name. This project uses the row for
+  **HD detail** (nesrecomp 0038).
 
 ## Test routes
 | Route | Frames | Covers |
