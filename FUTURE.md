@@ -177,6 +177,11 @@ picture at the window's size instead of 10x, or upload only changed rows).
 re-maps only on a CHR bank change, code cheats block only the 1 KB of compiled
 code they touch, audio stretch up to 3% when the queue runs low. 0038: launcher
 **HD detail** (Auto / Full / Balanced / Fast).
+Owner (v1.0.158): worse than before: the sound slowed down and sped up with
+the game, and the title (fine in 1.0.153) stuttered. Cause: 0035's locked
+clock forgave lateness (the game slowed instead of catching up) and the
+3% audio stretch made that audible. 0039: catch up by dropping pictures, as
+the game clock always did; stretch at most 0.5%; 75 ms sound queue.
 **Option offered, owner to decide after a new pacing log:** overlap HD drawing
 (compose the next picture on another thread while the game runs the next
 frame; +1 frame of display latency, about 17 ms).

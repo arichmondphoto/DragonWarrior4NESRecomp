@@ -701,6 +701,17 @@ They are framework bugs, kept here until they can go upstream:
   and shows the game's own time; the display-locked audio stretch firms up to
   3% while the queue runs low, so a game slower than the display for a while
   sounds a little lower instead of breaking up.
+- `0039-pacing-catch-up.patch` — display-locked pacing (0035) let the game's
+  clock fall back to the display's whenever a frame ran late, so a busy screen
+  slowed the game down, and its sound with it (stretched up to 3%: heard as
+  the music slowing and speeding up; the title stuttered). Now time behind the
+  display's clock is caught up the way the game's own clock does it: the next
+  frames run without a picture until the game is back on time (at least one
+  picture every 4 frames), so the game keeps its speed and the sound its
+  pitch. Only a display slower than its nominal rate (59.94 Hz reported as 60)
+  is followed. The sound stretch is back to at most 0.5% (inaudible), the
+  sound queue aims at 75 ms (was 50) and is capped at 150 ms, and the pacing
+  log shows how low the queue ran ("sound queue low N ms"; 0 = it ran dry).
 - `0038-hd-detail-setting.patch` — the launcher's **HD detail** row
   (Display; `[Display] HDDetail` in config.ini): **Auto** (the display's scale,
   as 0036), **Full** (the pack's own 10x), **Balanced** (three quarters of

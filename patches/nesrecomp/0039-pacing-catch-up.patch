@@ -1,0 +1,126 @@
+diff --git a/runner/cyc/cyc_sdl.c b/runner/cyc/cyc_sdl.c
+--- a/runner/cyc/cyc_sdl.c
++++ b/runner/cyc/cyc_sdl.c
+@@ -1676,7 +1676,7 @@
+     const double guest_hz = 1.0 / frame_seconds;
+     const bool pacing_log = getenv("NESRECOMP_PACING_LOG") && *getenv("NESRECOMP_PACING_LOG") == '1';
+     Uint64 loop_mark = SDL_GetPerformanceCounter(), log_mark = loop_mark;
+-    struct { long loops, guest, shows, again, skipped, hitches; double show_ms, show_max, loop_max, game_ms, game_max, compose_ms; } pl = {0};
++    struct { long loops, guest, shows, again, skipped, hitches; double show_ms, show_max, loop_max, game_ms, game_max, compose_ms, aq_min; } pl = {0};
+     lock_update(guest_hz);
+     SDL_SetWindowTitle(s_win, title);
+ 
+@@ -1867,22 +1867,23 @@
+         while ((n = cyc_audio_read(pcm, 4096)) > 0) {
+             cyc_session_audio_mix(pcm,n);
+             audio_samples_produced += n;
+-            /* Keep latency bounded: skip a frame's audio if ~100 ms are queued. */
+-            if (replay || !dev || fast || open || inactive || !s_set.audio_enabled || SDL_GetQueuedAudioSize(dev) >= (Uint32)(have.freq / 10) * 2)
++            /* Keep latency bounded: skip a frame's audio if ~150 ms are queued. */
++            if (replay || !dev || fast || open || inactive || !s_set.audio_enabled || SDL_GetQueuedAudioSize(dev) >= (Uint32)(have.freq * 3 / 20) * 2)
+                 continue;
+             if (s_set.volume < 100)
+                 for (size_t i = 0; i < n; ++i) pcm[i] = (int16_t)(pcm[i] * s_set.volume / 100);
+             const int16_t *outp = pcm;
+             if (s_lock_n) {
+-                /* paced by the display: keep ~50 ms queued */
++                /* paced by the display: keep ~75 ms queued (room for a
++                   late frame or two while the game catches up) */
+                 static int16_t st_buf[4096 + 256];
+-                double target = have.freq * 0.05, q = SDL_GetQueuedAudioSize(dev) / 2.0;
+-                /* gentle near the target (0.5%: inaudible), firmer when the
+-                   queue runs low (up to 3%: a game slower than the display
+-                   for a while is heard a little lower, not broken up) */
++                double target = have.freq * 0.075, q = SDL_GetQueuedAudioSize(dev) / 2.0;
++                /* at most 0.5% (inaudible): the game keeps its speed (late
++                   frames catch up), so only the display's rate differs */
+                 double d = (target - q) / target;
+                 if (d > 1) d = 1; else if (d < -1) d = -1;
+-                double f = 1.0 + 0.005 * d + (d > 0.5 ? 0.05 * (d - 0.5) : 0.0);
++                double f = 1.0 + 0.005 * d;
++                if (q < pl.aq_min || pl.aq_min == 0) pl.aq_min = q + 1;
+                 n = audio_stretch(pcm, n, f, st_buf, sizeof(st_buf) / sizeof(st_buf[0]));
+                 outp = st_buf;
+             }
+@@ -1905,15 +1906,18 @@
+                       !(wflags & (SDL_WINDOW_HIDDEN | SDL_WINDOW_MINIMIZED));
+         const Uint64 lock_ticks = locked ? (Uint64)((double)freq * s_lock_n / s_lock_hz) : frame_ticks;
+         static bool was_locked;
+-        if (locked && !was_locked) next = tnow;
++        static Uint64 lag_prev;          /* how far the last loop ended behind the display's clock */
++        if (locked && !was_locked) { next = tnow; lag_prev = 0; }
+         was_locked = locked;
+-        /* locked: a picture every frame, unless the loop has been taking
+-           longer than the display's period for a while (a machine too slow
+-           for every picture): then every other frame catches up without one,
+-           as on the game's clock. One slow frame costs no picture. */
+-        static double ema_ms;
+-        bool slow = locked && ema_ms > 1.15 * 1000.0 * s_lock_n / s_lock_hz;
+-        bool present = locked ? (open || inactive || !slow || tnow - shown >= 2 * lock_ticks)
++        /* locked: a picture every frame while the game keeps up. A game that
++           has fallen behind the display's clock (this loop's refresh already
++           gone before its picture) runs its next frames without one until it
++           has caught up, as on the game's own clock: the game keeps its speed
++           (and its sound its pitch); only pictures are dropped. At least one
++           picture every 4 frames. */
++        bool behind = locked && tnow > next + lock_ticks;
++        bool presented = false;
++        bool present = locked ? (open || inactive || !behind || tnow - shown >= 4 * lock_ticks)
+                               : cyc_frame_present_due(tnow, next, frame_ticks, shown,
+                                                       s_vsync_active, unpaced || open || inactive);
+         if (present && !(unpaced && s_vsync_active) &&
+@@ -1925,6 +1929,7 @@
+             pl.compose_ms += s_compose_ms;
+             if (s_present_out && s_present_every > 0 && loops % s_present_every == 0) present_shot(s_frames_done);
+             SDL_RenderPresent(s_ren);
++            presented = true;
+             /* the guest frame's other refreshes: the same picture again */
+             for (int k = 1; locked && k < s_lock_n; ++k) {
+                 show_frame(loading, toast_title, toast_body, true);
+@@ -1945,17 +1950,25 @@
+             pl.loops++;
+             if (!open && !inactive) pl.guest++;
+             if (loop_ms > pl.loop_max) pl.loop_max = loop_ms;
+-            ema_ms = ema_ms * 0.95 + (loop_ms > 250 ? 250 : loop_ms) * 0.05;
+             if (loop_ms > 1.5 * want_ms) pl.hitches++;
+             if (locked) {
+                 /* the display's clock: one frame per N refreshes. A present
+                    that returned early (a driver that queues pictures instead
+                    of waiting, a hidden window) must not let the game run
+-                   ahead: then this clock waits. Behind it, the clock follows
+-                   the display (a display slower than its nominal rate, 59.94
+-                   Hz shown as 60, a slow frame). */
++                   ahead: then this clock waits. Time behind it is kept and
++                   caught up (pictures dropped above), not forgiven: forgiving
++                   it slowed the game down, and its sound with it. Only a
++                   display slower than its nominal rate (59.94 Hz reported as
++                   60) is followed: a presented loop's lag growing by a hair
++                   (under 2% of a refresh) is the display's, not the game's.
++                   A quarter of a second behind: start over from now. */
+                 next += lock_ticks;
+-                if (tnow > next || next > tnow + freq / 4) next = tnow;
++                Uint64 lag = tnow > next ? tnow - next : 0;
++                if (lag > (Uint64)freq / 4 || next > tnow + freq / 4) { next = tnow; lag = 0; }
++                else if (presented && lag > lag_prev && lag - lag_prev < lock_ticks / 50) {
++                    next += lag - lag_prev; lag = lag_prev;
++                }
++                lag_prev = lag;
+                 if (tnow + lock_ticks / 4 < next) {
+                     Uint64 until = next - lock_ticks / 4;
+                     Uint32 ms = (Uint32)((until - tnow) * 1000 / freq);
+@@ -1967,11 +1980,13 @@
+             }
+             if (pacing_log && tnow - log_mark >= 5 * freq) {
+                 fprintf(stderr, "pacing: %s%d Hz display, %ld loops, %ld game frames, %ld pictures (+%ld repeats), %ld not shown, "
+-                        "%ld late loops (>1.5x), game %.1f ms avg / %.1f max, picture %.1f ms avg (HD %.1f) / %.1f max, loop %.1f ms avg / %.1f max\n",
++                        "%ld late loops (>1.5x), game %.1f ms avg / %.1f max, picture %.1f ms avg (HD %.1f) / %.1f max, loop %.1f ms avg / %.1f max, "
++                        "sound queue low %.0f ms\n",
+                         s_lock_n ? "display-locked, " : "game clock, ", s_lock_hz, pl.loops, pl.guest, pl.shows, pl.again,
+                         pl.skipped, pl.hitches, pl.guest ? pl.game_ms / pl.guest : 0.0, pl.game_max,
+                         pl.shows ? pl.show_ms / pl.shows : 0.0, pl.shows ? pl.compose_ms / pl.shows : 0.0, pl.show_max,
+-                        pl.loops ? (double)(tnow - log_mark) * 1000.0 / (double)freq / pl.loops : 0.0, pl.loop_max);
++                        pl.loops ? (double)(tnow - log_mark) * 1000.0 / (double)freq / pl.loops : 0.0, pl.loop_max,
++                        pl.aq_min > 0 ? (pl.aq_min - 1) * 1000.0 / have.freq : -1.0);
+                 memset(&pl, 0, sizeof(pl));
+                 log_mark = tnow;
+             }
