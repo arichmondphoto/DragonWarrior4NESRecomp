@@ -182,6 +182,9 @@ the game, and the title (fine in 1.0.153) stuttered. Cause: 0035's locked
 clock forgave lateness (the game slowed instead of catching up) and the
 3% audio stretch made that audible. 0039: catch up by dropping pictures, as
 the game clock always did; stretch at most 0.5%; 75 ms sound queue.
+**Owner confirmed (v1.0.159): sound fixed, no more jitter.** Overlap HD
+drawing is not needed for now; only worth revisiting if a screen shudders
+again.
 **Option offered, owner to decide after a new pacing log:** overlap HD drawing
 (compose the next picture on another thread while the game runs the next
 frame; +1 frame of display latency, about 17 ms).
