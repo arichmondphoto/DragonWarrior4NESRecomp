@@ -51,7 +51,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 sys.path.insert(0, os.path.dirname(__file__))
-from field_sheet import pixels, NES
+from field_sheet import pixels, NES, overworld_on_screen
 
 QOFF = [(0, 0), (8, 0), (0, 8), (8, 8)]            # quarter positions in a map tile (px)
 
@@ -568,9 +568,17 @@ def main():
           f'{len(tiles)} tile entries, '
           f'{len(conds)} neighbour conditions, {unresolved} unresolved, {lums} coloured by brightness, '
           f'{grounded} versions on shared ground -> {hires}')
+    # overworld definitions the map never draws (WRAM $1680 slots past the
+    # 32 the map data uses): not missing art, nothing to paint
+    never = []
+    if missing and a.maps:
+        shown = overworld_on_screen(a.maps)
+        never = [m for m in missing if m[0] == 'W' and bytes.fromhex(items[m][0]['chr']) not in shown]
+        missing = [m for m in missing if m not in never]
     if missing: print(f'  no art yet for {len(missing)}: {" ".join(missing[:20])}{" ..." if len(missing) > 20 else ""}')
+    if never: print(f'  {len(never)} overworld definitions never drawn (no art needed): {" ".join(never)}')
     if a.report:
-        json.dump({'missing': missing, 'seamless': seamless, 'palette_recolours': nights, 'entries': len(tiles), 'conditions': len(conds),
+        json.dump({'missing': missing, 'never_drawn': never, 'seamless': seamless, 'palette_recolours': nights, 'entries': len(tiles), 'conditions': len(conds),
                    'unresolved': unresolved, 'gated_only_blank': gated_only}, open(a.report, 'w'), indent=1)
 
 if __name__ == '__main__':

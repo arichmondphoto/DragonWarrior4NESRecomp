@@ -28,7 +28,7 @@ from monster_tiles import monster
 from vramdump import tile_pixels
 from export_chatgpt_tiles import art_tiles, render_sheet, tile_image, W as TW, H as TH
 from vramdump import load
-from field_sheet import NES
+from field_sheet import NES, overworld_on_screen
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOOLS = os.path.dirname(os.path.abspath(__file__))
@@ -215,20 +215,6 @@ def next_ids(ids, prefix, n):
         if k not in used: out.append(f'{prefix}{k:03d}')
         k += 1
     return out
-
-def overworld_on_screen(maps):
-    """Every 16x16 overworld tile (4 tiles' CHR) drawn on a captured screen."""
-    seen = set()
-    for f in [f for d in ('', 'anim', 'view') for f in glob.glob(os.path.join(maps, d, '*.mem'))]:
-        m = load(f)
-        if m['ram'][0x28] != 0: continue
-        ch, ci = m['chr_ram'], m['ciram']
-        cell = lambda nt, r, c: bytes(ch[0x1000 + 16 * ci[nt + r * 32 + c]:0x1010 + 16 * ci[nt + r * 32 + c]])
-        for nt in (0, 0x400):
-            for r in range(29):
-                for c in range(31):
-                    seen.add(cell(nt, r, c) + cell(nt, r, c + 1) + cell(nt, r + 1, c) + cell(nt, r + 1, c + 1))
-    return seen
 
 def map_tiles(a, out):
     """Every map tile the build has no art for, with a new art ID (written to

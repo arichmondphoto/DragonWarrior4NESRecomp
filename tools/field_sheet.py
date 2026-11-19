@@ -87,6 +87,22 @@ def render(tiles, cols, S):
             c = NES[cols[px[y][x]] & 0x3F]; im.putpixel((x, y), (c >> 16, (c >> 8) & 255, c & 255))
     return im.resize((16 * S, 16 * S), Image.NEAREST)
 
+def overworld_on_screen(maps):
+    """Every 16x16 overworld tile (4 tiles' CHR) drawn on a captured screen.
+    The overworld tileset holds 16 more definitions (WRAM $1680) than its map
+    data uses (0-31); tiles only those give are never drawn."""
+    seen = set()
+    for f in [f for d in ('', 'anim', 'view') for f in glob.glob(os.path.join(maps, d, '*.mem'))]:
+        m = load(f)
+        if m['ram'][0x28] != 0: continue
+        ch, ci = m['chr_ram'], m['ciram']
+        cell = lambda nt, r, c: bytes(ch[0x1000 + 16 * ci[nt + r * 32 + c]:0x1010 + 16 * ci[nt + r * 32 + c]])
+        for nt in (0, 0x400):
+            for r in range(29):
+                for c in range(31):
+                    seen.add(cell(nt, r, c) + cell(nt, r, c + 1) + cell(nt, r + 1, c) + cell(nt, r + 1, c + 1))
+    return seen
+
 def collect(cap):
     shapes, order = {}, []          # tiles -> {'cat', 'variants': {cols: set(maps)}}
     # MM_SS[_n].mem per map, plus (capture_field.py) anim/: later moments of

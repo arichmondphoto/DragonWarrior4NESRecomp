@@ -103,8 +103,11 @@ the Transform smoke and sparkles (`hd/battle_effects`, `tools/make_effects_hdpac
 Checked in a forced Impostor battle and the shop scene. **The Impostor's
 Double stays 8-bit on purpose** (owner's choice: a nod to the original), so
 coverage checks will flag it; that's expected.
-Left: the overworld definitions W036-W044 are still printed under "no art yet"
-but are never drawn. Endor crowd frames T128-T129 were regenerated (R01, facing the viewer) and C057
+W036-W044 (owner agreed, 2026-11-18): not art to paint. They are overworld
+tileset definitions (WRAM $1680) past the 32 the map data uses, never on any
+captured screen; make_field_hdpack.py now reports them as "never drawn"
+(`never_drawn` in field-report.json) instead of "no art yet". No map tile
+is missing art. Endor crowd frames T128-T129 were regenerated (R01, facing the viewer) and C057
 (a dragon drawn as four facings of one character) redone as one picture (C057W), pack 0.19.0. Party spells and cutscenes
 are still unreached (chapter 1 save).
 
