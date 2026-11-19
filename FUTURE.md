@@ -161,7 +161,7 @@ restart-only toggle) looked broken. The menu now holds only live settings
 (README "In-game menu (Esc)"); VSync and the rewind settings were added, View
 mode is called Widescreen as in the launcher. recomp-ui 0007, nesrecomp 0033.
 Checked on Xvfb with XTest keys and clicks, HD pack loaded.
-**Left:** the owner tries it with a controller (left stick, A / B).
+**Done:** owner confirmed it works with a controller (2026-11-18).
 
 ### 6c. Shudder with VSync and the HD pack (2026-11-18) — done, v1.0.159
 Cause found: two clocks (the game's deadline and the display's blocking
